@@ -1,0 +1,31 @@
+# Livy + NodeLink — `docker compose up --build`
+#
+# NodeLink is PerformanC's Node.js Lavalink alternative. It speaks the
+# Lavalink v4 API, so Livy (via FastLink) talks to it exactly like a
+# Lavalink node — with NodeLink extras (lyrics, more sources) on top.
+services:
+  nodelink:
+    image: performanc/nodelink:latest
+    container_name: livy-nodelink
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Minimal NodeLink config (password + port must match .env).
+      # If upstream changes the config path, adjust this mount.
+      - ./nodelink.config.ts:/app/config.ts:ro
+    environment:
+      NODE_ENV: production
+
+  livy:
+    build: .
+    container_name: livy
+    restart: unless-stopped
+    depends_on:
+      - nodelink
+    env_file:
+      - .env
+    environment:
+      # Inside compose, NodeLink is reachable at the service name.
+      NODELINK_HOST: nodelink
+      NODELINK_PORT: "3000"
