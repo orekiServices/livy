@@ -15,21 +15,46 @@ without a Rust toolchain.
 
 | Module | Responsibility |
 |---|---|
-| `api/server.ts` | Hono app assembly, health/info/config routes, error mapping |
+| `api/server.ts` | Hono app assembly, health/info/config/metrics routes, error mapping |
 | `api/routes/stations.ts` | Station / stream-source / playlist CRUD, import/export |
 | `api/routes/streams.ts` | Play, stream proxy, status, session management |
+| `api/routes/sources.ts` | Source list/health, `loadtracks`, `trackstream` (NodeLink-style) |
+| `api/routes/hls.ts` | HLS playlist rewrite + segment proxy (AES-128 aware) |
 | `api/middleware.ts` | Request logging, Bearer auth, CORS |
+| `api/ratelimit.ts` | Token-bucket rate limiter (NodeLink rateLimitManager-style) |
 | `api/schemas.ts` | zod request schemas |
+| `sources/` | Source system (see below) |
 | `stations/service.ts` | Station business logic; station isolation |
-| `streams/service.ts` | Playback sessions, upstream failover proxy, byte tracking |
+| `streams/service.ts` | Playback sessions, upstream failover proxy via the source manager |
 | `audio/codecs.ts` | Codec sniffing (ID3/fLaC/OggS/ADTS/MP3 sync), MIME mapping |
 | `audio/hls.ts` | M3U8 (master/media) and M3U parsing/serialisation |
-| `audio/pipeline.ts` | ICY metadata stripping, native probe delegation |
+| `audio/pipeline.ts` | ICY metadata stripping, ID3v2 skipping, native probe delegation |
 | `audio/native.ts` | napi addon loader with graceful fallback |
 | `db/` | `DatabaseAdapter` interface + memory/sqlite/postgres drivers |
+| `metrics.ts` | Prometheus text exposition (counters + gauges) |
 | `config.ts` | Env parsing/validation (zod) |
 | `errors.ts` | Typed errors → HTTP status mapping |
 | `logger.ts` | Structured JSON-lines logger |
+
+### Source system (`src/sources/`)
+
+Modelled on NodeLink's source architecture:
+
+| Module | Responsibility |
+|---|---|
+| `types.ts` | `SourceInstance`, `TrackInfo`, `TrackData`, `SourceResult` contracts |
+| `track.ts` | Lavalink-compatible base64 track encode/decode |
+| `manager.ts` | `SourceManager` — prefix routing (`source:query`), URL patterns, health probes |
+| `http.ts` | Direct audio URLs: HEAD→GET validation, ID3 skip, Range reconnect + backoff |
+| `icecast.ts` | Icecast/Shoutcast mounts: `icy-*` headers, metadata stripping |
+| `hls.ts` | M3U8 master/media, variant selection, AES-128-CBC segment decryption |
+| `m3u.ts` | M3U playlists → track lists |
+| `local.ts` | `file://` paths and absolute filesystem paths |
+
+Identifiers route by `source:` prefix first, then by URL pattern in priority
+order (icecast mount points → http files → hls → m3u → local). Station
+streaming proxies through the same manager, so station sources get identical
+hardening as `loadtracks` resolution.
 
 ### Rust layer (`native/`)
 

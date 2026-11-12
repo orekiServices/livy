@@ -202,4 +202,7 @@ export interface LivyConfig {
 	streamTimeoutMs: number;
 	useNativeAudio: boolean;
 	corsOrigins: string[];
+	rateLimitMax: number;
+	rateLimitWindowMs: number;
+	defaultSearchSource: string;
 }

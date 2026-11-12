@@ -13,6 +13,8 @@ import { createApp } from "../src/api/server.js";
 import { loadConfig } from "../src/config.js";
 import { createDatabase } from "../src/db/factory.js";
 import { createAppLogger } from "../src/logger.js";
+import { Metrics } from "../src/metrics.js";
+import { createSourceManager } from "../src/sources/manager.js";
 import { StationService } from "../src/stations/service.js";
 import { StreamService } from "../src/streams/service.js";
 
@@ -27,12 +29,24 @@ await db.init().catch((err) => {
 	logger.error("database init failed", { error: String(err) });
 });
 
-const stations = new StationService(db);
-const streams = new StreamService(db, logger, {
-	maxListenersPerStation: config.maxListenersPerStation,
-	streamTimeoutMs: config.streamTimeoutMs,
-});
+const sources = createSourceManager(
+	logger,
+	{ userAgent: "Livy/0.1", fetchTimeoutMs: config.streamTimeoutMs },
+	config.defaultSearchSource,
+);
 
-const app = createApp({ config, logger, db, stations, streams, startedAt });
+const stations = new StationService(db);
+const streams = new StreamService(
+	db,
+	logger,
+	{
+		maxListenersPerStation: config.maxListenersPerStation,
+		streamTimeoutMs: config.streamTimeoutMs,
+	},
+	sources,
+);
+const metrics = new Metrics();
+
+const app = createApp({ config, logger, db, stations, streams, sources, metrics, startedAt });
 
 export default app.fetch;

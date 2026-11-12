@@ -11,9 +11,36 @@ Errors are JSON: `{ "error": "<CODE>", "message": "…", "details"?: … }`.
 |---|---|---|
 | GET | `/health` | Liveness probe → `{ ok: true, ts }` |
 | GET | `/ready` | Readiness probe (checks database) |
-| GET | `/api/v1/info` | Server info: version, native addon, database, uptime |
+| GET | `/metrics` | Prometheus metrics (text exposition) |
+| GET | `/api/v1/info` | Server info: version, native addon, database, uptime, sources |
 | GET | `/api/v1/config` | Public (redacted) configuration |
 | GET | `/api/v1/db/status` | Database adapter status + health |
+
+## Sources & track resolution (NodeLink-style)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/sources` | List registered sources (priority, health) |
+| GET | `/api/v1/sources/health` | Run health probes for all sources |
+| GET | `/api/v1/loadtracks?identifier=` | Resolve a URL or `source:query` into tracks |
+| GET | `/api/v1/trackstream?encoded=` | Direct stream URL for an encoded track |
+
+Identifiers route by `source:` prefix (`hls:`, `local:`, `m3u:`, `icecast:`)
+or by URL pattern. `loadtracks` returns Lavalink-compatible
+`{ loadType, data: { tracks: [{ encoded, info, pluginInfo }] } }` where
+`encoded` is an opaque base64 track string.
+
+```bash
+curl "localhost:2333/api/v1/loadtracks?identifier=https://example.com/live.m3u8"
+curl "localhost:2333/api/v1/loadtracks?identifier=local:/music/song.mp3"
+```
+
+## HLS
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/stations/:id/hls` | Rewritten media playlist (segments proxied) |
+| GET | `/api/v1/hls/segment?url=` | Proxy one HLS segment (AES-128 aware) |
 
 ## Stations
 

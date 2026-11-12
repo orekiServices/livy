@@ -11,6 +11,8 @@ import { nativeInfo } from "./audio/native.js";
 import { loadConfig } from "./config.js";
 import { createDatabase } from "./db/factory.js";
 import { createAppLogger } from "./logger.js";
+import { Metrics } from "./metrics.js";
+import { createSourceManager } from "./sources/manager.js";
 import { StationService } from "./stations/service.js";
 import { StreamService } from "./streams/service.js";
 
@@ -29,11 +31,24 @@ const db = createDatabase(config);
 await db.init();
 logger.info("database ready", { type: db.type });
 
+const sources = createSourceManager(
+	logger,
+	{ userAgent: "Livy/0.1", fetchTimeoutMs: config.streamTimeoutMs },
+	config.defaultSearchSource,
+);
+logger.info("sources ready", { sources: sources.getEnabledSourceNames() });
+
 const stations = new StationService(db);
-const streams = new StreamService(db, logger, {
-	maxListenersPerStation: config.maxListenersPerStation,
-	streamTimeoutMs: config.streamTimeoutMs,
-});
+const streams = new StreamService(
+	db,
+	logger,
+	{
+		maxListenersPerStation: config.maxListenersPerStation,
+		streamTimeoutMs: config.streamTimeoutMs,
+	},
+	sources,
+);
+const metrics = new Metrics();
 
 if (config.useNativeAudio) {
 	const native = nativeInfo(logger);
@@ -42,7 +57,7 @@ if (config.useNativeAudio) {
 	logger.info("native audio disabled by config");
 }
 
-const app = createApp({ config, logger, db, stations, streams, startedAt });
+const app = createApp({ config, logger, db, stations, streams, sources, metrics, startedAt });
 
 // Bun.serve when running under Bun; Node's http adapter otherwise.
 const bunGlobal = globalThis as unknown as {

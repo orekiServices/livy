@@ -87,6 +87,76 @@ export function stripIcyMetadata(
 	});
 }
 
+/**
+ * Skip an ID3v2 tag at the start of an MP3 stream (NodeLink HttpSource
+ * behaviour). Returns the stream unchanged when no ID3 tag is present.
+ * Caps the skip at 16 MiB to avoid pathological headers.
+ */
+export function skipId3Tag(
+	source: ReadableStream<Uint8Array>,
+	maxSkipBytes = 16 * 1024 * 1024,
+): ReadableStream<Uint8Array> {
+	let headerChecked = false;
+	let bytesToSkip = 0;
+	let pending: Uint8Array = new Uint8Array(0);
+
+	return new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			const reader = source.getReader();
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					if (pending.length > 0) controller.enqueue(pending);
+					controller.close();
+					return;
+				}
+				if (!value) return;
+
+				let chunk: Uint8Array = value;
+				if (pending.length > 0) {
+					const merged = new Uint8Array(pending.length + chunk.length);
+					merged.set(pending);
+					merged.set(chunk, pending.length);
+					chunk = merged;
+					pending = new Uint8Array(0);
+				}
+
+				if (!headerChecked) {
+					if (chunk.length < 10) {
+						pending = chunk;
+						return;
+					}
+					headerChecked = true;
+					if (chunk[0] === 0x49 && chunk[1] === 0x44 && chunk[2] === 0x33) {
+						// ID3v2 synchsafe size at bytes 6..9
+						const size =
+							((chunk[6] ?? 0) << 21) |
+							((chunk[7] ?? 0) << 14) |
+							((chunk[8] ?? 0) << 7) |
+							(chunk[9] ?? 0);
+						bytesToSkip = Math.min(10 + size, maxSkipBytes);
+					}
+				}
+
+				if (bytesToSkip > 0) {
+					if (chunk.length <= bytesToSkip) {
+						bytesToSkip -= chunk.length;
+						return;
+					}
+					chunk = chunk.slice(bytesToSkip);
+					bytesToSkip = 0;
+				}
+
+				if (chunk.length > 0) controller.enqueue(chunk);
+			} catch (err) {
+				controller.error(err);
+			} finally {
+				reader.releaseLock();
+			}
+		},
+	});
+}
+
 /** Parse a raw ICY metadata block (e.g. `StreamTitle='…';`) into a title. */
 export function parseIcyMetadata(block: Uint8Array): string | null {
 	const text = new TextDecoder("latin1").decode(block);

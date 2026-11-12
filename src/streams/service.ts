@@ -1,8 +1,9 @@
-import { icyMetaInt, mimeForCodec, sniffCodec } from "../audio/codecs.js";
-import { stripIcyMetadata } from "../audio/pipeline.js";
+import { mimeForCodec } from "../audio/codecs.js";
+import { skipId3Tag } from "../audio/pipeline.js";
 import type { DatabaseAdapter } from "../db/adapter.js";
 import { CapacityError, NotFoundError, StreamError } from "../errors.js";
 import type { Logger } from "../logger.js";
+import type { SourceManager } from "../sources/manager.js";
 import type { PlaybackSession, StationStatusInfo } from "../types.js";
 
 /**
@@ -23,6 +24,7 @@ export class StreamService {
 		private readonly db: DatabaseAdapter,
 		private readonly logger: Logger,
 		private readonly opts: { maxListenersPerStation: number; streamTimeoutMs: number },
+		private readonly sources?: SourceManager,
 	) {}
 
 	// ── Session lifecycle ─────────────────────────────────────────────────
@@ -138,20 +140,44 @@ export class StreamService {
 		let lastError: unknown = null;
 		for (const source of sources) {
 			try {
-				const upstream = await fetch(source.url, {
-					signal: controller.signal,
-					headers: {
-						"Icy-MetaData": "1",
-						"User-Agent": "Livy/0.1",
-						Accept: "*/*",
-					},
-				});
-				clearTimeout(timeout);
+				// Route through the source manager (http/icecast/hls/m3u/local)
+				// so station sources get the same hardening as loadtracks:
+				// HEAD validation, ICY handling, HLS segment following.
+				let body: ReadableStream<Uint8Array> | null = null;
+				let contentType = mimeForCodec(source.codec);
 
-				if (!upstream.ok || !upstream.body) {
-					lastError = new Error(`Upstream responded ${upstream.status}`);
-					continue;
+				if (this.sources) {
+					const resolved = await this.sources.resolve(source.url);
+					const first = resolved.data.tracks[0];
+					if (first) {
+						const loaded = await this.sources.getTrackStream(first.encoded);
+						if (loaded.stream) {
+							body = loaded.stream;
+							contentType = loaded.type ?? contentType;
+						} else {
+							lastError = new Error(loaded.exception?.message ?? "Source stream failed");
+						}
+					} else {
+						lastError = new Error(resolved.exception?.message ?? "Source resolve failed");
+					}
+				} else {
+					const upstream = await fetch(source.url, {
+						signal: controller.signal,
+						headers: {
+							"Icy-MetaData": "1",
+							"User-Agent": "Livy/0.1",
+							Accept: "*/*",
+						},
+					});
+					if (!upstream.ok || !upstream.body) {
+						lastError = new Error(`Upstream responded ${upstream.status}`);
+						continue;
+					}
+					body = upstream.body;
 				}
+
+				if (!body) continue;
+				clearTimeout(timeout);
 
 				session.state = "playing";
 				session.sourceUrl = source.url;
@@ -163,17 +189,8 @@ export class StreamService {
 					url: source.url,
 				});
 
-				const metaint = icyMetaInt(upstream.headers);
-				const codec = sniffCodec(new Uint8Array(0)) !== "unknown" ? source.codec : source.codec;
-				const contentType = mimeForCodec(codec);
-
-				let body: ReadableStream<Uint8Array> = upstream.body;
-				if (metaint) {
-					body = stripIcyMetadata(body, metaint, (title) => {
-						session.updatedAt = new Date().toISOString();
-						this.logger.debug("icy metadata", { sessionId, title });
-					});
-				}
+				// Strip ID3v2 tags for clean MP3 output (NodeLink behaviour).
+				body = skipId3Tag(body);
 
 				// Track bytes streamed without buffering the whole body.
 				const tracked = new ReadableStream<Uint8Array>({

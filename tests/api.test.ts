@@ -3,6 +3,8 @@ import { createApp } from "../src/api/server.js";
 import { loadConfig } from "../src/config.js";
 import { MemoryAdapter } from "../src/db/memory.js";
 import { createAppLogger } from "../src/logger.js";
+import { Metrics } from "../src/metrics.js";
+import { createSourceManager } from "../src/sources/manager.js";
 import { StationService } from "../src/stations/service.js";
 import { StreamService } from "../src/streams/service.js";
 
@@ -11,12 +13,28 @@ async function setup() {
 	const logger = createAppLogger("error");
 	const db = new MemoryAdapter();
 	await db.init();
+	const sources = createSourceManager(logger, { userAgent: "Livy/test", fetchTimeoutMs: 2000 });
 	const stations = new StationService(db);
-	const streams = new StreamService(db, logger, {
-		maxListenersPerStation: 10,
-		streamTimeoutMs: 5000,
+	const streams = new StreamService(
+		db,
+		logger,
+		{
+			maxListenersPerStation: 10,
+			streamTimeoutMs: 5000,
+		},
+		sources,
+	);
+	const metrics = new Metrics();
+	const app = createApp({
+		config,
+		logger,
+		db,
+		stations,
+		streams,
+		sources,
+		metrics,
+		startedAt: Date.now(),
 	});
-	const app = createApp({ config, logger, db, stations, streams, startedAt: Date.now() });
 	return { app, stations, streams };
 }
 

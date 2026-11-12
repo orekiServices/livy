@@ -20,6 +20,11 @@ layer.
 - **Streaming proxy with failover** — listeners connect to a station session;
   Livy proxies the highest-priority reachable upstream (Icecast/Shoutcast/HLS/
   direct) with automatic failover and ICY `StreamTitle` metadata handling.
+- **NodeLink-style source system** — five providers (http, icecast, hls, m3u,
+  local) behind a prefix-routed source manager, with `loadtracks` /
+  `trackstream` resolution, HEAD→GET validation, ID3v2 skipping, Range
+  reconnect with backoff, HLS segment proxying with AES-128 decryption,
+  source health probes, Prometheus metrics and token-bucket rate limiting.
 - **Hybrid TS + Rust** — Rust native addon (napi-rs) for codec probing, HLS
   parsing and ICY stripping, with a pure-TypeScript fallback so the server runs
   with or without the addon built.
@@ -62,7 +67,11 @@ curl "localhost:2333/api/v1/stations/<id>/stream?session=<sessionId>"
 | `bun run build` | Build TypeScript + native addon |
 | `bun run build:native` | Build the Rust addon (requires Rust toolchain) |
 | `bun run check` | Biome lint + strict typecheck |
+| `bun run check:bun` | Bun-native type checker (`bun check`, ~10× faster than tsc) |
 | `bun run lint` | `bunx @biomejs/biome check .` |
+| `bun run fmt` | Bun-native formatter (`bun fmt`) |
+| `bun run build:exe` | Standalone executable (`bun build --compile`) |
+| `bun run start:smol` | Low-memory mode (`--smol`, for constrained hosts) |
 | `bun run test` | Run the test suite (`bun test`) |
 | `bun run bench` | Audio pipeline benchmarks |
 | `bun run db:migrate` | Initialise the configured database schema |

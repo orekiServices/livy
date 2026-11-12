@@ -17,6 +17,9 @@ const EnvSchema = z.object({
 		.default("true")
 		.transform((v) => v.toLowerCase() !== "false" && v !== "0"),
 	CORS_ORIGINS: z.string().default("*"),
+	RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+	RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+	DEFAULT_SEARCH_SOURCE: z.string().default("http"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -39,6 +42,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LivyConfig {
 		corsOrigins: parsed.CORS_ORIGINS.split(",")
 			.map((s) => s.trim())
 			.filter(Boolean),
+		rateLimitMax: parsed.RATE_LIMIT_MAX,
+		rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
+		defaultSearchSource: parsed.DEFAULT_SEARCH_SOURCE,
 	};
 }
 
