@@ -1,0 +1,75 @@
+{
+	"name": "livy",
+	"version": "0.1.0",
+	"description": "Livy — TypeScript & Rust hybrid radio streaming server",
+	"type": "module",
+	"license": "MIT",
+	"engines": {
+		"node": ">=20",
+		"bun": ">=1.1"
+	},
+	"bin": {
+		"livy": "./dist/index.js"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./server": {
+			"types": "./dist/api/server.d.ts",
+			"import": "./dist/api/server.js"
+		},
+		"./config": {
+			"types": "./dist/config.d.ts",
+			"import": "./dist/config.js"
+		},
+		"./types": {
+			"types": "./dist/types.d.ts",
+			"import": "./dist/types.js"
+		}
+	},
+	"scripts": {
+		"dev": "bun run --watch src/index.ts",
+		"dev:node": "tsx watch src/index.ts",
+		"start": "bun run src/index.ts",
+		"start:node": "node dist/index.js",
+		"build": "bun run build:ts && bun run build:native",
+		"build:ts": "tsc -p tsconfig.json",
+		"build:native": "napi build --release --cwd native",
+		"build:native:debug": "napi build --cwd native",
+		"lint": "bunx @biomejs/biome check .",
+		"lint:fix": "bunx @biomejs/biome check --write .",
+		"format": "bunx @biomejs/biome format --write .",
+		"check": "bun run lint && bun run typecheck",
+		"typecheck": "tsc --noEmit -p tsconfig.check.json",
+		"test": "bun test",
+		"test:watch": "bun test --watch",
+		"test:coverage": "bun test --coverage",
+		"bench": "bun run benchmarks/audio.bench.ts",
+		"db:migrate": "bun run src/db/migrate.ts",
+		"clean": "rm -rf dist native/*.node"
+	},
+	"dependencies": {
+		"@hono/node-server": "^1.13.0",
+		"hono": "^4.6.0",
+		"zod": "^3.23.8"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"@napi-rs/cli": "^3.0.0",
+		"@types/bun": "latest",
+		"@types/node": "^22.0.0",
+		"tsx": "^4.19.0",
+		"typescript": "^5.6.0"
+	},
+	"optionalDependencies": {
+		"postgres": "^3.4.0"
+	},
+	"napi": {
+		"name": "livy-native",
+		"path": "native"
+	}
+}

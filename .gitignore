@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.env
+data/
+*.db
+*.db-journal
+*.node
+native/target/
+native/*.node
+.DS_Store
+*.log

@@ -1,0 +1,17 @@
+{
+	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"framework": null,
+	"buildCommand": "bun install --frozen-lockfile",
+	"installCommand": "bun install --frozen-lockfile",
+	"functions": {
+		"api/index.ts": {
+			"maxDuration": 30,
+			"memory": 1024
+		}
+	},
+	"rewrites": [
+		{ "source": "/api/(.*)", "destination": "/api/index.ts" },
+		{ "source": "/health", "destination": "/api/index.ts" },
+		{ "source": "/ready", "destination": "/api/index.ts" }
+	]
+}

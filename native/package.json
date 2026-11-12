@@ -1,0 +1,11 @@
+{
+	"name": "livy-native",
+	"version": "0.1.0",
+	"description": "Livy native audio & streaming addon",
+	"main": "index.js",
+	"types": "index.d.ts",
+	"napi": {
+		"name": "livy-native",
+		"path": "."
+	}
+}

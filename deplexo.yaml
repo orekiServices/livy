@@ -1,0 +1,18 @@
+# Deplexo deployment config — persistent streaming runtime.
+# Deplexo builds the Dockerfile and runs the container as an always-on app.
+# Free tier: 128 MB RAM / 0.25 CPU — keep the native addon optional and use
+# the memory or sqlite adapter. For production audio workloads prefer Starter+.
+name: livy
+dockerfile: Dockerfile
+port: 2333
+healthcheck:
+  path: /health
+  intervalSeconds: 30
+  timeoutSeconds: 5
+env:
+  HOST: 0.0.0.0
+  PORT: "2333"
+  NODE_ENV: production
+  DATABASE_TYPE: sqlite
+  DATABASE_PATH: /data/livy.db
+  USE_NATIVE_AUDIO: "false"
