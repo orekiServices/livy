@@ -1,0 +1,227 @@
+{
+  "id": "vnnews",
+  "name": "VNNews",
+  "version": "1.0.0",
+  "description": "Bản tin tiếng Việt — Vietnamese news bulletins read on air between 17:00 and 19:00 (Hanoi time), from VnExpress and friends.",
+  "scope": "stations",
+  "enabled": false,
+  "settings": {
+    "start": "17:00",
+    "end": "19:00",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "everyMinutes": 30,
+    "headlines": 6,
+    "summaries": true,
+    "language": "vi",
+    "speed": 1,
+    "feeds": [
+      "https://vnexpress.net/rss/tin-moi-nhat.rss",
+      "https://vnexpress.net/rss/thoi-su.rss",
+      "https://vnexpress.net/rss/the-gioi.rss",
+      "https://vnexpress.net/rss/kinh-doanh.rss",
+      "https://tuoitre.vn/rss/tin-moi-nhat.rss",
+      "https://thanhnien.vn/rss/thoi-su.rss",
+      "https://dantri.com.vn/rss/xa-hoi.rss",
+      "https://vov.vn/rss/chinh-tri.rss"
+    ],
+    "maxAgeHours": 24,
+    "worker": true,
+    "renderTimeoutMs": 20000,
+    "everySongs": 0,
+    "anytime": false,
+    "bed": "none",
+    "bedGainDb": -14,
+    "bedDuckDb": -9,
+    "bedLeadInMs": 2500,
+    "bedTailMs": 3000
+  },
+  "settingsSchema": [
+    {
+      "key": "start",
+      "type": "time",
+      "default": "17:00",
+      "label": "News from",
+      "help": "Local time in the zone below. 17:00 is the Vietnamese rush-hour slot."
+    },
+    {
+      "key": "end",
+      "type": "time",
+      "default": "19:00",
+      "label": "News until",
+      "help": "A window that wraps past midnight (22:00 → 02:00) works too."
+    },
+    {
+      "key": "timezone",
+      "type": "timezone",
+      "default": "Asia/Ho_Chi_Minh",
+      "label": "Time zone",
+      "help": "The window follows this zone, not the server's clock."
+    },
+    {
+      "key": "everyMinutes",
+      "type": "integer",
+      "default": 30,
+      "min": 5,
+      "max": 240,
+      "step": 5,
+      "unit": "min",
+      "label": "A bulletin every",
+      "help": "Bulletins land on the grid from the start time: 17:00, 17:30, 18:00…"
+    },
+    {
+      "key": "headlines",
+      "type": "integer",
+      "default": 6,
+      "min": 1,
+      "max": 20,
+      "label": "Stories per bulletin",
+      "help": "Six takes about ninety seconds to read."
+    },
+    {
+      "key": "summaries",
+      "type": "boolean",
+      "default": true,
+      "label": "Read the one-line summary",
+      "help": "Off gives a headlines-only bulletin, about a third as long."
+    },
+    {
+      "key": "everySongs",
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "max": 50,
+      "unit": "songs",
+      "label": "…or every N songs",
+      "help": "0 is off. Set 5 and the headlines run between records as well as on the clock — whichever comes first."
+    },
+    {
+      "key": "anytime",
+      "type": "boolean",
+      "default": false,
+      "label": "Song trigger ignores the window",
+      "help": "On, the every-N-songs bulletin runs around the clock. Off, it still only happens inside the news window.",
+      "advanced": true
+    },
+    {
+      "key": "bed",
+      "type": "string",
+      "default": "none",
+      "label": "Music bed",
+      "placeholder": "ccsearch:ambient instrumental",
+      "help": "Music under the voice. A source query (ccsearch:… is Creative Commons and free), a URL, or a file. \"none\" for a dry bulletin."
+    },
+    {
+      "key": "bedGainDb",
+      "type": "number",
+      "default": -14,
+      "min": -30,
+      "max": -3,
+      "step": 1,
+      "unit": "dB",
+      "label": "Bed level",
+      "help": "How loud the music sits before the ducker takes it down further.",
+      "advanced": true
+    },
+    {
+      "key": "bedDuckDb",
+      "type": "number",
+      "default": -9,
+      "min": -24,
+      "max": -3,
+      "step": 1,
+      "unit": "dB",
+      "label": "Duck under the voice",
+      "help": "How far the music drops while somebody is speaking.",
+      "advanced": true
+    },
+    {
+      "key": "bedLeadInMs",
+      "type": "integer",
+      "default": 2500,
+      "min": 0,
+      "max": 10000,
+      "step": 250,
+      "unit": "ms",
+      "label": "Music before the first word",
+      "advanced": true
+    },
+    {
+      "key": "bedTailMs",
+      "type": "integer",
+      "default": 3000,
+      "min": 0,
+      "max": 15000,
+      "step": 250,
+      "unit": "ms",
+      "label": "Music after the last word",
+      "advanced": true
+    },
+    {
+      "key": "language",
+      "type": "language",
+      "default": "vi",
+      "label": "Language",
+      "help": "The voice used for the bulletin. The feeds decide the words; this decides the accent."
+    },
+    {
+      "key": "speed",
+      "type": "number",
+      "default": 1,
+      "min": 0.5,
+      "max": 1,
+      "step": 0.05,
+      "label": "Reading pace",
+      "help": "1 is the voice's normal pace; 0.8 is a deliberate newsreader."
+    },
+    {
+      "key": "feeds",
+      "type": "list",
+      "of": "url",
+      "max": 24,
+      "label": "RSS feeds",
+      "help": "In order of preference. Stories are interleaved across outlets so no single paper takes the bulletin.",
+      "default": [
+        "https://vnexpress.net/rss/tin-moi-nhat.rss",
+        "https://vnexpress.net/rss/thoi-su.rss",
+        "https://vnexpress.net/rss/the-gioi.rss",
+        "https://vnexpress.net/rss/kinh-doanh.rss",
+        "https://tuoitre.vn/rss/tin-moi-nhat.rss",
+        "https://thanhnien.vn/rss/thoi-su.rss",
+        "https://dantri.com.vn/rss/xa-hoi.rss",
+        "https://vov.vn/rss/chinh-tri.rss"
+      ]
+    },
+    {
+      "key": "maxAgeHours",
+      "type": "integer",
+      "default": 24,
+      "min": 1,
+      "max": 168,
+      "unit": "h",
+      "label": "Ignore stories older than",
+      "help": "Stale stories are kept at the back for a quiet news day, never thrown away.",
+      "advanced": true
+    },
+    {
+      "key": "worker",
+      "type": "boolean",
+      "default": true,
+      "label": "Voice the bulletin in a worker thread",
+      "help": "Renders the speech off the event loop so the pacer never stutters. Falls back to inline rendering if the worker fails.",
+      "advanced": true,
+      "perStation": false
+    },
+    {
+      "key": "renderTimeoutMs",
+      "type": "integer",
+      "default": 20000,
+      "min": 2000,
+      "max": 120000,
+      "unit": "ms",
+      "label": "Give up rendering after",
+      "help": "A bulletin that cannot be voiced in this time is abandoned, not queued forever.",
+      "advanced": true,
+      "perStation": false
+    }
+  ]
+}

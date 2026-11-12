@@ -1,0 +1,53 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 2333,
+    "password": "",
+    "cors": "*"
+  },
+  "logging": {
+    "level": "info",
+    "color": true
+  },
+  "web": {
+    "enabled": true
+  },
+  "sources": {
+    "defaultSearch": "soundcloud",
+    "hiRes": true,
+    "hiResMinKbps": 192,
+    "fallbackOrder": [
+      "archive",
+      "soundcloud",
+      "audius",
+      "bandcamp",
+      "ccmixter",
+      "radiobrowser"
+    ],
+    "liveFallback": true
+  },
+  "owner": {
+    "name": "owner",
+    "autoKey": true
+  },
+  "stationDefaults": {
+    "bufferAheadMs": 15000,
+    "burstMs": 4000,
+    "shuffle": true,
+    "loop": true,
+    "trackLimit": 40,
+    "quality": "high",
+    "allowRequests": true,
+    "maxRequests": 40,
+    "maxPendingPerUser": 3,
+    "requestCooldownMs": 20000,
+    "voteSkipRatio": 0.5,
+    "automix": {
+      "enabled": true,
+      "crossfadeMs": 6000,
+      "effect": "crossfade",
+      "beatmatch": true
+    }
+  },
+  "stations": []
+}

@@ -1,0 +1,50 @@
+{
+  "name": "Hourly ident",
+  "version": "1.0.0",
+  "description": "Speaks the time and the station name on the hour. Ships disabled because it talks on air.",
+  "author": "nodecast",
+  "main": "index.js",
+  "enabled": false,
+  "settings": {
+    "onlyWhenPlaying": true,
+    "text": "It is {time} on {station}.",
+    "language": null,
+    "minute": 0
+  },
+  "scope": "stations",
+  "settingsSchema": [
+    {
+      "key": "text",
+      "type": "text",
+      "default": "It is {time} on {station}.",
+      "label": "What to say",
+      "help": "{time} and {station} are filled in when it is spoken.",
+      "maxLength": 300
+    },
+    {
+      "key": "minute",
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "max": 59,
+      "unit": "min past the hour",
+      "label": "When",
+      "help": "0 is on the hour. 30 would make it half past."
+    },
+    {
+      "key": "onlyWhenPlaying",
+      "type": "boolean",
+      "default": true,
+      "label": "Only while the station is on air",
+      "help": "Off means it speaks into a stopped station too."
+    },
+    {
+      "key": "language",
+      "type": "language",
+      "default": null,
+      "label": "Language",
+      "help": "Leave empty to use the station's own language.",
+      "advanced": true
+    }
+  ]
+}

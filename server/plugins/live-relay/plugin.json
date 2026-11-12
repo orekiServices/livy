@@ -1,0 +1,65 @@
+{
+  "id": "live-relay",
+  "name": "Live relay",
+  "version": "1.0.0",
+  "description": "Put a live stream on air through MetroS — MP3, AAC, HLS, Ogg or FLAC, transcoded as it arrives.",
+  "scope": "stations",
+  "enabled": false,
+  "settings": {
+    "url": "",
+    "title": "Live relay",
+    "artist": null,
+    "reconnect": true,
+    "bitrate": 128
+  },
+  "settingsSchema": [
+    {
+      "key": "url",
+      "type": "string",
+      "default": "",
+      "label": "Feed address",
+      "help": "An Icecast/Shoutcast stream, an HLS playlist (.m3u8), or a file on disk. MP3 is forwarded untouched; anything else is transcoded by MetroS.",
+      "placeholder": "https://stream.example/live.m3u8"
+    },
+    {
+      "key": "title",
+      "type": "string",
+      "default": "Live relay",
+      "label": "Title on air",
+      "maxLength": 120
+    },
+    {
+      "key": "artist",
+      "type": "string",
+      "default": null,
+      "label": "Artist on air",
+      "help": "Shown as the artist while the relay runs. Empty uses the plugin name."
+    },
+    {
+      "key": "reconnect",
+      "type": "boolean",
+      "default": true,
+      "label": "Reconnect when the feed drops",
+      "help": "A dropped feed on the internet is normal; this comes back five seconds later."
+    },
+    {
+      "key": "bitrate",
+      "type": "integer",
+      "default": 128,
+      "min": 64,
+      "max": 320,
+      "step": 32,
+      "unit": "kbps",
+      "label": "Transcode bitrate",
+      "help": "Only used when the feed is not already MP3.",
+      "advanced": true
+    },
+    {
+      "key": "autostart",
+      "type": "boolean",
+      "default": false,
+      "label": "Start with the node",
+      "help": "Put this feed on air as soon as the plugin loads."
+    }
+  ]
+}

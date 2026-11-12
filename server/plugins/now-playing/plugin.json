@@ -1,0 +1,40 @@
+{
+  "name": "Now Playing",
+  "version": "1.2.0",
+  "description": "Writes what is on air to data/now-playing.json (and optionally a webhook), plus a public /api/v1/x/now-playing endpoint for overlays and websites.",
+  "author": "nodecast",
+  "main": "index.js",
+  "enabled": true,
+  "settings": {
+    "file": "data/now-playing.json",
+    "text": "data/now-playing.txt",
+    "webhook": null
+  },
+  "scope": "stations",
+  "settingsSchema": [
+    {
+      "key": "file",
+      "type": "string",
+      "default": "data/now-playing.json",
+      "label": "JSON file",
+      "help": "Written on every track change — point OBS or a website at it.",
+      "perStation": false
+    },
+    {
+      "key": "text",
+      "type": "string",
+      "default": "data/now-playing.txt",
+      "label": "Text file",
+      "help": "One line, \"artist — title\", for a scrolling sign or an OBS text source.",
+      "perStation": false
+    },
+    {
+      "key": "webhook",
+      "type": "url",
+      "default": null,
+      "label": "Webhook",
+      "help": "POSTed the same payload whenever the track changes.",
+      "advanced": true
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "name": "nodecast",
+  "version": "3.10.0",
+  "description": "Nodecast — Node.js + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./station": "./src/core/station.js",
+    "./sources": "./src/sources/index.js",
+    "./mp3": "./src/util/mp3.js",
+    "./metro": "./src/util/metro.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test --test-concurrency=4 test/",
+    "build:web": "node scripts/build-console.js",
+    "db": "node scripts/db.js",
+    "db:info": "node scripts/db.js info",
+    "db:migrate": "node scripts/db.js migrate",
+    "bench:metro": "node scripts/metro-bench.js",
+    "build:metro": "cd ../libmetro && cargo build --release && node scripts/link-local.js",
+    "test:js": "NODECAST_DISABLE_METRO=1 node --test --test-concurrency=4 test/",
+    "build:db": "cd ../metrodb && cargo build --release && node scripts/link-local.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
+    "mpg123-decoder": "^1.0.3",
+    "ws": "^8.18.0"
+  },
+  "keywords": [
+    "nodecast",
+    "radio",
+    "icecast",
+    "icy",
+    "mp3",
+    "streaming",
+    "automix",
+    "beatmatch",
+    "soundcloud",
+    "audius",
+    "broadcast"
+  ],
+  "license": "MIT",
+  "optionalDependencies": {
+    "better-sqlite3": "^12.11.1"
+  }
+}

@@ -1,0 +1,85 @@
+## Build libmetro (MetroS) for every platform Nodecast ships to.
+##
+## Nodecast runs perfectly well without any of these: the node falls back to
+## its JavaScript re-framer and the WASM decoder. The point of this workflow
+## is that nobody should ever *need* a Rust toolchain to get the fast path —
+## a release carries a binary for each target and the loader picks one.
+
+name: libmetro
+
+on:
+  push:
+    paths:
+      - 'libmetro/**'
+      - '.github/workflows/libmetro.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: libmetro
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   target: x86_64-apple-darwin }
+          - { os: macos-latest,   target: aarch64-apple-darwin }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu, cross: true }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl,  cross: true }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl, cross: true }
+          - { os: ubuntu-latest,  target: armv7-unknown-linux-gnueabihf, cross: true }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # The cross targets need a linker; `cross` brings its own container.
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - run: npm install
+
+      - name: Build
+        run: npx napi build --platform --release --target ${{ matrix.target }}
+        env:
+          CARGO: ${{ matrix.cross && 'cross' || 'cargo' }}
+
+      - name: Smoke test
+        if: '!matrix.cross'
+        run: node -e "const m=require('./index.js'); if(!m.available) process.exit(1); console.log(m.describe())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libmetro-${{ matrix.target }}
+          path: libmetro/*.node
+          if-no-files-found: error
+
+  bundle:
+    name: collect binaries
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+      - run: ls -la binaries
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libmetro-universal
+          path: binaries/*.node

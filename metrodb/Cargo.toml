@@ -1,0 +1,27 @@
+[package]
+name    = "metrodb"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "MetroDB — SQLite for Node, in Rust: a drop-in alternative to better-sqlite3 with the same synchronous API and no node-gyp."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# N-API 8: one binary per platform works on every Node >= 16.
+napi        = { version = "2", default-features = false, features = ["napi8", "serde-json"] }
+napi-derive = "2"
+# SQLite itself, compiled in: no system library, no node-gyp, no install
+# step that can fail on a machine without build tools.
+rusqlite    = { version = "0.32", features = ["bundled", "column_decltype", "backup"] }
+serde_json  = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto           = true
+opt-level     = 3
+codegen-units = 1
+strip         = "symbols"

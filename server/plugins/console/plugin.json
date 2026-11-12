@@ -1,0 +1,33 @@
+{
+  "name": "Web console",
+  "version": "1.1.0",
+  "description": "The Nodecast web UI (station wall, station pages, owner console) served from this node's own port. Boots even when the build is missing.",
+  "author": "nodecast",
+  "main": "index.js",
+  "enabled": true,
+  "settings": {
+    "mount": "/",
+    "dir": "public"
+  },
+  "scope": "global",
+  "settingsSchema": [
+    {
+      "key": "mount",
+      "type": "string",
+      "default": "/",
+      "label": "Mount path",
+      "help": "Where the console appears on this node. \"/\" is the root; \"/console\" keeps the root free for something else.",
+      "perStation": false,
+      "placeholder": "/"
+    },
+    {
+      "key": "dir",
+      "type": "string",
+      "default": "public",
+      "label": "Build directory",
+      "help": "Folder to serve, relative to the plugin (or an absolute path to a build you made elsewhere).",
+      "perStation": false,
+      "advanced": true
+    }
+  ]
+}
