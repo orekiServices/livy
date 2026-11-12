@@ -1,0 +1,10 @@
+# Deplexo deployment configuration
+# Docs: https://docs.deplexo.com/reference/configuration/
+# Deplexo deploys GitHub repos as always-on containers. Livy runs as a
+# persistent Node.js server (required for continuous radio streaming).
+version: 1
+build:
+  framework: auto
+run:
+  command: node dist/index.js
+  port: 3000

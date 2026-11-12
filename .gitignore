@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+data/
+*.db
+*.sqlite
+native/*.node
+native/index.js
+native/index.d.ts
+coverage/
+.DS_Store

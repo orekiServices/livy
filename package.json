@@ -1,0 +1,37 @@
+{
+  "name": "livy",
+  "version": "1.0.0",
+  "description": "Livy — TypeScript & Rust hybrid radio streaming server (Lavalink-v4 compatible, inspired by NodeLink)",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./db": "./dist/db/index.js",
+    "./audio": "./dist/audio/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:native": "npm --prefix native run build",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "fastify": "^5.2.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.4"
+  }
+}
