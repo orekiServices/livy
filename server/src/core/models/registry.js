@@ -13,6 +13,7 @@ import createLogger from '../../util/logger.js'
 import { models } from './host.js'
 import { activateLocal, listModels, readLocalModel, removeLocalModel, resolveModel, writableModelDir } from './storage/local.js'
 import { downloadFile, ensureRepo, hfConfig, hfReady, hubStatus, listRemote, uploadFile } from './storage/hf.js'
+import { seamCount } from './trainer/dataset.js'
 
 const log = createLogger('dj-registry')
 
@@ -116,7 +117,10 @@ export async function registryState({ store = null, cfg = hfConfig(), fetchImpl 
     models: modelInventory({ store }),
     active: models.info(),
     runs: store?.recentTrainingRuns?.(10) ?? [],
-    seams: store?.countSeams?.() ?? null,
+    // Same fallback the trainer uses: the JSONL log still counts when the
+    // table is empty, so the console never says "0 seams" beside a model that
+    // was just trained from them.
+    seams: seamCount({ store }),
     hf: await hubStatus(cfg, { fetchImpl }),
     dir: writableModelDir()
   }
