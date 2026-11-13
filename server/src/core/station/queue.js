@@ -212,7 +212,11 @@ export const queueMethods = {
       talkover: Boolean(report.dj),
       hour: new Date(at).getHours(),
       from: report.from ?? null,
-      to: report.to ?? null
+      to: report.to ?? null,
+      // What the music was doing on either side — what RL learns from. The
+      // entry is often not known yet (the incoming song has barely been
+      // read); `_logSeam` fills it in when the label is written.
+      ...this._seamKindsNow(report)
     }
     return this._lastSeam
   },
@@ -236,8 +240,24 @@ export const queueMethods = {
     return this._logSeam({ ...seam, outcome: 'skipped', skippedAfterMs: since, skippedTrack: playingId })
   },
 
+  /** The kinds of beat at the last advised seam, as far as they are known. */
+  _seamKindsNow(report = {}) {
+    const context = this._seamContext
+    if (!context) return {}
+    const blendMs = report.blendMs ?? 6000
+    const entry = context.entry ?? this._scoutFor?.(context.to)?.beatAt(blendMs) ?? null
+    if (entry) context.entry = entry
+    return {
+      exitKind: context.exit?.category ?? null,
+      exitBeat: context.exit?.descriptor ?? null,
+      entryKind: entry?.category ?? null,
+      entryBeat: entry?.descriptor ?? null
+    }
+  },
+
   _logSeam(record) {
     try {
+      if (record.exitKind !== undefined && !record.entryKind) record = { ...record, ...this._seamKindsNow({ blendMs: record.fadeMs }) }
       // Both destinations are written by the dataset: the MetroDB row the
       // trainer polls and the JSONL tail for a node without a database. The
       // optional `seamLogFile` override is for embedded nodes and tests; the

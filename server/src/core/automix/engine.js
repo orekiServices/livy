@@ -1,8 +1,7 @@
 /**
  * The Automix engine: hold the tail back, analyse the pair, render one seam.
  */
-import createHash from 'node:crypto'
-import { MetroFramer, analyseBeat, stretchAudio } from '../../util/metro.js'
+import { analyseBeat, stretchAudio } from '../../util/metro.js'
 import createLogger from '../../util/logger.js'
 import { djLine } from '../dj.js'
 import {
@@ -17,8 +16,6 @@ import {
   correlation,
   fadeGains,
   exponentFor,
-  estimateBeat,
-  timeStretch,
   foldTempo,
   compressorGain,
   echoTail,
@@ -38,7 +35,8 @@ import {
   vocalAwareCurves
 } from '../dsp.js'
 import { DEFAULT_AUTOMIX, AUTO_EFFECT, EFFECTS } from './defaults.js'
-import { decodeMp3, encodeMp3 } from './audio.js'
+import { codec, codecKey, decodeFrames, samplesIn } from '../../util/codec.js'
+import { LEAD_FRAMES, bridge, reservoirBefore } from '../../util/splice.ts'
 import { fitRate, monoOf, sliceChannels } from './util.js'
 import { chooseEffect, chooseEffectWithModel, smartCrossfadeMs, smoothEdges } from './effects.js'
 import { EFFECT_RENDERERS } from './renderers.js'
@@ -70,6 +68,7 @@ export class Automix {
   #currentId = null
   #currentMs = 0
   #collecting = false
+  #context = [] // the last frames aired before the FIFO: decoder run-up for the seam
   #lastTrack = null
   #lastEffect = null
   #lastModel = null
@@ -135,6 +134,7 @@ export class Automix {
     this.#collecting = false
     this.#currentId = null
     this.#currentMs = 0
+    this.#context = []
   }
 
   /**
@@ -153,7 +153,7 @@ export class Automix {
         if (bypass || !this.#eligible()) {
           out.push(...this.#drain())
         } else {
-          this.#tail = { frames: this.#fifo, ms: this.#fifoMs, track: this.#lastTrack ?? null }
+          this.#tail = { frames: this.#fifo, ms: this.#fifoMs, track: this.#lastTrack ?? null, context: this.#context }
           this.#fifo = []
           this.#fifoMs = 0
           this.#collecting = true
@@ -162,6 +162,7 @@ export class Automix {
         }
         this.#currentId = track?.id ?? null
         this.#currentMs = 0
+        this.#context = []
       }
 
       this.#currentMs += frame.ms
@@ -183,19 +184,64 @@ export class Automix {
       // mixing: a station's first seconds stay instant and short idents are
       // never touched.
       if (this.#currentMs < this.options.minTrackMs) {
+        this.#remember(frame)
         out.push(frame)
         continue
       }
 
       this.#fifo.push(frame)
       this.#fifoMs += frame.ms
-      while (this.#fifoMs > this.options.crossfadeMs) {
+      const hold = this.holdMs
+      while (this.#fifoMs > hold) {
         const oldest = this.#fifo.shift()
         this.#fifoMs -= oldest.ms
+        this.#remember(oldest)
         out.push(oldest)
       }
     }
     return out
+  }
+
+  /**
+   * How much of the song on air is held back.
+   *
+   * The blend can be no longer than this, so with Smart Automix it is more
+   * than `crossfadeMs`: a seam that deserves twelve seconds cannot have them
+   * if only six were kept. It is not the whole `maxCrossfadeMs` either — the
+   * incoming song has to be read for as long as the tail is before the seam
+   * can render, and a source that delivers at 1× would run the buffer dry.
+   * The extra tenth of a second is the three frames the splice keeps intact.
+   */
+  get holdMs() {
+    const { crossfadeMs, maxCrossfadeMs, holdMs, smart } = this.options
+    if (smart === false) return crossfadeMs + 100
+    return clamp(Number(holdMs) || 12_000, crossfadeMs, Math.max(crossfadeMs, maxCrossfadeMs ?? crossfadeMs)) + 100
+  }
+
+  /** Keep the last few aired frames: the seam decode needs a run-up. */
+  #remember(frame) {
+    this.#context.push(frame.data)
+    if (this.#context.length > 4) this.#context.shift()
+  }
+
+  /**
+   * Take back the newest `count` held frames of the song on air.
+   *
+   * The jukebox uses this at the end of a song: the frames it would rather
+   * not air (the fade-out, the silence) are still here, so it removes them
+   * and continues from somewhere else in the same song.
+   * @returns {number} how many frames were actually withdrawn
+   */
+  retract(count) {
+    if (this.#collecting || this.#tail) return 0
+    const take = Math.max(0, Math.min(count, this.#fifo.length))
+    for (let i = 0; i < take; i += 1) this.#fifoMs -= this.#fifo.pop().ms
+    return take
+  }
+
+  /** Frames of the current song being held, newest last. */
+  get heldFrames() {
+    return this.#collecting || this.#tail ? 0 : this.#fifo.length
   }
 
   /** Release whatever is being held (end of programme, errors, stop). */
@@ -237,10 +283,20 @@ export class Automix {
     // next file, and what the echo/spindown tails ring out into.
     // With Smart Automix the blend can grow beyond the configured length,
     // so collect for the longest one it is allowed to choose.
-    const longest = this.options.smart === false ? crossfadeMs : Math.max(crossfadeMs, this.options.maxCrossfadeMs ?? crossfadeMs)
-    const base = longest + 2000
+    //
+    // The blend cannot be longer than the tail that was held, so that — not
+    // `maxCrossfadeMs` — is what bounds the wait. Collecting thirty seconds
+    // of the next song for a six second tail kept a 1× source off air for
+    // most of half a minute. The landing is where the seam is eased back
+    // onto the incoming song's own frame grid (see `#mix`, step 9).
+    const longest = Math.min(this.holdMs, this.#tail?.ms ?? this.holdMs)
+    const base = Math.max(crossfadeMs, longest) + 2000 + this.landingMs
     if (!this.#djDue()) return Math.min(maxRenderMs, base)
-    return Math.min(maxRenderMs, Math.max(base, dj.leadInMs + 6500 + dj.tailMs))
+    return Math.min(maxRenderMs, Math.max(base, dj.leadInMs + 6500 + dj.tailMs + this.landingMs))
+  }
+
+  get landingMs() {
+    return clamp(Number(this.options.landingMs ?? 2500) || 0, 300, 6000)
   }
 
   #djDue() {
@@ -288,9 +344,19 @@ export class Automix {
   }
 
   async #mix(tail, head) {
-    const rawA = await decodeMp3(Buffer.concat(tail.frames.map((f) => f.data)))
-    if (!rawA) return null
-    const rawB = await decodeMp3(Buffer.concat(head.map((f) => f.data)))
+    // Decode on the frame grid: sample 0 of each buffer is the first sample
+    // of its first frame, which is what lets the seam be put back between
+    // frames nobody re-encoded. The outgoing side is decoded with a run-up of
+    // frames that already aired, so its first samples are real audio rather
+    // than a decoder finding its feet.
+    const tailFrames = tail.frames.map((f) => f.data)
+    const headFrames = head.map((f) => f.data)
+    const context = tail.context ?? []
+    const rawAll = await decodeFrames([...context, ...tailFrames])
+    if (!rawAll) return null
+    const skip = Math.min(rawAll.length, samplesIn(context))
+    const rawA = { left: rawAll.left.subarray(skip), right: rawAll.right.subarray(skip), sampleRate: rawAll.sampleRate, length: rawAll.length - skip }
+    const rawB = await decodeFrames(headFrames)
     if (!rawB) return null
 
     const sampleRate = rawB.sampleRate
@@ -298,6 +364,20 @@ export class Automix {
     const b0 = rawB
     const sec = (ms) => Math.round((ms / 1000) * sampleRate)
     const ms = (samples) => Math.round((samples / sampleRate) * 1000)
+
+    // The splice: the first frames of the tail go out exactly as they came,
+    // the frame after them is encoded by us but still *is* the original audio
+    // (so the two encodings overlap on identical material), and everything
+    // from `free` on is ours to change. Worked in output-rate samples; when
+    // the two songs share a rate — nearly always — `passFrames` is
+    // `LEAD_FRAMES` and `xStart` is 0.
+    const spf = samplesIn([headFrames[0]])
+    const spfA = samplesIn([tailFrames[0]])
+    const passFrames = Math.ceil((LEAD_FRAMES * spf * rawA.sampleRate) / (sampleRate * spfA) - 1e-9)
+    const passEnd = Math.round((passFrames * spfA * sampleRate) / rawA.sampleRate)
+    const xStart = Math.max(0, passEnd - LEAD_FRAMES * spf)
+    const free = passEnd + spf
+    if (tailFrames.length <= passFrames + 2 || a0.length < free + sec(400)) return null
 
     /* 1. loudness (BS.1770) ------------------------------------------------ */
     const loudA = integratedLoudness([a0.left, a0.right], sampleRate)
@@ -310,8 +390,8 @@ export class Automix {
     const cuesB = detectCues(monoB, sampleRate, { integrated: loudB })
 
     const trim = this.options.trimSilence !== false
-    const aStart = 0
-    const aEnd = trim ? Math.max(sec(500), cuesA.cueOut) : a0.length
+    const aStart = free
+    const aEnd = Math.min(a0.length, trim ? Math.max(free + sec(500), cuesA.cueOut) : a0.length)
     const bStart = trim ? Math.min(cuesB.cueIn, Math.max(0, b0.length - sec(2000))) : 0
     let a = sliceChannels(a0, aStart, aEnd)
     let b = sliceChannels(b0, bStart, b0.length)
@@ -364,6 +444,17 @@ export class Automix {
         // eases in over two beats, then holds at the incoming song's tempo.
         const ramp = Math.round(Math.min(a.length * 0.5, beatA.periodSamples * 2 * ratio))
         const stretched = await stretchAudio([a.left, a.right], sampleRate, { stretch: ratio, rampSamples: ramp })
+        // The stretcher's first windows are not the input: it starts from an
+        // overlap it does not have. That used to be hidden by the seam
+        // starting from silence; now the stretched audio follows the original
+        // directly, so ease into it. The tempo ramp has barely begun this
+        // early, which is why the two are still in phase and can be faded.
+        const settle = Math.min(sec(80), Math.floor(Math.min(a.length, stretched.length) / 4))
+        for (let i = 0; i < settle; i += 1) {
+          const g = 0.5 - 0.5 * Math.cos((Math.PI * (i + 0.5)) / settle)
+          stretched.channels[0][i] = a.left[i] * (1 - g) + stretched.channels[0][i] * g
+          stretched.channels[1][i] = a.right[i] * (1 - g) + stretched.channels[1][i] * g
+        }
         a = { left: stretched.channels[0], right: stretched.channels[1], sampleRate, length: stretched.length }
         const warp = stretched.map
         tempoScale = ratio
@@ -392,25 +483,20 @@ export class Automix {
       }
     }
 
-    // Phase lock: shift the incoming song by less than one beat so its grid
-    // falls exactly on the (possibly warped) grid of the outgoing one.
-    let alignShift = 0
-    if (confident && beatPeriod > 0) {
-      let n = 0
-      while (beatAt(n) < 0 && n < 64) n += 1
-      alignShift = beatAlignOffset(beatPeriod, beatAt(n), beatB.phaseSamples, b.length, {
-        maxFraction: this.options.cueTolerance ?? 0.6
-      })
-      if (alignShift > 0) b = sliceChannels(b, alignShift, b.length)
-    }
-
     /* 5. blend length ------------------------------------------------------ */
     // Two facts about the pair decide both the length and the curve: how
     // well they correlate at the seam, and how hard the incoming song
     // enters. Measured over a fixed window so the answer does not depend on
     // the blend length we are about to choose from it.
-    const seamWindow = Math.min(a.length, b.length, sec(1500))
-    const r = seamWindow > 0 ? correlation(monoOf(a).subarray(0, seamWindow), monoOf(b).subarray(0, seamWindow), seamWindow) : 0
+    //
+    // The blend sits at the *end* of what is held — the song plays out and
+    // the next one arrives under its last bars — so "the seam" on the
+    // outgoing side is the last stretch of `a`, not its first. Where exactly
+    // depends on the length about to be chosen, so the probes look at the
+    // configured length's worth and the choice is made from that.
+    const aSeam = sliceChannels(a, Math.max(0, a.length - sec(this.options.crossfadeMs)), a.length)
+    const seamWindow = Math.min(aSeam.length, b.length, sec(1500))
+    const r = seamWindow > 0 ? correlation(monoOf(aSeam).subarray(0, seamWindow), monoOf(b).subarray(0, seamWindow), seamWindow) : 0
 
     const entryWindow = Math.min(b.left.length, Math.max(1, sec(1000)))
     let entrySum = 0
@@ -425,7 +511,7 @@ export class Automix {
     let outMono = null
     let inMono = null
     if (this.options.vocalAware !== false && confident) {
-      outMono = monoOf(a)
+      outMono = monoOf(aSeam)
       inMono = monoOf(b)
       const outActive = vocalActivity(outMono.subarray(0, Math.min(outMono.length, sec(1800))), sampleRate)
       const inActive = vocalActivity(inMono.subarray(0, Math.min(inMono.length, sec(2600))), sampleRate)
@@ -472,6 +558,30 @@ export class Automix {
       fade = Math.round(beats * beatPeriod)
       if (phrase) phrase = { ...phrase, beats, samples: fade, phrases: beats / 4 }
     }
+    if (fade < sec(400)) return null
+
+    // Where the blend starts in the held audio. Everything before it is the
+    // outgoing song alone and is aired as it is: the old layout started the
+    // blend at the top of the tail and threw away whatever the blend did not
+    // reach, so a three second blend over a six second tail cut the last
+    // three seconds of every song.
+    const lead = Math.max(0, a.length - fade)
+
+    // Phase lock: shift the incoming song by less than one beat so its grid
+    // falls exactly on the (possibly warped) grid of the outgoing one, counted
+    // from the first outgoing beat inside the blend.
+    let alignShift = 0
+    if (confident && beatPeriod > 0) {
+      let n = 0
+      while (beatAt(n) < lead && n < 4096) n += 1
+      alignShift = beatAlignOffset(beatPeriod, beatAt(n) - lead, beatB.phaseSamples, b.length, {
+        maxFraction: this.options.cueTolerance ?? 0.6
+      })
+      if (alignShift > 0) b = sliceChannels(b, alignShift, b.length)
+    }
+    const solo = sliceChannels(a, 0, lead)
+    a = sliceChannels(a, lead, a.length)
+    fade = Math.min(fade, a.length, b.length)
     if (fade < sec(400)) return null
 
     /* 6. the mix ----------------------------------------------------------- */
@@ -576,6 +686,17 @@ export class Automix {
         const scored = host ? host.score(seamDescription) : null
         if (scored) choice = chooseEffectWithModel(seamDescription, this.options.effectPool ?? [], scored)
       }
+      // The station's own advice (RL: what has worked between these two
+      // kinds of beat). Same rule as the model: an opinion, never an outage.
+      const advise = this.ctx.station?.adviseSeam
+      if (typeof advise === 'function') {
+        try {
+          const advised = await advise.call(this.ctx.station, seamDescription, choice, this.options.effectPool ?? [], { from: tail.track ?? tail.frames[0]?.track ?? null, to: head[0]?.track ?? null, blendMs: ms(fade) })
+          if (advised?.effect && EFFECT_RENDERERS[advised.effect]) choice = advised
+        } catch (error) {
+          this.log.debug(`seam advice: ${error.message}`)
+        }
+      }
       this.#lastModel = choice.model ?? null
     }
     const effect = wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted] ? choice.effect : wanted
@@ -598,41 +719,107 @@ export class Automix {
     if (voice) voiceTrack(this.options, { left, right, voice, voiceStart, sampleRate })
 
     /* 8. make it joinable -------------------------------------------------- */
-    // The seam is spliced between audio nobody rendered; every effect leaves
-    // its own mess at the edges. This is what lets one transition follow
-    // another without a click between them.
-    smoothEdges(left, right, sampleRate)
+    // The render sits between the outgoing song alone and the incoming song
+    // alone. Every effect leaves its own mess at its edges (a DC step from a
+    // filter, half a sample of a brake), so the first and last few
+    // milliseconds are cross-faded into the audio that actually surrounds
+    // them. Fading the edges to *silence*, which this used to do, made any
+    // transition joinable to any other at the price of a notch at both ends.
+    smoothEdges(left, right, sampleRate, { fadeMs: 0 })
+    const join = Math.max(1, Math.min(sec(8), Math.floor(total / 4)))
+    for (let i = 0; i < join; i += 1) {
+      const g = 0.5 - 0.5 * Math.cos((Math.PI * (i + 0.5)) / join)
+      left[i] = (a.left[i] ?? 0) * (1 - g) + left[i] * g
+      right[i] = (a.right[i] ?? 0) * (1 - g) + right[i] * g
+      const at = total - 1 - i
+      left[at] = (b.left[at] ?? 0) * (1 - g) + left[at] * g
+      right[at] = (b.right[at] ?? 0) * (1 - g) + right[at] * g
+    }
 
     /* 9. peak ceiling ------------------------------------------------------ */
+    // Applied as an envelope that is 1 at both edges: a flat gain over the
+    // render would step against the untouched audio either side of it.
     const ceiling = DB(this.options.ceilingDb)
     const peak = samplePeak([left, right])
     if (peak > ceiling) {
       const g = ceiling / peak
+      const edge = Math.max(1, Math.min(sec(150), Math.floor(total / 3)))
       for (let i = 0; i < total; i += 1) {
-        left[i] *= g
-        right[i] *= g
+        const w = Math.min(1, i / edge, (total - 1 - i) / edge)
+        const k = 1 - (1 - g) * (0.5 - 0.5 * Math.cos(Math.PI * w))
+        left[i] = clamp(left[i] * k, -1, 1)
+        right[i] = clamp(right[i] * k, -1, 1)
       }
     }
 
-    /* 10. back to MP3 ------------------------------------------------------ */
-    const bitrate = Math.max(96, Math.min(320, head[0]?.track?.streamBitrate ?? this.options.bitrate ?? 128))
-    const mp3 = await encodeMp3({ left, right, sampleRate, bitrate })
-    const parsed = new MetroFramer().push(mp3)
-    if (parsed.frames.length === 0) return null
-
-    const frameMs = parsed.durationMs / parsed.frames.length
-    const track = { ...head[0].track, automix: true, mixedFrom: tail.track?.title ?? null, dj: dj?.text ?? null }
-    const frames = parsed.frames.map((data) => ({ data, ms: frameMs, track }))
-
-    // Whatever of the incoming song the render did not consume is aired as it
-    // arrived (plus whatever was trimmed off the front, which is silence).
-    const consumedMs = ms(total + bStart + alignShift)
-    let skipped = 0
-    const rest = []
-    for (const frame of head) {
-      skipped += frame.ms
-      if (skipped > consumedMs) rest.push(frame)
+    /* 10. back onto the frame grid ----------------------------------------- */
+    // The programme so far is: original outgoing audio, the outgoing song
+    // alone (stretched if it was beatmatched), the render. It has to end on
+    // a frame boundary of the *incoming* file, because that is where the
+    // untouched frames resume — and the beat alignment put the two songs a
+    // fraction of a frame apart. The difference (at most half a frame, 13 ms)
+    // is taken up over the landing: the incoming song alone, a few seconds
+    // long, resampled by a fraction of a percent. Shifting the song instead
+    // would undo the alignment; ignoring it is a 13 ms repeat or drop.
+    const consumedB = bStart + alignShift + total
+    const prefix = free - xStart
+    const before = prefix + lead + total
+    let resumeAt = Math.ceil((consumedB + Math.min(sec(this.landingMs), Math.max(0, b0.length - consumedB - 3 * spf))) / spf)
+    if (resumeAt > headFrames.length - 3 || resumeAt * spf - consumedB < sec(300)) resumeAt = headFrames.length
+    const resumes = resumeAt < headFrames.length
+    const natural = Math.max(0, Math.min(b0.length, resumeAt * spf) - consumedB)
+    let drift = 0
+    if (resumes) {
+      const over = (before + natural) % spf
+      drift = over <= spf / 2 ? -over : spf - over
     }
+    const landing = natural + drift
+    const length = Math.ceil((before + landing) / spf) * spf
+    const outLeft = new Float32Array(length)
+    const outRight = new Float32Array(length)
+    outLeft.set(a0.left.subarray(xStart, free))
+    outRight.set(a0.right.subarray(xStart, free))
+    outLeft.set(solo.left.subarray(0, lead), prefix)
+    outRight.set(solo.right.subarray(0, lead), prefix)
+    outLeft.set(left, prefix + lead)
+    outRight.set(right, prefix + lead)
+    if (natural > 0) {
+      const from = consumedB
+      const landLeft = resample(b0.left.subarray(from, from + natural), natural, landing)
+      const landRight = resample(b0.right.subarray(from, from + natural), natural, landing)
+      outLeft.set(landLeft.subarray(0, Math.min(landLeft.length, length - before)), before)
+      outRight.set(landRight.subarray(0, Math.min(landRight.length, length - before)), before)
+    }
+
+    /* 11. back to MP3 ------------------------------------------------------ */
+    const bitrate = Math.max(96, Math.min(320, head[0]?.track?.streamBitrate ?? this.options.bitrate ?? 128))
+    const encoded = await bridge(
+      codec,
+      {
+        left: outLeft,
+        right: outRight,
+        sampleRate,
+        bitrate,
+        after: resumes
+          ? { left: b0.left.subarray(resumeAt * spf, (resumeAt + 3) * spf), right: b0.right.subarray(resumeAt * spf, (resumeAt + 3) * spf) }
+          : null,
+        // What the next untouched frame expects to find behind it.
+        tail: resumes ? reservoirBefore(headFrames, resumeAt) : null
+      },
+      codecKey()
+    )
+    if (encoded.length === 0) return null
+
+    const frameMs = (spf / sampleRate) * 1000
+    const track = { ...head[0].track, automix: true, mixedFrom: tail.track?.title ?? null, dj: dj?.text ?? null }
+    // Frames that are still the outgoing song alone keep its name on the
+    // display; the incoming song's takes over where the blend begins.
+    const blendFrame = Math.floor((prefix + lead) / spf) - LEAD_FRAMES
+    const frames = [
+      ...tail.frames.slice(0, passFrames),
+      ...encoded.map((data, index) => ({ data, ms: frameMs, track: index < blendFrame && tail.track ? tail.track : track }))
+    ]
+    const rest = head.slice(resumeAt)
 
     return {
       frames: [...frames, ...rest],
@@ -658,6 +845,10 @@ export class Automix {
         // Smart Automix: what it asked for, and why.
         blend: { requestedMs: this.options.crossfadeMs, chosenMs: smart.ms, bars: smart.bars, why: smart.why },
         renderedMs: ms(total),
+        // Where the render sits: the outgoing song alone before it, the
+        // incoming song alone after it, and how far the landing was nudged to
+        // meet the incoming file's own frames.
+        layout: { leadMs: ms(lead), landingMs: ms(landing), driftSamples: drift, frames: encoded.length, resumed: resumes },
         loudness: {
           from: loudA == null ? null : Number(loudA.toFixed(1)),
           to: loudB == null ? null : Number(loudB.toFixed(1)),

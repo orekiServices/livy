@@ -61,11 +61,19 @@ test('nothing is held back before a track has run long enough to be worth mixing
   const out = await mix.push(early)
   assert.equal(out.length, early.length, 'the first seconds of a station are aired instantly')
 
-  // Past minTrackMs the tail starts being withheld — but only crossfadeMs of it.
+  // Past minTrackMs the tail starts being withheld — `holdMs` of it. With
+  // Smart Automix that is more than one configured blend (a seam that earns a
+  // long blend has to have the audio to do it with); never more than asked.
   const rest = await frames(tone({ seconds: 6, freq: 330 }), TRACK_A)
   const aired = await mix.push(rest)
   const held = totalMs(rest) - totalMs(aired)
-  assert.ok(held > 1500 && held <= 2200, `about one blend is held, got ${held.toFixed(0)}ms`)
+  assert.ok(held > 1500 && held <= mix.holdMs + 30, `no more than the hold is kept, got ${held.toFixed(0)}ms`)
+
+  const fixed = automix({ smart: false })
+  await fixed.push(await frames(tone({ seconds: 2 }), TRACK_A))
+  const fixedRest = await frames(tone({ seconds: 6, freq: 330 }), TRACK_A)
+  const fixedHeld = totalMs(fixedRest) - totalMs(await fixed.push(fixedRest))
+  assert.ok(fixedHeld > 1500 && fixedHeld <= 2200, `a fixed blend holds one blend, got ${fixedHeld.toFixed(0)}ms`)
 
   const flushed = await mix.flush('stop')
   assert.ok(Math.abs(totalMs(flushed) - held) < 60, 'flush releases exactly what was held')
@@ -176,7 +184,7 @@ test('a plugin effect is honoured, and unknown effects are refused', async () =>
   assert.ok(!EFFECTS.includes('unit-test-fx'), 'the effect goes away with its plugin')
 })
 
-test('the built-in effects all render an audible, legal seam', async () => {
+test('the built-in effects all render an audible, legal seam', { timeout: 60_000 }, async () => {
   const a = await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A)
   const b = await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B)
 

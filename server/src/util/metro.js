@@ -368,6 +368,36 @@ export async function decodeMp3(buffer) {
   return decodeWithWasm(buffer)
 }
 
+/**
+ * Decode whole frames and get back exactly `expected` samples.
+ *
+ * A seam is placed on the frame grid, so "sample 0" has to mean "the first
+ * sample of the first frame". Decoders do not all promise that: symphonia
+ * drops frames it cannot decode (a shine-encoded run of digital silence, a
+ * frame whose bit reservoir was cut away) and the output is simply shorter.
+ * mpg123 emits every frame, so it is the fallback when the count is off; if
+ * it is off there too, the audio is aligned to the *end* (the part a seam
+ * actually blends) and the front is padded.
+ *
+ * @returns {Promise<{left: Float32Array, right: Float32Array, sampleRate: number, length: number, exact: boolean}|null>}
+ */
+export async function decodeExact(buffer, expected) {
+  let pcm = await decodeMp3(buffer)
+  if (pcm && pcm.length === expected) return { ...pcm, exact: true }
+  if (native) {
+    const second = await decodeWithWasm(buffer).catch(() => null)
+    if (second && second.length === expected) return { ...second, exact: true }
+    pcm = pcm ?? second
+  }
+  if (!pcm) return null
+  const left = new Float32Array(expected)
+  const right = new Float32Array(expected)
+  const n = Math.min(expected, pcm.length)
+  left.set(pcm.left.subarray(pcm.length - n, pcm.length), expected - n)
+  right.set(pcm.right.subarray(pcm.length - n, pcm.length), expected - n)
+  return { left, right, sampleRate: pcm.sampleRate, length: expected, exact: false }
+}
+
 let wasmModule // lazily imported, optional dependency
 
 async function decodeWithWasm(buffer) {
@@ -602,6 +632,16 @@ export async function stretchAudio(channels, sampleRate, { stretch = 1, rampSamp
   const { timeStretch } = await import('../core/dsp.js')
   const out = timeStretch([left, right], sampleRate, { stretch, rampSamples, length })
   return { ...out, engine: 'javascript' }
+}
+
+/**
+ * The jukebox's all-pairs kernel, when the loaded binary was built with one
+ * (`native/libmetro/src/jukebox.rs`). `null` otherwise: `seams/jukebox.ts` then uses its own, which is
+ * the reference the native one is checked against.
+ */
+export function jukeboxKernel() {
+  if (typeof native?.jukeboxNeighbours !== 'function') return null
+  return (vectors, width, bars, limit) => native.jukeboxNeighbours(vectors, width, bars, limit)
 }
 
 /** One line for the boot banner and the owner console. */

@@ -159,7 +159,7 @@ test('the boot banner prints the identity of the node', () => {
     return true
   }
   try {
-    banner({ version: '3.1.0', host: '0.0.0.0', port: 2333, stations: 2, store: 'better-sqlite3 · schema v5', plugins: '3/3 active' })
+    banner({ version: '3.1.0', host: '0.0.0.0', port: 2333, stations: 2, store: 'MetroDB · schema v5', plugins: '3/3 active' })
   } finally {
     process.stdout.write = original
   }

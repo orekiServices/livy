@@ -1,7 +1,7 @@
 {
   "name": "livy",
   "version": "3.10.0",
-  "description": "Livy \u2014 Node.js + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
+  "description": "Livy — Bun + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -13,10 +13,8 @@
   },
   "scripts": {
     "start": "bun src/index.js",
-    "start:node": "node src/index.js",
     "dev": "bun --watch src/index.js",
     "test": "bun test",
-    "test:node": "node --test --test-concurrency=4 \"test/*.test.js\"",
     "test:js": "LIVY_DISABLE_METRO=1 bun test",
     "build:web": "bun scripts/build-console.js",
     "db": "bun scripts/db.js",
@@ -27,7 +25,7 @@
     "build:db": "cd ../native/metrodb && cargo build --release && bun scripts/link-local.js"
   },
   "engines": {
-    "node": ">=18.17.0"
+    "bun": ">=1.1.0"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
@@ -48,8 +46,5 @@
     "broadcast"
   ],
   "license": "MIT",
-  "optionalDependencies": {
-    "better-sqlite3": "^12.11.1"
-  },
   "packageManager": "bun@1.4.4"
 }

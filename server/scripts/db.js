@@ -2,13 +2,13 @@
 /**
  * Database control — the SQLite file every Livy node keeps its state in.
  *
- *   node scripts/db.js info                 schema version, tables, row counts
- *   node scripts/db.js migrate              apply pending migrations (safe to repeat)
- *   node scripts/db.js vacuum               reclaim space
- *   node scripts/db.js backup [file]        consistent copy (WAL checkpointed)
- *   node scripts/db.js export [file.json]   portable dump of every table
- *   node scripts/db.js plugins              plugin enable/disable state
- *   node scripts/db.js stations             stations created through the console
+ *   bun scripts/db.js info                 schema version, tables, row counts
+ *   bun scripts/db.js migrate              apply pending migrations (safe to repeat)
+ *   bun scripts/db.js vacuum               reclaim space
+ *   bun scripts/db.js backup [file]        consistent copy (WAL checkpointed)
+ *   bun scripts/db.js export [file.json]   portable dump of every table
+ *   bun scripts/db.js plugins              plugin enable/disable state
+ *   bun scripts/db.js stations             stations created through the console
  *
  * Add `--file <path>` (or set STORE_FILE) to work on another database.
  */
@@ -29,7 +29,7 @@ const bold = (text) => (process.stdout.isTTY ? `\x1b[1m${text}\x1b[0m` : text)
 const dim = (text) => (process.stdout.isTTY ? `\x1b[2m${text}\x1b[0m` : text)
 
 if (!fs.existsSync(file) && command !== 'migrate' && command !== 'info') {
-  console.error(`No database at ${file} — start the node once, or run: node scripts/db.js migrate`)
+  console.error(`No database at ${file} — start the node once, or run: bun scripts/db.js migrate`)
   process.exit(1)
 }
 

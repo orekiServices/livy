@@ -16,6 +16,7 @@ import { recordModel } from '../registry.js'
 import { buildDataset, accuracy, loss, readSeams, split, LOG_FILE } from './dataset.js'
 import { gpuAvailable, trainOnGpu } from './gpu.js'
 import { trainingProfile } from '../device.js'
+import { trainRL } from '../rl.ts'
 
 export { readSeams, recordSeam, buildDataset, split, accuracy, loss, LOG_FILE, seamCount } from './dataset.js'
 export { gpuAvailable, trainOnGpu } from './gpu.js'
@@ -130,9 +131,18 @@ export async function trainModels({
   // seams, and the most recent behaviour is the behaviour worth learning.
   let pairs = buildDataset(records)
   if (pairs.length > budget.maxPairs) pairs = pairs.slice(-budget.maxPairs)
+  // RL learns from the same log and needs far less of it, so it is refitted
+  // whether or not there is enough for a network.
+  let rlReport = null
+  try {
+    rlReport = trainRL(records, { save: activate !== false && !saveDir })
+  } catch (error) {
+    rlReport = { codename: 'RL', trained: false, reason: error.message }
+  }
   if (pairs.length < 12) {
     return {
       trained: false,
+      rl: rlReport,
       reason: `only ${pairs.length} labelled seams (12 needed)`,
       seams: records.length,
       labelled: pairs.length,
@@ -182,7 +192,11 @@ export async function trainModels({
 
   const best = pickBest(usable)
   const reference = incumbent ?? baseline
-  const improved = best.accuracyAfter >= reference
+  // Against a random network a tie is still a trained model. Against a model
+  // that is already on air it is not an improvement: replacing the incumbent
+  // on a tie swapped models every training run for nothing, and a model that
+  // changes under an owner who did not ask is worse than one that does not.
+  const improved = incumbent == null ? best.accuracyAfter >= reference : best.accuracyAfter > reference || (best.accuracyAfter === reference && best.loss < loss(models.active.network, test))
 
   const savedCandidates = []
   for (const candidate of usable) {
@@ -251,6 +265,7 @@ export async function trainModels({
     incumbentAccuracy: incumbent == null ? null : Number(incumbent.toFixed(3)),
     loss: best.loss,
     improved,
+    rl: rlReport,
     activated: Boolean(activate && improved),
     model: improved && activate ? { file: savedBest?.file ?? null, name: savedBest?.name ?? null, digest: savedBest?.digest ?? null, activated: true } : null,
     ms: Date.now() - started

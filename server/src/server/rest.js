@@ -705,7 +705,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
         // this deserves to know the difference between "wrong URL" and "this
         // deployment cannot do that".
         if (resource === 'events' && isServerless()) {
-          return fail(res, 501, 'Live events need a long-lived connection; run the node (npm start) instead of a serverless deployment')
+          return fail(res, 501, 'Live events need a long-lived connection; run the node (bun start) instead of a serverless deployment')
         }
 
         return fail(res, 404, 'Unknown API route')

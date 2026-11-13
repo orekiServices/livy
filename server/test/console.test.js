@@ -34,7 +34,7 @@ async function node(t) {
   return { ...server, base: `http://127.0.0.1:${server.port}`, dir }
 }
 
-test('the console plugin mounts the build on the node it runs in', { skip: built ? false : 'no console build — run `npm run build:web`' }, async (t) => {
+test('the console plugin mounts the build on the node it runs in', { skip: built ? false : 'no console build — run `bun run build:web`' }, async (t) => {
   const { base, plugins } = await node(t)
 
   const record = plugins.list().find((p) => p.id === 'console')

@@ -3,7 +3,7 @@
 The Next.js app in `../../../web` is exported to static files and installed here:
 
 ```bash
-cd server && npm run build:web     # → server/plugins/console/public
+cd server && bun run build:web     # → server/plugins/console/public
 ```
 
 The plugin mounts that folder at `/` with a single-page fallback, so `/owner/` and `/station/?id=…`

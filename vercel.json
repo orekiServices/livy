@@ -1,7 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "npm install --prefix server",
+  "bunVersion": "1.x",
+  "installCommand": "cd server && bun install --production",
   "buildCommand": "",
   "outputDirectory": null,
   "functions": {

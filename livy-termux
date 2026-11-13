@@ -1,49 +1,59 @@
 #!/usr/bin/env bash
-# Livy on Termux (Android): Node, built-in SQLite, no compiler, no root.
+# Livy on Termux (Android): Bun, built-in SQLite, no compiler, no root.
 #
-# One command after `pkg install nodejs git`:
+# One command:
 #
 #   bash livy-termux
 #
 # The console and the listener are already built and committed, so a phone
 # does not need to run Next.js. Server dependencies are pure JavaScript;
-# SQLite comes from node:sqlite and the DSP falls back to the JavaScript
+# SQLite comes from bun:sqlite and the DSP falls back to the JavaScript
 # Metro implementation when there is no Android binary.
+#
+# Bun publishes glibc and musl builds and Android's libc is neither, so on
+# Termux it runs under glibc-runner. Install it once:
+#
+#   pkg install git curl unzip glibc-repo && pkg install glibc-runner
+#   curl -fsSL https://bun.sh/install | bash
+#
+# and this script wraps `bun` in `grun` when that is what the phone needs.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 say() { printf '\033[1;36m%s\033[0m\n' "$*"; }
 fail() { printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
 
-command -v node >/dev/null 2>&1 || fail "node is required: pkg install nodejs"
+BUN_BIN="${BUN_BIN:-$(command -v bun 2>/dev/null || true)}"
+[ -n "$BUN_BIN" ] || { [ -x "$HOME/.bun/bin/bun" ] && BUN_BIN="$HOME/.bun/bin/bun"; }
+[ -n "$BUN_BIN" ] || fail "bun is required: curl -fsSL https://bun.sh/install | bash"
 
-# node:sqlite is unflagged from 22.13 and current from 23.5. Termux's `nodejs`
-# package is newer than that; the check gives a useful message when it is not.
-node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit((a===22&&b>=13)||a>22?0:1)' \
-  || fail "Node $(node -v) is too old for node:sqlite — run: pkg upgrade nodejs"
+# Does the binary start as it is? If not, and glibc-runner is here, use it.
+if "$BUN_BIN" --version >/dev/null 2>&1; then
+  bun() { "$BUN_BIN" "$@"; }
+elif command -v grun >/dev/null 2>&1 && grun "$BUN_BIN" --version >/dev/null 2>&1; then
+  bun() { grun "$BUN_BIN" "$@"; }
+else
+  fail "bun cannot start on this device — install glibc-runner: pkg install glibc-repo && pkg install glibc-runner"
+fi
 
 if [ ! -d server/node_modules ] || [ ! -f server/node_modules/ws/package.json ]; then
   say "Installing server dependencies (JavaScript only)…"
-  # --omit=optional keeps better-sqlite3 out: it needs a compiler and Python,
-  # and node:sqlite is already in the Node binary.
-  if [ -f server/package-lock.json ]; then
-    (cd server && npm ci --omit=optional --omit=dev --no-audit --no-fund) \
-      || (cd server && npm install --omit=optional --omit=dev --no-audit --no-fund)
-  else
-    (cd server && npm install --omit=optional --omit=dev --no-audit --no-fund)
-  fi
+  (cd server && bun install --production)
 fi
 
 # A phone's home is the only writable place that survives a Termux restart.
 export LIVY_DATA_DIR="${LIVY_DATA_DIR:-$HOME/.livy}"
 mkdir -p "$LIVY_DATA_DIR"
-# Leave headroom for the decoder and the model trainer on a 2 GB device.
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}"
 # Only claim Android on an actual Android kernel: running this script on a
-# desktop without Bun should get the server training budget, not the phone one.
+# desktop should get the server training budget, not the phone one.
 if [ "$(uname -o 2>/dev/null || true)" = "Android" ] || [ -n "${TERMUX_VERSION:-}" ]; then
   export LIVY_PLATFORM="${LIVY_PLATFORM:-android}"
 fi
 
 say "Livy on Termux — data in $LIVY_DATA_DIR, console on http://localhost:${PORT:-${LIVY_PORT:-2333}}/"
-exec node server/src/index.js "$@"
+cd server
+if "$BUN_BIN" --version >/dev/null 2>&1; then
+  # --smol: a smaller heap and a keener collector, for a 2 GB device.
+  exec "$BUN_BIN" --smol src/index.js "$@"
+fi
+exec grun "$BUN_BIN" --smol src/index.js "$@"

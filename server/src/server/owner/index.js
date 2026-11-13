@@ -392,6 +392,25 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         return fail(res, 405, 'Method not allowed')
       }
 
+      // Seams: what the scout hears in the song on air, and RL.
+      if (action === 'seams') {
+        if (method !== 'GET') return fail(res, 405, 'Method not allowed')
+        return send(res, 200, target.seamsInfo({ graph: true }))
+      }
+
+      // Forever: the song on air loops on itself until something else is due.
+      if (action === 'forever') {
+        if (method === 'GET') return send(res, 200, target.foreverInfo())
+        if (method === 'POST' || method === 'PATCH') {
+          const body = await readJson(req)
+          const info = target.setForever(body.enabled !== false)
+          store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
+          log.info(`owner set forever on "${target.id}": ${info.enabled}`)
+          return send(res, 200, info)
+        }
+        return fail(res, 405, 'Method not allowed')
+      }
+
       // Filters: the NodeLink surface, per station, live.
       if (action === 'filters') {
         if (method === 'GET') {

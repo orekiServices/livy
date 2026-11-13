@@ -37,7 +37,7 @@ starts the node on <http://localhost:2333>. Equivalent one-liner:
 cd server && bun install && bun run build:web && bun start
 ```
 
-Bun 1.1+, or Node 22.13+ (see [Termux](#on-a-phone-termux--android)). No
+Bun 1.1+ (on a phone, see [Termux](#on-a-phone-termux--android)). No
 ffmpeg, no Postgres, no build toolchain (a prebuilt MetroS and MetroDB ship in
 `native/`; `bun run build:metro` / `build:db` rebuild them when Rust is
 installed; MetroFX, the optional native filter kernels, builds in CI and falls
@@ -78,27 +78,30 @@ answers with a spoken 404 rather than silence.
 ### On a phone (Termux / Android)
 
 Livy runs on an Android device through Termux, and the trainer is tuned for it:
-Node's built-in SQLite replaces the Rust addon, the DSP falls back to
+Bun's built-in SQLite replaces the Rust addon, the DSP falls back to
 JavaScript, and the model shrinks to a 12-unit hidden layer trained 26 epochs
 on at most 1,200 recent seams. Training still runs while the station is on air,
 just with a smaller budget.
 
 ```bash
-pkg install nodejs git
+pkg install git curl unzip glibc-repo && pkg install glibc-runner
+curl -fsSL https://bun.sh/install | bash
 git clone https://github.com/orekiServices/livy && cd livy
 bash livy-termux        # one command: installs JS deps, starts on :2333
 ```
 
 `./livy` detects Termux and runs the same path. No compiler, no Python, no
-root, no Bun: dependencies are pure JavaScript and the console/listener are
-already built into the repo. Data lives in `~/.livy` (override with
-`LIVY_DATA_DIR`). Node **22.13+** is required for `node:sqlite`.
+root: dependencies are pure JavaScript and the console/listener are already
+built into the repo. Data lives in `~/.livy` (override with `LIVY_DATA_DIR`).
+Livy runs on **Bun** everywhere; Android's libc is not one Bun is built for,
+so on Termux it runs under glibc-runner (`pkg install glibc-repo && pkg
+install glibc-runner`, then install Bun) and the script wraps it for you.
 
 What changes on a phone:
 
 | | Server | Termux/Android |
 |---|---|---|
-| SQLite | MetroDB (Rust) | `node:sqlite` (built in) |
+| SQLite | MetroDB (Rust) | `bun:sqlite` (built in) |
 | DSP | libmetro / MetroFX native | JavaScript fallback (`LIVY_DISABLE_FX=1`) |
 | Policies | 2 candidates × up to 120 epochs | 1 candidate × 26 epochs |
 | Network | 24→16 | 12 |
@@ -265,6 +268,46 @@ The token stays in the node's environment. It is never returned by the API and
 never written to the database. Inference is local: a dead network never
 silences a station.
 
+### Seams, RL and Forever
+
+Every song a station reads is also heard by a **scout** (`core/seams/`): it
+decodes a second at a time off the hot path, tracks the beats, and lets six
+detectors say where a seam belongs — the *ending*, a change of *energy*, a
+change of section (*novelty*, a Foote checkerboard over timbre and chroma),
+the 4- and 8-bar *phrase* grid, the end of a *vocal* line, and a *loop* (a beat
+that sounds like an earlier one). Their opinions are fused (agreement outranks
+a lone voice) and announced as `seam` events while the song is still
+streaming.
+
+**RL** (`core/models/rl.ts`) is one small model for the track change. It sorts
+every beat into a kind — `silence`, `sparse`, `groove`, `build`, `drop`,
+`break`, `vocal`, `fade` — with centroids fitted to what the station has aired,
+and keeps, for each *(kind left, kind entered, transition)*, how often the
+listener stayed. Sparse cells back off to what is known more generally, and
+untried ones get an exploration bonus, so it is useful from a dozen seams,
+where the network needs hundreds. It is refitted on every training run from
+the same log (`data/rl-model.json`), and it overrules the other choosers only
+with evidence, a clear edge, and a transition the seam can carry.
+
+**Forever** is the [Infinite Jukebox](https://musicmachinery.com/2012/11/12/the-infinite-jukebox/)
+as a radio mode: the scout builds the jukebox graph (which beats sound like
+which, same position in the bar, the original's weights and threshold sweep),
+and when the song has been read the station takes back what has not aired yet
+and lets the graph decide what plays. A jump is a real MP3 seam — the song's
+own frames up to it, a handful re-encoded across a short cross-fade, the
+song's own frames again on the other side — so listeners stay connected. It
+ends when the owner turns it off, somebody skips or requests a song, or an
+announcement is due; the song then plays out into the automix as usual.
+
+```bash
+cd server && curl -s -X POST localhost:2333/api/v1/owner/stations/main/forever -H "x-owner-key: $LIVY_KEY" -H 'content-type: application/json' -d '{"enabled":true}'
+cd server && curl -s localhost:2333/api/v1/owner/stations/main/seams -H "x-owner-key: $LIVY_KEY"
+```
+
+The all-pairs beat comparison is the one quadratic step; `native/libmetro/src/jukebox.rs`
+implements it for a libmetro built from this tree, and the TypeScript kernel
+in `core/seams/jukebox.ts` is the reference and the fallback.
+
 ### Where the research is
 
 `docs/automix-research.md` summarises Apple Music AutoMix (on by default,
@@ -288,7 +331,7 @@ curl -X POST localhost:2333/api/v1/owner/store/backup -H 'x-owner-key: …'
 
 An earlier note in the project said "migrate to PSQL". That would add a server
 and a driver for no capability the node needs, so the store stayed embedded:
-MetroDB first, `better-sqlite3` or `bun:sqlite` as fallbacks. Point
+MetroDB first, `bun:sqlite` as the fallback. Point
 `LIVY_DATA_DIR` at a real volume to persist it.
 
 ## Deploy to Vercel
@@ -351,7 +394,10 @@ core/station/requests.js     the request line and votes
 core/station/playback.js     reader, filters, track reader
 core/station/relay.js        listeners and live relays
 core/station/info.js         announcements and the public view
+core/station/seams.js        the scout, RL's advice, Forever mode
 core/automix/                analysis, voice, effects, renderers, engine
+core/seams/                  features, beats, detectors, categories, jukebox, forever, scout
+util/splice.ts               joining re-encoded MP3 to untouched frames (reservoir, delay)
 core/models/                 format, train, registry, hub (HF), auto, settings
 server/owner/                index, plugins, system, models routes
 ```
@@ -379,14 +425,16 @@ and a fallback chain so a dead link never silences a station.
 ```bash
 bun test                    # from server/
 bun run test                # from the repo root
-bun run test:node           # node --test, for a Node-only host
+cd server && bun test test/seams.test.js   # one file at a time
+cd server && LIVY_DISABLE_METRO=1 bun test # the JavaScript engines only
 ```
 
-311 tests (two native-kernel tests skip on a host without a MetroFX binary).
+344 tests (three transcoder tests skip without a libmetro binary, and three
+more run only there).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
-air, the Android training budget, model presets, `node:sqlite`, and private Hugging Face
+air, the Android training budget, model presets, and private Hugging Face
 push/pull with a fake `fetch`. Source tests cover the NhacCuaTui
 detail/playlist/retry paths, and the API test drives a real listener pick onto
 a live station.

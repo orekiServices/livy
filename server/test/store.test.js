@@ -27,7 +27,7 @@ test('a fresh database is migrated to the current schema', async () => {
   for (const table of ['stations', 'requests', 'votes', 'skip_votes', 'plays', 'bans', 'settings', 'plugins', 'schema_migrations']) {
     assert.ok(info.tables.includes(table), `missing table ${table}`)
   }
-  assert.match(info.driver, /metrodb|better-sqlite3|bun:sqlite|node:sqlite/)
+  assert.match(info.driver, /metrodb|bun:sqlite/)
   store.close()
 
   // Re-opening applies nothing and keeps the version.
@@ -40,14 +40,14 @@ test('a fresh database is migrated to the current schema', async () => {
 /**
  * A raw SQLite handle, for building a *pre-migration* database from scratch.
  *
- * `better-sqlite3` is an optional dependency of the node and is frequently
- * absent (MetroDB is the default driver), so the test asks whichever driver
+ * MetroDB is the default driver and `bun:sqlite` the fallback, so the test asks whichever driver
  * the store itself would pick rather than assuming one. `? 1 : 1` is SQLite
  * for "true"; the store's driver wrappers all understand it.
  */
 async function rawDatabase(file) {
   try {
-    const { default: Database } = await import('better-sqlite3')
+    if (process.env.LIVY_DISABLE_METRODB !== '1') throw new Error('prefer MetroDB')
+    const { Database } = await import('bun:sqlite')
     return new Database(file)
   } catch {
     const { createRequire } = await import('node:module')

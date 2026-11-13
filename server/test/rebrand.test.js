@@ -80,9 +80,8 @@ test('the old environment switches are still honoured', async (t) => {
     try {
       opened = await module.default.open(path.join(tmpdir('livy-rebrand-env-'), 'livy.db'))
     } catch (error) {
-      // This host has no *second* driver installed (better-sqlite3 is
-      // optional). That is itself proof the switch was read: MetroDB was the
-      // only one there was.
+      // This host carries no second driver. That is itself proof the switch
+      // was read: MetroDB was the only one there was.
       assert.match(error.message, /no binding is available/i)
       t.diagnostic('NODECAST_DISABLE_METRODB turned MetroDB off; no fallback driver on this host')
       return

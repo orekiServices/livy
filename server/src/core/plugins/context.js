@@ -213,7 +213,7 @@ export function buildContext(host, record) {
         track('static', at)
 
         // The handle lets a plugin attach the directory later (and the console
-        // does exactly that when `npm run build:web` finally runs).
+        // does exactly that when `bun run build:web` finally runs).
         return {
           mount: at,
           toString: () => at,

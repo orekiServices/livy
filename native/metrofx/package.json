@@ -31,7 +31,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "build:local": "cargo build --release && node scripts/link-local.js",
+    "build:local": "cargo build --release && bun scripts/link-local.js",
     "artifacts": "napi artifacts",
     "prepublishOnly": "napi prepublish -t npm"
   },

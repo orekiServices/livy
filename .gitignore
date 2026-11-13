@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
 
-# The console's build output. `npm run build:web` regenerates it and installs
+# The console's build output. `bun run build:web` regenerates it and installs
 # it into server/plugins/console/public (which *is* committed, because it is
 # what a fresh clone serves).
 web/.next/

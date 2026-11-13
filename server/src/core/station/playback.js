@@ -94,6 +94,9 @@ export const playbackMethods = {
         }
 
         await this._readTrack(track)
+        // Forever mode: the song that was just read loops on itself until
+        // something else wants the air.
+        await this._playForever().catch((error) => this.log.warn(`forever: ${error.message}`))
         // The reader's last block left one encoded frame in hand. It belongs
         // on air before the next track's first frame, not spliced behind it.
         await this._flushFilterFrames()
@@ -129,12 +132,20 @@ export const playbackMethods = {
       }
     }
 
+    // The scout hears what will air (so its frames are the station's frames)
+    // before the automix decides anything about them.
+    const filtered = ready
+    this._scoutPush(filtered)
+
     if (this.automix?.enabled) {
       try {
-        ready = await this.automix.push(batch)
+        // The *filtered* frames: handing the automix the reader's batch here
+        // threw the filters' output away, and a station with automix on (the
+        // default) aired none of its filters.
+        ready = await this.automix.push(filtered)
       } catch (error) {
         this.log.warn(`automix bypassed: ${error.message}`)
-        ready = batch
+        ready = filtered
       }
     }
     for (const frame of ready) {

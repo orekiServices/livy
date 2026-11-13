@@ -3,7 +3,7 @@
  *
  * Everything is same-origin in production — the console is served by the
  * radio node itself — so there is no base URL to configure, nothing to leak
- * and no CORS. In development (`npm run dev` on :3000) it probes the usual
+ * and no CORS. In development (`bun run dev` on :3000) it probes the usual
  * ports once, or takes `?node=http://host:2333`.
  */
 const REMEMBERED = 'livy-node'

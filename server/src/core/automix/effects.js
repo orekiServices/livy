@@ -178,22 +178,39 @@ export function chooseEffectWithModel(seam = {}, pool = [], model = null) {
   const ranked = model.order.filter((name) => allowed.has(name))
   if (ranked.length === 0) return { effect: baseline, source: 'heuristic', margin: 0, baseline }
 
-  // A transition the heuristic would refuse on this seam (no beat to roll on,
-  // a fade too short for a spindown) is not a candidate, however much the
-  // model likes it: the renderers assume those preconditions.
-  const traits = EFFECT_TRAITS[ranked[0]]
-  const usable = !traits?.needsBeat || seam.beat
-  const matched = !traits?.needsMatch || Boolean(seam.matched)
-  const long = !traits || (seam.fadeMs ?? 6000) >= traits.length
-  const drift = seam.matched ? 0 : (seam.tempoDelta ?? 99)
-  const tempoOk = traits?.maxTempoDelta == null || drift <= traits.maxTempoDelta
-  if (!usable || !matched || !long || !tempoOk) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
-
   // `margin` is the model's own separation between first and second choice.
   // Below it, the model has no opinion worth acting on.
   if (model.margin < 0.05) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
-  if (ranked[0] === baseline) return { effect: baseline, source: 'model', margin: model.margin, baseline, agreed: true }
-  return { effect: ranked[0], source: 'model', margin: model.margin, baseline, model: model.model }
+
+  // A transition the heuristic would refuse on this seam (no beat to roll on,
+  // a fade too short for a spindown) is not a candidate, however much the
+  // model likes it: the renderers assume those preconditions. The model's
+  // *next* choice still is — a ranking with its first entry struck out is a
+  // ranking, and throwing the rest away made the model mute on exactly the
+  // seams (no beat, short fade) where the rules have least to go on.
+  const top = ranked.find((name) => effectUsable(name, seam))
+  if (!top) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+  if (top === baseline) return { effect: baseline, source: 'model', margin: model.margin, baseline, agreed: true }
+  // The margin was measured between the model's first and second choices. A
+  // fallback further down the list has not earned it.
+  if (top !== ranked[0]) {
+    const scores = model.scores ?? null
+    const own = scores && typeof scores[top] === 'number' && typeof scores[baseline] === 'number' ? scores[top] - scores[baseline] : 0
+    if (!(own >= 0.05)) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+  }
+  return { effect: top, source: 'model', margin: model.margin, baseline, model: model.model }
+}
+
+/** Can `name` be rendered on this seam? (The renderers' preconditions.) */
+export function effectUsable(name, seam = {}) {
+  const traits = EFFECT_TRAITS[name]
+  if (!traits) return true
+  if (traits.needsBeat && !seam.beat) return false
+  if (traits.needsMatch && !seam.matched) return false
+  if ((seam.fadeMs ?? 6000) < traits.length) return false
+  const drift = seam.matched ? 0 : (seam.tempoDelta ?? 99)
+  if (traits.maxTempoDelta != null && drift > traits.maxTempoDelta) return false
+  return true
 }
 
 export function chooseEffect(seam = {}, pool = []) {
@@ -304,6 +321,8 @@ export function smoothEdges(left, right, sampleRate, { fadeMs = 2, dcBlock = tru
     }
   }
 
+  // `fadeMs: 0` is the DC blocker alone — the engine joins the edges itself.
+  if (!(fadeMs > 0)) return
   const ramp = Math.max(1, Math.min(Math.round((fadeMs / 1000) * sampleRate), Math.floor(n / 2)))
   for (let i = 0; i < ramp; i += 1) {
     // Raised cosine, not linear: a linear ramp still steps in the derivative.

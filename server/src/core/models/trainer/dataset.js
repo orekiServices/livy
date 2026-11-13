@@ -84,7 +84,13 @@ export function buildDataset(records) {
 
 /** Chronological split: the last fifth is held out, never shuffled across. */
 export function split(pairs, fraction = 0.2) {
-  if (pairs.length < 10) return { train: pairs, test: pairs.slice(-1), holdout: true }
+  // Too few to hold a fifth out and still learn: hold out the newest quarter
+  // (at least one), and never score on a row that was trained on.
+  if (pairs.length < 10) {
+    if (pairs.length < 2) return { train: pairs, test: [], holdout: true }
+    const keep = Math.max(1, Math.floor(pairs.length / 4))
+    return { train: pairs.slice(0, -keep), test: pairs.slice(-keep), holdout: true }
+  }
   const cut = Math.max(1, Math.floor(pairs.length * (1 - fraction)))
   return { train: pairs.slice(0, cut), test: pairs.slice(cut), holdout: false }
 }

@@ -171,7 +171,7 @@ export async function createRadioServer(overrides = {}) {
     engine: engineInfo().describe,
     // MetroFX native filter kernels, or the JavaScript reference path.
     fx: fxEngine === 'native' ? fxInfo().describe : 'javascript (MetroFX not built for this host)',
-    // `android` on a Termux node: smaller models, node:sqlite, no GPU probe.
+    // `android` on a Termux node: smaller models, bun:sqlite, no GPU probe.
     device: hostInfo().mobile ? `${hostInfo().profile}${hostInfo().termux ? ' (Termux)' : ''} · ${hostInfo().cpus} cores · ${hostInfo().memoryMb} MB` : null
   })
   if (manager.size === 0 && !platform) log.info(`first run: open http://${config.server.host}:${port}/ and create your first station`)

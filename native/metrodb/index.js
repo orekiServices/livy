@@ -4,7 +4,7 @@
  * Picks the binary for the host triple and puts a better-sqlite3-shaped API
  * on top of it. Nothing here throws on a miss: the caller
  * (`server/src/store/index.js`) treats "no binary" as "use another driver",
- * so an unsupported platform falls back to better-sqlite3 or bun:sqlite
+ * so an unsupported platform falls back to bun:sqlite
  * rather than failing to boot.
  *
  * What the Rust side gives us is the whole database. What this file adds is
