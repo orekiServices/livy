@@ -451,7 +451,7 @@ export function banner({ version, port, host, stations, store, plugins, engine, 
   ]
   const out = [
     c(C.grey, rule),
-    `${c(C.bold + C.magenta, '  Livy')} ${c(C.grey, '· NodeJS + ICEcast · multi-station MP3 radio')}`,
+    `${c(C.bold + C.magenta, '  Livy')} ${c(C.grey, '· Bun + ICEcast · multi-station MP3 radio')}`,
     c(C.grey, rule),
     ...rows.map(([k, v]) => `  ${c(C.grey, k.padEnd(10))} ${v}`),
     c(C.grey, rule)

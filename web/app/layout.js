@@ -1,32 +1,26 @@
 import './globals.css'
 
 import RadioProvider from '../components/RadioProvider.js'
-import PlayerBar from '../components/PlayerBar.js'
-import Tabs from '../components/Tabs.js'
+import Shell from '../components/Shell.js'
 
 export const metadata = {
   title: 'Livy',
-  description: 'A lightweight radio node: many stations, one process, beatmatched automix, streamed as plain MP3.',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Livy' }
+  description: 'Stations, seams, filters and the learned DJ policy for this Livy radio node.',
+  applicationName: 'Livy'
 }
 
-/* Phone first: fill the notch, lock the zoom to something sane, dark UI. */
 export const viewport = {
-  themeColor: '#07070b',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  viewportFit: 'cover'
+  themeColor: '#0c0e12'
 }
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="en" className="h-full">
+      <body className="min-h-full">
         <RadioProvider>
-          <div className="app">{children}</div>
-          <PlayerBar />
-          <Tabs />
+          <Shell>{children}</Shell>
         </RadioProvider>
       </body>
     </html>

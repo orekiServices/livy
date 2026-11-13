@@ -1,5 +1,5 @@
 /**
- * The only file in the web app that knows the node exists.
+ * The only file in the console that knows the node exists.
  *
  * Everything is same-origin in production — the console is served by the
  * radio node itself — so there is no base URL to configure, nothing to leak
@@ -126,3 +126,15 @@ export const clearOwnerKey = () => {
 }
 
 export const owner = (path, options = {}) => api(`/api/v1/owner${path}`, { ...options, key: options.key ?? ownerKey() })
+
+/**
+ * The stream for the player, and whether this deployment can stream at all.
+ * A serverless node answers 501 on /stream, and the console says so rather
+ * than leaving a player spinning.
+ */
+export async function stationStream(stationId) {
+  return streamUrl(stationId)
+}
+
+/** A listenable URL straight from a station row, if it has one. */
+export const streamOf = (station) => (station?.stream ? station.stream : `/stream/${encodeURIComponent(station?.id ?? '')}.mp3`)

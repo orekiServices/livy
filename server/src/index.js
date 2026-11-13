@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Livy — Node.js + Icecast-style multi-station MP3 radio, in one process.
+ * Livy — Bun + Icecast-style multi-station MP3 radio, in one process.
  *
  * Boot order: config → logging → owner key → SQLite (migrated) → speech →
  * sources → stations → plugins → HTTP + WebSocket + the web console, all on

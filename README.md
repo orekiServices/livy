@@ -147,20 +147,29 @@ programme stations.
 
 ## The console
 
-Everything a station needs is on one owner page, arranged like a control room:
+The console is a static Next.js export (`web/`) built with `create-next-app`
+and served by the node itself, so there is one process, one origin and no
+server-side environment to leak. It is organised around what a radio actually
+does:
 
-| Area | What you can do |
+| View | What it is for |
 |---|---|
-| **On air** | start · stop · skip · shuffle · reload queue · clear queue · speak an announcement |
-| **Vitals** | listeners, queue depth, buffer ahead, track progress, model accuracy, auto-train state |
-| **Quick actions** | train a model, vacuum the store, backup, open the request line, drop a live relay |
-| **Desk cards** | now playing, next up, requests and bans, programme metadata, recent seams |
-| **Dock (10 views)** | stations · queue · requests · seams · models · automix · filters · plugins · ops · logs |
+| **Overview** | what is on air, the node's vitals, and the seam machine at a glance |
+| **Stations** | every station as a card; create one from a provider string |
+| **Station** (`?id=`) | player, queue, requests, automix, announcements, and the policy on air |
+| **Seams & Forever** | the scout's candidates on a time axis, the jukebox graph, Forever, RL |
+| **Radio filters** | the live DSP rack: 15-band EQ, 18 units, presets, one station at a time |
+| **Training** | the trainer: backend, preset, candidates, the run report, the registry, auto-train |
+| **Node** | owner key and password, plugins, the log tail, process stats |
 
-Owner pages are gated by the owner password (or an explicit owner key); change
-it under **Ops → Owner password**. Every row is *action-first*: it has the verb
-you would want next to it (play/pause, ban, push, activate, delete), rather than
-a read-only table with a form somewhere else.
+The player is part of the frame, not a page: switching view does not interrupt
+the stream. Owner actions are behind the key, which lives in the tab's session
+storage and is never put in a URL.
+
+```bash
+bun run build:web        # rebuild the console and install it into the node
+cd web && bun run dev    # develop it on :3000 against a node on :2333
+```
 
 ## Automix, models and training
 
@@ -249,9 +258,50 @@ curl -X POST localhost:2333/api/v1/owner/models/train -H 'x-owner-key: …'
 curl -X POST localhost:2333/api/v1/owner/models/push  -H 'x-owner-key: …'
 ```
 
-The console exposes all of it: train (1 or 3 candidates), per-station
-auto-train, fast mode, candidate list with activate/push/delete, and a Hugging
+The console exposes all of it: train (1–8 candidates), the backend, per-station
+auto-train, fast mode, the candidate list with activate/forget, and a Hugging
 Face repo form.
+
+### Training with PyTorch
+
+`server/python/train.py` trains the **same** network — same He initialisation,
+same leaky ReLU, same mean-squared loss, same Adam — in PyTorch, and returns
+the weights in the `.bin` layout, so the server loads them into a real
+`Network` and the accuracy it reports is measured by the code that mixes the
+music. Inference never leaves JavaScript: there is no Python at request time,
+and a node without it is not degraded, just trained by the JS loop.
+
+```bash
+cd server
+python3 -m venv .venv
+.venv/bin/pip install -r python/requirements.txt   # or torch's CPU index
+```
+
+The node finds `.venv/bin/python` (or `venv/`, `../.venv`, `PATH`) by itself and
+keeps one worker alive, so importing torch is paid once rather than per run.
+`auto` asks the workload first:
+
+| Host / workload | Backend |
+|---|---|
+| a GPU or Apple GPU (`cuda`, `mps`) | PyTorch |
+| 4,000+ labelled seams | PyTorch |
+| a model wider than 5,000 parameters | PyTorch |
+| anything smaller on a CPU | JavaScript |
+
+That last row is not an oversight: one Python optimiser step costs about half a
+millisecond of kernel dispatch regardless of matrix size, so for a few hundred
+seams the in-process loop is genuinely quicker. Force one or the other with
+`LIVY_TRAIN_BACKEND=torch|js`, or per run:
+
+```bash
+curl -X POST localhost:2333/api/v1/owner/models/train \
+  -H 'x-owner-key: …' -H 'content-type: application/json' \
+  -d '{"backend":"torch","count":3,"station":"main"}'
+```
+
+Every report says which backend ran, on what device, with how many threads and
+for how long (`report.torch`), and `GET /api/v1/owner/models` answers whether
+this node can do it at all — with the exact install command when it cannot.
 
 ### Private models on Hugging Face
 
@@ -368,6 +418,9 @@ For a station that stays on air, run the node on a VM or container with
 | `SERVER_PASSWORD` | empty | legacy password for the stream/API surface |
 | `OWNER_KEY` | empty | explicit owner credential; survives alongside a password |
 | `OWNER_PASSWORD` | empty | owner password, hashed at boot; set it in the environment instead of the console |
+| `LIVY_TRAIN_BACKEND` | `auto` | `auto`, `js` (never leave the process) or `torch` (PyTorch, fall back on failure) |
+| `LIVY_PYTHON` | auto-detected | interpreter for the PyTorch trainer; `off` disables it |
+| `LIVY_TORCH_BATCH` / `LIVY_TORCH_MAX_STEPS` | size of the data / 1200 | tune a PyTorch run on an unusual host |
 
 ## What is in the box
 
@@ -398,7 +451,9 @@ core/station/seams.js        the scout, RL's advice, Forever mode
 core/automix/                analysis, voice, effects, renderers, engine
 core/seams/                  features, beats, detectors, categories, jukebox, forever, scout
 util/splice.ts               joining re-encoded MP3 to untouched frames (reservoir, delay)
-core/models/                 format, train, registry, hub (HF), auto, settings
+core/models/                 format, train (JS and PyTorch), registry, hub (HF), auto, settings
+python/train.py              the PyTorch trainer: same network, weights out as .bin
+web/                         the console — a create-next-app export, served by the node
 server/owner/                index, plugins, system, models routes
 ```
 
@@ -429,8 +484,9 @@ cd server && bun test test/seams.test.js   # one file at a time
 cd server && LIVY_DISABLE_METRO=1 bun test # the JavaScript engines only
 ```
 
-344 tests (three transcoder tests skip without a libmetro binary, and three
-more run only there).
+349 tests (three transcoder tests skip without a libmetro binary, and three
+more run only there; five cover the PyTorch trainer and skip where torch is
+not installed).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on

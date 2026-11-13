@@ -1,6 +1,147 @@
-/* Split by surface: base tokens/layout, shared components, the studio
-   control room and the model/ops layer. */
-@import './base.css';
-@import './components.css';
-@import './studio.css';
-@import './control.css';
+@import "tailwindcss";
+
+/*
+ * The console's palette is the radio's own: charcoal, a warm amber for what is
+ * on air, and a cool cyan for the new seam machinery. Everything else is a
+ * neutral so the two accents keep meaning something.
+ */
+@theme {
+  --color-ink-950: #08090b;
+  --color-ink-900: #0c0e12;
+  --color-ink-850: #111318;
+  --color-ink-800: #15181e;
+  --color-ink-700: #1c2028;
+  --color-ink-600: #262b35;
+  --color-ink-500: #3a414e;
+  --color-ink-300: #7d8798;
+  --color-ink-200: #a9b2c0;
+  --color-ink-100: #d7dce4;
+  --color-amber: #ffb454;
+  --color-amber-dim: #a8752f;
+  --color-cyan: #6ee7ff;
+  --color-cyan-dim: #2a7d8c;
+  --color-lime: #b8f36a;
+  --color-rose: #ff7a8a;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgba(255, 180, 84, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(110, 231, 255, 0.05), transparent 55%),
+    var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(255, 180, 84, 0.3);
+}
+
+/* A thin, quiet scrollbar — the console is mostly lists. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Range inputs: one look for the EQ, the crossfade and the rest. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-ink-600);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-ink-100);
+  border: 2px solid var(--color-ink-950);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-ink-100);
+  border: 2px solid var(--color-ink-950);
+  cursor: pointer;
+}
+input[type="range"].accent-amber::-webkit-slider-thumb {
+  background: var(--color-amber);
+}
+input[type="range"].accent-cyan::-webkit-slider-thumb {
+  background: var(--color-cyan);
+}
+
+/* A fader strip: vertical range inputs, for the equaliser. */
+.fader {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 6px;
+  height: 92px;
+  background: var(--color-ink-700);
+}
+
+/* The bars that mean "on air". */
+@keyframes livy-bars {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.live-bars i {
+  display: block;
+  width: 3px;
+  height: 12px;
+  background: var(--color-amber);
+  border-radius: 1px;
+  transform-origin: bottom;
+  animation: livy-bars 900ms ease-in-out infinite;
+}
+.live-bars i:nth-child(2) {
+  animation-delay: 160ms;
+}
+.live-bars i:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+@keyframes livy-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 180, 84, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(255, 180, 84, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 180, 84, 0);
+  }
+}
+.pulse-dot {
+  animation: livy-pulse 2s infinite;
+}
