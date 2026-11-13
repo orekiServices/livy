@@ -24,6 +24,7 @@
  */
 import createLogger, { tail, loggingState } from '../../util/logger.js'
 import { engineInfo } from '../../util/metro.js'
+import { hostInfo } from '../../util/platform.js'
 import { REASONS, REASON_IDS, LINES, SHIPPED_LANGUAGES } from '../streamErrors.js'
 import { LANGUAGES, normaliseLanguage } from '../../tts/index.js'
 import { publicTrack } from '../../core/station.js'
@@ -99,6 +100,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         // Which relay engine the node is running (native libmetro or the
         // JavaScript fallback) — the owner should not have to read logs.
         engine: engineInfo(),
+        device: hostInfo(),
         // What the node remembers, and what it plays when the rotation runs
         // dry. Both are cheap to report and the first thing to check when a
         // station behaves unexpectedly after a restart.

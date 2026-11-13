@@ -15,6 +15,7 @@ import { modelSettings } from '../settings.js'
 import { recordModel } from '../registry.js'
 import { buildDataset, accuracy, loss, readSeams, split, LOG_FILE } from './dataset.js'
 import { gpuAvailable, trainOnGpu } from './gpu.js'
+import { trainingProfile } from '../device.js'
 
 export { readSeams, recordSeam, buildDataset, split, accuracy, loss, LOG_FILE, seamCount } from './dataset.js'
 export { gpuAvailable, trainOnGpu } from './gpu.js'
@@ -26,9 +27,9 @@ export const DEFAULT_SHAPE = [24, 16]
 export const FAST_SHAPE = [16, 12]
 
 /** Different widths give the multi-run something real to choose between. */
-function shapesFor({ fast, count }) {
-  if (fast) return [FAST_SHAPE, [20, 14], [24, 12], [16, 16]].slice(0, count)
-  return [DEFAULT_SHAPE, [32, 20], [24, 24, 12], [40, 24, 16]].slice(0, count)
+function shapesFor({ fast, count, profile = trainingProfile() }) {
+  const pool = fast ? profile.fastShapes : profile.shapes
+  return pool.slice(0, count)
 }
 
 /** Copy an incumbent's weights when the shapes line up (warm start). */
@@ -45,7 +46,7 @@ function warmStart(network) {
   }
 }
 
-async function trainCandidate({ train, test, shape, epochs, learningRate, gpu, seed, warm }) {
+async function trainCandidate({ train, test, shape, epochs, learningRate, gpu, seed, warm, profile = trainingProfile() }) {
   const started = Date.now()
   const network = new Network([FEATURES.length, ...shape, ACTIONS.length], { seed })
   const warmed = warm ? warmStart(network) : false
@@ -63,14 +64,15 @@ async function trainCandidate({ train, test, shape, epochs, learningRate, gpu, s
   }
 
   if (backend === 'cpu') {
-    const batchSize = Math.min(16, Math.max(1, Math.floor(train.length / 4)))
+    const batchSize = Math.min(profile.batchMax, Math.max(1, Math.floor(train.length / 4)))
     for (let epoch = 0; epoch < epochs; epoch += 1) {
       for (let start = 0; start < train.length; start += batchSize) {
         network.train(train.slice(start, start + batchSize), { learningRate, step: epoch + 1 })
       }
       // Hand the event loop back: this is the difference between training
-      // "while playing" and training "instead of playing".
-      if (epoch % 8 === 0) await new Promise((resolve) => setImmediate(resolve))
+      // "while playing" and training "instead of playing". A phone yields
+      // more often because its scheduler is less forgiving.
+      if (epoch % profile.yieldEvery === 0) await new Promise((resolve) => setImmediate(resolve))
     }
   }
 
@@ -109,14 +111,23 @@ export async function trainModels({
   activate = true,
   saveDir = null,
   gpu = 'auto',
-  fast = false,
+  // null means "use the settings"; the old `false` default silently
+  // overrode `settings.fast` on every call.
+  fast = null,
   shape = null,
   warm = false,
-  station = null
+  station = null,
+  profile = null
 } = {}) {
   const started = Date.now()
-  const records = readSeams({ file, store })
-  const pairs = buildDataset(records)
+  const budget = profile ?? trainingProfile()
+  // Bound the read as well as the set: a phone should not deserialize 20,000
+  // rows only to throw most of them away.
+  const records = readSeams({ file, store, limit: budget.maxPairs })
+  // Bound the set before splitting: a phone should not pay for two years of
+  // seams, and the most recent behaviour is the behaviour worth learning.
+  let pairs = buildDataset(records)
+  if (pairs.length > budget.maxPairs) pairs = pairs.slice(-budget.maxPairs)
   if (pairs.length < 12) {
     return {
       trained: false,
@@ -129,13 +140,14 @@ export async function trainModels({
 
   const { train, test, holdout } = split(pairs)
   const total = Math.max(1, Math.min(8, Number(count) || 1))
-  const candidatesShapes = shape ? [shape] : shapesFor({ fast: fast ?? modelSettings().fast, count: total })
-  const runs = epochs || (fast ? 40 : 120)
+  const fastMode = fast ?? modelSettings().fast
+  const candidatesShapes = shape ? [shape] : shapesFor({ fast: fastMode, count: total, profile: budget })
+  const runs = epochs || (fastMode ? budget.fastEpochs : budget.epochs)
   const settings = modelSettings()
 
   // A random network sets the floor. Beating the incumbent is checked later,
   // against the active model's own held-out score.
-  const baselineNetwork = new Network([FEATURES.length, ...DEFAULT_SHAPE, ACTIONS.length])
+  const baselineNetwork = new Network([FEATURES.length, ...(candidatesShapes[0] ?? DEFAULT_SHAPE), ACTIONS.length])
   const baseline = accuracy(baselineNetwork, test)
   const incumbent = models.active?.network ? accuracy(models.active.network, test) : null
 
@@ -149,9 +161,11 @@ export async function trainModels({
         epochs: runs,
         learningRate,
         // One GPU at a time is plenty; a multi-run trains on the CPU.
-        gpu: candidatesShapes.length > 1 ? gpu === true ? false : gpu : gpu,
+        // A phone profile never asks: WebGPU is not reachable from Termux.
+        gpu: budget.gpu ? (candidatesShapes.length > 1 ? (gpu === true ? false : gpu) : gpu) : 'off',
         seed: 0x5eed + index * 7919,
-        warm
+        warm,
+        profile: budget
       })
       candidates.push({ index, ...candidate })
     } catch (error) {
@@ -212,7 +226,8 @@ export async function trainModels({
   const report = {
     trained: true,
     mode: candidatesShapes.length > 1 ? 'multi' : 'single',
-    fast: Boolean(fast),
+    profile: budget.id,
+    fast: fastMode,
     seams: records.length,
     labelled: pairs.length,
     train: train.length,
@@ -244,7 +259,7 @@ export async function trainModels({
 }
 
 /** The original single-model entry point, kept compatible. */
-export async function trainModel({ fast = false, count = 1, ...options } = {}) {
+export async function trainModel({ fast = null, count = 1, ...options } = {}) {
   return trainModels({ ...options, fast, count })
 }
 

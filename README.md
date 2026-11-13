@@ -37,9 +37,10 @@ starts the node on <http://localhost:2333>. Equivalent one-liner:
 cd server && bun install && bun run build:web && bun start
 ```
 
-Bun 1.1+. No ffmpeg, no Postgres, no build toolchain (a prebuilt MetroS and
-MetroDB ship in `native/`; `bun run build:metro` / `build:db` rebuild them when
-Rust is installed).
+Bun 1.1+, or Node 22.13+ (see [Termux](#on-a-phone-termux--android)). No
+ffmpeg, no Postgres, no build toolchain (a prebuilt MetroS and MetroDB ship in
+`native/`; `bun run build:metro` / `build:db` rebuild them when Rust is
+installed).
 
 A fresh install has **no stations**. Open the URL and the console walks you
 through the first one: owner key → name → sources → crossfade and beatmatching
@@ -60,6 +61,42 @@ Listen at <http://localhost:2333/listen/>, manage at
 <http://localhost:2333/owner/>, and point any player at
 `/stream/<id>.mp3` — the only stream address. Asked for anything else, the node
 answers with a spoken 404 rather than silence.
+
+### On a phone (Termux / Android)
+
+Livy runs on an Android device through Termux, and the trainer is tuned for it:
+Node's built-in SQLite replaces the Rust addon, the DSP falls back to
+JavaScript, and the model shrinks to a 12-unit hidden layer trained 26 epochs
+on at most 1,200 recent seams. Training still runs while the station is on air,
+just with a smaller budget.
+
+```bash
+pkg install nodejs git
+git clone https://github.com/orekiServices/livy && cd livy
+bash livy-termux        # one command: installs JS deps, starts on :2333
+```
+
+`./livy` detects Termux and runs the same path. No compiler, no Python, no
+root, no Bun: dependencies are pure JavaScript and the console/listener are
+already built into the repo. Data lives in `~/.livy` (override with
+`LIVY_DATA_DIR`). Node **22.13+** is required for `node:sqlite`.
+
+What changes on a phone:
+
+| | Server | Termux/Android |
+|---|---|---|
+| SQLite | MetroDB (Rust) | `node:sqlite` (built in) |
+| DSP | libmetro native | JavaScript fallback |
+| Policies | 2 candidates × up to 120 epochs | 1 candidate × 26 epochs |
+| Network | 24→16 | 12 |
+| Seams used | 20,000 | 1,200 most recent |
+| Poll interval | 60 s | 120 s |
+| GPU probe | yes | skipped |
+
+A saved setting still wins: if you set `models.candidates` to 2, the phone
+honours it. `GET /api/v1/info` reports the chosen `device` profile.
+
+### Building the UI
 
 The console is committed as static files, so a fresh clone needs no build. After
 changing the UI:
@@ -115,6 +152,19 @@ loudness, and vocal density at each end. Ten transitions are scored against that
 pair — crossfade, bass-swap, filter, echo, sweep, spin-down, slam, wash, roll,
 drop — and the best one wins. Blends run up to 30 s; the heavy DSP runs in Rust
 off the event loop.
+
+Three rules were added to make the seam sound intentional rather than
+random:
+
+- **Vocals decide the length, not just the curve.** Both ends singing at the
+  seam is a clash: the blend contracts to ~70 % so the lines hand over instead
+  of overlapping, and a masking transition (filter/echo) outranks a bass-swap
+  that would leave both voices exposed.
+- **A trick that needs the grid does not run without it.** Roll and drop are
+  refused when the tempos did not fold together (5 and 7 BPM of drift), while
+  a folded match with a wider raw gap is still allowed — the grid already met.
+- **A folded match counts as a match.** Bass-swap is no longer rejected merely
+  because the two files' BPM tags differ after a successful ±4 % fold.
 
 A **DJ model** is a tiny learned policy that re-ranks those ten choices. It is
 optional, it can only choose from transitions the heuristic already allows, and
@@ -278,12 +328,13 @@ bun run test                # from the repo root
 bun run test:node           # node --test, for a Node-only host
 ```
 
-283 tests. Sources are stubbed at the transport rather than at the module, so no
+291 tests. Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
-air, and private Hugging Face push/pull with a fake `fetch`. Source tests cover
-the NhacCuaTui detail/playlist/retry paths, and the API test drives a real
-listener pick onto a live station.
+air, the Android training budget, `node:sqlite`, and private Hugging Face
+push/pull with a fake `fetch`. Source tests cover the NhacCuaTui
+detail/playlist/retry paths, and the API test drives a real listener pick onto
+a live station.
 
 ## API
 

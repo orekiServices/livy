@@ -6,6 +6,7 @@
  * optional so the trainer still works in a test or a one-off script.
  */
 import { paths } from '../../config.js'
+import { hostInfo } from '../../util/platform.js'
 
 export const DEFAULT_MODEL_SETTINGS = {
   enabled: true,
@@ -49,10 +50,25 @@ const merge = (base, patch) => {
   return out
 }
 
-export function configureModels({ config = {}, store = null } = {}) {
+/** A phone trains less often and with one candidate (see models/device.js). */
+export const MOBILE_MODEL_SETTINGS = {
+  pollMs: 120_000,
+  intervalMs: 60 * 60_000,
+  minSeams: 30,
+  everySeams: 40,
+  candidates: 1
+}
+
+export function configureModels({ config = {}, store = null, host = null } = {}) {
   storeRef = store
   const saved = store?.get?.('models.settings') ?? null
-  state = merge(merge(DEFAULT_MODEL_SETTINGS, config.models ?? config), saved ?? {})
+  const runtime = host ?? hostInfo()
+  // Precedence: defaults < device profile < config file < saved user choice.
+  // A phone gets the cheap schedule on first boot, but an owner who has
+  // pinned `candidates: 2` keeps it.
+  const base = runtime.mobile ? merge(DEFAULT_MODEL_SETTINGS, MOBILE_MODEL_SETTINGS) : DEFAULT_MODEL_SETTINGS
+  state = merge(merge(base, config.models ?? config), saved ?? {})
+  state.device = { profile: runtime.profile, termux: runtime.termux, mobile: runtime.mobile }
   // The token belongs in the environment, not the database. A stored one is
   // dropped on every boot rather than silently trusted.
   state.hf.token = process.env.LIVY_HF_TOKEN ?? process.env.HF_TOKEN ?? ''

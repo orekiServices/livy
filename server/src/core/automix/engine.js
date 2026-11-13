@@ -417,6 +417,21 @@ export class Automix {
     for (let i = 0; i < entryWindow; i += 1) entrySum += (b.left[i] ?? 0) ** 2
     const entryEnergy = clamp(Math.sqrt(entrySum / entryWindow) * 4, 0, 1)
 
+    // Is anyone singing at the seam? Asked *before* the length is chosen,
+    // because two vocals in each other's way is a reason for a short blend,
+    // not just a different curve. The windows are fixed so the answer does not
+    // depend on the fade length we are about to pick.
+    let probe = null
+    let outMono = null
+    let inMono = null
+    if (this.options.vocalAware !== false && confident) {
+      outMono = monoOf(a)
+      inMono = monoOf(b)
+      const outActive = vocalActivity(outMono.subarray(0, Math.min(outMono.length, sec(1800))), sampleRate)
+      const inActive = vocalActivity(inMono.subarray(0, Math.min(inMono.length, sec(2600))), sampleRate)
+      probe = { outgoing: outActive.active, incoming: inActive.active, outActive, inActive }
+    }
+
     // Smart Automix: how long should *this* blend be? (see smartCrossfadeMs)
     const smart = smartCrossfadeMs(
       {
@@ -425,7 +440,8 @@ export class Automix {
         correlation: r,
         energy: entryEnergy,
         bpm: beatmatch ? beatmatch.toBpm : (beatB?.bpm ?? beatA?.bpm ?? null),
-        available: ms(Math.min(a.length, b.length))
+        available: ms(Math.min(a.length, b.length)),
+        vocal: probe
       },
       this.options
     )
@@ -470,11 +486,8 @@ export class Automix {
     // different curve rather than a wrong transition.
     let vocal = null
     let shape = null
-    if (this.options.vocalAware !== false && confident) {
-      const outMono = monoOf(a)
-      const inMono = monoOf(b)
-      const outActive = vocalActivity(outMono.subarray(0, Math.min(outMono.length, fade)), sampleRate)
-      const inActive = vocalActivity(inMono.subarray(0, Math.min(inMono.length, Math.max(fade, sec(2000)))), sampleRate)
+    if (probe && outMono && inMono) {
+      const { outActive, inActive } = probe
       const boundary = outActive.active
         ? phraseBoundary(outMono, sampleRate, 0, { beats: beatGrid(outMono.length, sampleRate, (beatmatch?.toBpm ?? beatA.bpm) || 120), maxWaitMs: Math.min(1600, ms(fade) * 0.4) })
         : null

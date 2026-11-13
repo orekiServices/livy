@@ -20,6 +20,10 @@ const log = createLogger('store')
 
 export const disabled = (...names) => names.some((name) => process.env[name] === '1')
 
+/** node:sqlite rejects `undefined`/booleans; every other binding normalises. */
+const bindParam = (value) => (value === undefined ? null : typeof value === 'boolean' ? (value ? 1 : 0) : value)
+const bindAll = (params) => params.map(bindParam)
+
 const pragmas = (exec) => {
   exec('PRAGMA journal_mode = WAL;')
   exec('PRAGMA synchronous = NORMAL;')
@@ -77,14 +81,24 @@ export async function openDatabase(file) {
     }
   }
 
+  // Node's built-in SQLite. This is what makes Termux work: no node-gyp, no
+  // compiler, no native package — the Node binary already carries SQLite.
+  // It is experimental, so any failure falls through to better-sqlite3.
+  try {
+    return await openNodeSqlite(file)
+  } catch (error) {
+    log.debug(`node:sqlite unavailable (${error.message}); trying better-sqlite3`)
+  }
+
   let Database
   try {
     ;({ default: Database } = await import('better-sqlite3'))
   } catch (error) {
     throw new Error(
       `SQLite is required but no binding is available (${error.message}). ` +
-        'Build MetroDB with `cd native/metrodb && cargo build --release && node scripts/link-local.js`, ' +
-        'or run Livy on Bun, or start with `store.enabled: false` to run without persistence.'
+        'Use Node 22.13+ (node:sqlite) or Bun, build MetroDB with ' +
+        '`cd native/metrodb && cargo build --release && node scripts/link-local.js`, ' +
+        'or start with `store.enabled: false` to run without persistence.'
     )
   }
 
@@ -102,6 +116,41 @@ export async function openDatabase(file) {
   }
 }
 
+/** `node:sqlite` behind the better-sqlite3-ish interface the store expects. */
+async function openNodeSqlite(file) {
+  const { DatabaseSync } = await import('node:sqlite')
+  const raw = new DatabaseSync(file)
+  pragmas((sql) => raw.exec(sql))
+  // node:sqlite is stricter than better-sqlite3 about types it cannot bind:
+  // `undefined` and booleans must become NULL and 0/1. Every other driver
+  // accepts them (MetroDB normalises too), so the conversion lives here.
+  const bind = bindAll
+  return {
+    driver: 'node:sqlite',
+    raw,
+    exec: (sql) => raw.exec(sql),
+    run: (sql, params = []) => raw.prepare(sql).run(...bind(params)),
+    get: (sql, params = []) => raw.prepare(sql).get(...bind(params)) ?? undefined,
+    all: (sql, params = []) => raw.prepare(sql).all(...bind(params)),
+    transaction: (fn) => {
+      raw.exec('BEGIN IMMEDIATE;')
+      try {
+        const result = fn()
+        raw.exec('COMMIT;')
+        return result
+      } catch (error) {
+        try {
+          raw.exec('ROLLBACK;')
+        } catch {
+          /* the transaction was already gone */
+        }
+        throw error
+      }
+    },
+    close: () => raw.close()
+  }
+}
+
 /** The same engine without a file: serverless, tests, a dry run. */
 export async function openMemoryDatabase() {
   const make = (raw, driver) => {
@@ -110,9 +159,9 @@ export async function openMemoryDatabase() {
       driver,
       raw,
       exec: (sql) => raw.exec(sql),
-      run: (sql, params = []) => raw.prepare(sql).run(...params),
-      get: (sql, params = []) => raw.prepare(sql).get(...params),
-      all: (sql, params = []) => raw.prepare(sql).all(...params),
+      run: (sql, params = []) => raw.prepare(sql).run(...bindAll(params)),
+      get: (sql, params = []) => raw.prepare(sql).get(...bindAll(params)),
+      all: (sql, params = []) => raw.prepare(sql).all(...bindAll(params)),
       transaction: (fn) => raw.transaction(fn)(),
       close: () => raw.close()
     }
@@ -143,6 +192,13 @@ export async function openMemoryDatabase() {
     const raw = new Database(':memory:', { create: true })
     const db = make(raw, 'memory (ephemeral, bun:sqlite)')
     return db
+  }
+
+  try {
+    const { DatabaseSync } = await import('node:sqlite')
+    return make(new DatabaseSync(':memory:'), 'memory (ephemeral, node:sqlite)')
+  } catch {
+    // fall through to the binding
   }
 
   try {

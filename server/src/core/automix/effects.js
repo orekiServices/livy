@@ -29,7 +29,15 @@ export function smartCrossfadeMs(seam = {}, options = {}) {
   const ceiling = options.maxCrossfadeMs ?? DEFAULT_AUTOMIX.maxCrossfadeMs
   if (options.smart === false) return { ms: clamp(requested, floor, ceiling), bars: null, why: 'fixed' }
 
-  const { matched = false, tempoDelta = 99, correlation = 0, energy = 0.5, bpm = null, available = Infinity } = seam
+  const {
+    matched = false,
+    tempoDelta = 99,
+    correlation = 0,
+    energy = 0.5,
+    bpm = null,
+    available = Infinity,
+    vocal = null
+  } = seam
 
   let factor = 1
   const reasons = []
@@ -40,6 +48,10 @@ export function smartCrossfadeMs(seam = {}, options = {}) {
   } else if (matched && tempoDelta < 3) {
     factor *= 1.5
     reasons.push('tempos close')
+  } else if (matched) {
+    // Folded and holding: the grid already reconciled a wider raw gap.
+    factor *= 1.15
+    reasons.push('tempos folded together')
   } else if (tempoDelta > 12) {
     factor *= 0.55
     reasons.push('tempos far apart')
@@ -59,6 +71,18 @@ export function smartCrossfadeMs(seam = {}, options = {}) {
   } else if (energy < 0.25) {
     factor *= 1.25
     reasons.push('gentle entry')
+  }
+
+  // Two vocals over each other is the one thing a crossfade cannot fix: one
+  // lyric in each ear reads as a mistake, not a mix. Shorten the overlap so
+  // the lines hand over instead of colliding. This is a length decision, so
+  // it belongs here rather than in the curve shaping below.
+  if (vocal?.outgoing && vocal?.incoming) {
+    factor *= 0.7
+    reasons.push('vocals would clash')
+  } else if (vocal?.outgoing || vocal?.incoming) {
+    factor *= 0.9
+    reasons.push('vocal at the seam')
   }
 
   let ms = clamp(requested * factor, floor, Math.min(ceiling, available))
@@ -87,16 +111,19 @@ export function smartCrossfadeMs(seam = {}, options = {}) {
  * `needsMatch` — only convincing when the two tempos actually agree
  * `energy`     — where it sits on the gentle → dramatic axis, 0…1
  * `length`     — the shortest blend, in milliseconds, it can be rendered in
+ * `maxTempoDelta` — the largest *unmatched* tempo gap, in BPM, it survives.
+ *                A roll on two records 12 BPM apart is two rolls; the grid it
+ *                needs is not the one the other song is playing.
  */
 export const EFFECT_TRAITS = {
   crossfade: { needsBeat: false, needsMatch: false, energy: 0.1, length: 800 },
   wash: { needsBeat: false, needsMatch: false, energy: 0.25, length: 2500 },
   filter: { needsBeat: false, needsMatch: false, energy: 0.35, length: 2000 },
   echo: { needsBeat: false, needsMatch: false, energy: 0.5, length: 1500 },
-  'bass-swap': { needsBeat: true, needsMatch: true, energy: 0.45, length: 2500 },
+  'bass-swap': { needsBeat: true, needsMatch: true, energy: 0.45, length: 2500, maxTempoDelta: 3 },
   sweep: { needsBeat: false, needsMatch: false, energy: 0.6, length: 2500 },
-  roll: { needsBeat: true, needsMatch: false, energy: 0.8, length: 2000 },
-  drop: { needsBeat: true, needsMatch: false, energy: 0.85, length: 1500 },
+  roll: { needsBeat: true, needsMatch: false, energy: 0.8, length: 2000, maxTempoDelta: 5 },
+  drop: { needsBeat: true, needsMatch: false, energy: 0.85, length: 1500, maxTempoDelta: 7 },
   spindown: { needsBeat: false, needsMatch: false, energy: 0.9, length: 1200 },
   slam: { needsBeat: false, needsMatch: false, energy: 1, length: 400 }
 }
@@ -156,9 +183,11 @@ export function chooseEffectWithModel(seam = {}, pool = [], model = null) {
   // model likes it: the renderers assume those preconditions.
   const traits = EFFECT_TRAITS[ranked[0]]
   const usable = !traits?.needsBeat || seam.beat
-  const matched = !traits?.needsMatch || (seam.matched && (seam.tempoDelta ?? 99) < 3)
+  const matched = !traits?.needsMatch || Boolean(seam.matched)
   const long = !traits || (seam.fadeMs ?? 6000) >= traits.length
-  if (!usable || !matched || !long) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+  const drift = seam.matched ? 0 : (seam.tempoDelta ?? 99)
+  const tempoOk = traits?.maxTempoDelta == null || drift <= traits.maxTempoDelta
+  if (!usable || !matched || !long || !tempoOk) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
 
   // `margin` is the model's own separation between first and second choice.
   // Below it, the model has no opinion worth acting on.
@@ -176,7 +205,9 @@ export function chooseEffect(seam = {}, pool = []) {
     fadeMs = 6000,
     energy = 0.5,
     talkover = false,
-    previous = null
+    previous = null,
+    vocalOut = 0,
+    vocalIn = 0
   } = seam
 
   const allowed = (pool.length ? pool : EFFECTS).filter((name) => EFFECT_TRAITS[name])
@@ -193,13 +224,20 @@ export function chooseEffect(seam = {}, pool = []) {
   if (correlation > 0.45) want -= 0.2
   // Over a voice link, anything clever fights the DJ.
   if (talkover) want -= 0.35
+  // A vocal clash wants the music to get out of the way, not to perform.
+  const vocalClash = vocalOut > 0.5 && vocalIn > 0.5
+  const vocalSolo = (vocalOut > 0.5) !== (vocalIn > 0.5)
+  if (vocalClash) want -= 0.12
   want = clamp(want, 0, 1)
 
   const scored = allowed
     .filter((name) => {
       const traits = EFFECT_TRAITS[name]
       if (traits.needsBeat && !beat) return false
-      if (traits.needsMatch && !(matched && tempoDelta < 3)) return false
+      if (traits.needsMatch && !matched) return false
+      // Only an unmatched gap disqualifies: a folded match has already
+      // reconciled the two grids, whatever their raw BPM difference was.
+      if (!matched && traits.maxTempoDelta != null && tempoDelta > traits.maxTempoDelta) return false
       return fadeMs >= traits.length
     })
     .map((name) => {
@@ -214,6 +252,14 @@ export function chooseEffect(seam = {}, pool = []) {
       // dramatic is actively penalised rather than merely unlikely.
       if (talkover) score -= traits.energy * 0.35
       if (talkover && (name === 'crossfade' || name === 'filter' || name === 'wash')) score += 0.15
+      // Two lyrics at once: prefer a transition that masks or filters one of
+      // them. A bass-swap keeps both vocals untouched and is the worst case.
+      if (vocalClash) {
+        if (name === 'bass-swap' || name === 'drop' || name === 'slam' || name === 'roll') score -= 0.22
+        if (name === 'filter' || name === 'echo') score += 0.12
+      } else if (vocalSolo && (name === 'drop' || name === 'slam')) {
+        score -= 0.1
+      }
       if (name === previous) score -= 0.35 // vary, unless nothing else fits
       return { name, score }
     })

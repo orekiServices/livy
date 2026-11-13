@@ -27,7 +27,7 @@ test('a fresh database is migrated to the current schema', async () => {
   for (const table of ['stations', 'requests', 'votes', 'skip_votes', 'plays', 'bans', 'settings', 'plugins', 'schema_migrations']) {
     assert.ok(info.tables.includes(table), `missing table ${table}`)
   }
-  assert.match(info.driver, /metrodb|better-sqlite3|bun:sqlite/)
+  assert.match(info.driver, /metrodb|better-sqlite3|bun:sqlite|node:sqlite/)
   store.close()
 
   // Re-opening applies nothing and keeps the version.

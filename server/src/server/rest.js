@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto'
 import { buildIcyMetadataBlock } from '../util/icyClient.js'
 import { resolveStaticFile, sendFile } from '../util/files.js'
 import { paths } from '../config.js'
+import { hostInfo } from '../util/platform.js'
 import { createOwnerRouter, isOwner, ownerKey } from './owner.js'
 import { StreamErrorVoice, failStream } from './streamErrors.js'
 import { LANGUAGES } from '../tts/index.js'
@@ -362,6 +363,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             // its (older, cached) UI losing track of it.
             legacyNames: ['nodecast'],
             version: VERSION,
+            // Termux/Android gets a smaller training budget; a client can
+            // show which one this node chose without guessing from a UA.
+            device: hostInfo(),
             uptime: Date.now() - startedAt,
             sources: sources.sources.map((s) => s.name),
             defaultSearch: sources.defaultSearch,

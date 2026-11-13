@@ -109,6 +109,24 @@ seams, two candidates, small nets, CPU with a WebGPU path when present. The
 station keeps playing throughout — the trainer yields every few epochs and the
 activated model is picked up at the next seam.
 
+### What was added for v3.10
+
+- **Vocal-aware length.** AutoMix fades a lyric line rather than cutting it;
+  with no stems, Livy detects vocal-band activity in the first 1.8 s of each
+  side *before* choosing the blend length. Both sides singing contracts the
+  blend to ~70 % (the lines hand over), one side to ~90 %. The later curve
+  shaping still uses the phrase boundary.
+- **Vocal-aware choice.** A clash penalises bass-swap, drop, roll and slam,
+  which leave both voices exposed, and rewards filter/echo, which mask one.
+- **Grid honesty.** Roll and drop require an *unmatched* tempo gap below 5 and
+  7 BPM respectively; a folded match already reconciled the grids and is
+  allowed regardless of the raw tag difference.
+- **Folded matches count.** Bass-swap is no longer refused just because the
+  BPM tags differ by more than 3 after a successful ±4 % fold.
+- **Android budget.** A phone trains one 12-unit candidate for 26 epochs on
+  the 1,200 most recent seams, yields every 4 epochs, and skips the WebGPU
+  probe. The seam still decides the same way; only the learning budget changed.
+
 ---
 
 ## 4. Private storage on Hugging Face

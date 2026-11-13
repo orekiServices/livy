@@ -8,6 +8,9 @@
     "livy": "cd server && bun install && bun run build:web && bun src/index.js",
     "setup": "cd server && bun install && bun run build:web",
     "start": "cd server && bun src/index.js",
+    "start:node": "cd server && node src/index.js",
+    "livy:node": "cd server && npm ci --omit=optional --omit=dev && node src/index.js",
+    "livy:termux": "bash livy-termux",
     "dev": "cd server && bun --watch src/index.js",
     "build:web": "cd server && bun run build:web",
     "build": "cd web && bun run build",
@@ -15,6 +18,7 @@
     "build:listen": "cd client && bun run build"
   },
   "engines": {
-    "bun": ">=1.1.0"
+    "bun": ">=1.1.0",
+    "node": ">=22.13.0"
   }
 }

@@ -13,6 +13,7 @@
   },
   "scripts": {
     "start": "bun src/index.js",
+    "start:node": "node src/index.js",
     "dev": "bun --watch src/index.js",
     "test": "bun test",
     "test:node": "node --test --test-concurrency=4 \"test/*.test.js\"",

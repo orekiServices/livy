@@ -21,6 +21,7 @@ import createLogger, { configureLogging, banner } from './util/logger.js'
 import Memory from './core/memory.js'
 import SmartQueue from './core/smartQueue.js'
 import { engineInfo } from './util/metro.js'
+import { hostInfo } from './util/platform.js'
 import { AutoTrainer, configureModels } from './core/models/index.js'
 
 const log = createLogger('livy')
@@ -158,7 +159,9 @@ export async function createRadioServer(overrides = {}) {
     store: store ? `${store.driver} · schema v${store.schemaVersion}` : 'disabled',
     plugins: plugins ? `${plugins.list().filter((p) => p.status === 'ready').length}/${plugins.list().length} active` : 'off',
     // Which relay engine is in play: native libmetro, or the JS fallback.
-    engine: engineInfo().describe
+    engine: engineInfo().describe,
+    // `android` on a Termux node: smaller models, node:sqlite, no GPU probe.
+    device: hostInfo().mobile ? `${hostInfo().profile}${hostInfo().termux ? ' (Termux)' : ''} · ${hostInfo().cpus} cores · ${hostInfo().memoryMb} MB` : null
   })
   if (manager.size === 0 && !platform) log.info(`first run: open http://${config.server.host}:${port}/ and create your first station`)
 

@@ -121,20 +121,12 @@ export const DEFAULT_CONFIG = {
   // The learned automix policy. On by default, trained while stations play:
   // a fast small multi-train every `everySeams` new seams, best candidate
   // activated only if it beats the incumbent on a held-out split.
+  // Model and training defaults live in `core/models/settings.js`: a Termux
+  // node lowers them before a config file is applied. Keep `hf` here so the
+  // environment overrides below have a container even when config.json is
+  // silent.
   models: {
-    enabled: true,
-    autoTrain: true,
-    fast: true,
-    candidates: 2,
-    minSeams: 40,
-    everySeams: 60,
-    pollMs: 60_000,
-    intervalMs: 30 * 60_000,
-    epochs: 0,
-    activate: true,
-    // Private Hugging Face repo for storage. Off until a repo and token are
-    // set; when on, the repo is created private and a public one is refused.
-    hf: { enabled: false, repo: '', revision: 'main', private: true, token: '' }
+    hf: {}
   },
   stationDefaults: {
     bufferAheadMs: 15_000,
