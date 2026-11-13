@@ -38,6 +38,7 @@ import ArchiveSource from './archive.js'
 import BandcampSource from './bandcamp.js'
 import DeezerSource from './deezer.js'
 import CcMixterSource from './ccmixter.js'
+import NhacCuaTuiSource from './nhaccuatui.js'
 import RadioBrowserSource from './radiobrowser.js'
 import SomaFmSource from './somafm.js'
 import PodcastSource from './podcast.js'
@@ -55,8 +56,8 @@ const log = createLogger('sources')
 /** Providers shipped with the node — a plugin may not replace these. */
 const BUILT_IN_SOURCES = new Set([
   'tts', 'local', 'soundcloud', 'audius', 'bandcamp', 'ccmixter',
-  'archive', 'deezer', 'radioparadise', 'somafm', 'podcast', 'vimeo',
-  'ytmusic', 'mirror', 'songlink', 'radiobrowser', 'http'
+  'nhaccuatui', 'archive', 'deezer', 'radioparadise', 'somafm', 'podcast',
+  'vimeo', 'ytmusic', 'mirror', 'songlink', 'radiobrowser', 'http'
 ])
 
 /* ------------------------------ matching ------------------------------ */
@@ -146,6 +147,7 @@ export class SourceRegistry {
     this.bandcamp = new BandcampSource()
     this.deezer = new DeezerSource()
     this.ccmixter = new CcMixterSource()
+    this.nhaccuatui = new NhacCuaTuiSource()
     this.radiobrowser = new RadioBrowserSource({ http: this.http })
     this.somafm = new SomaFmSource({ http: this.http })
     this.podcast = new PodcastSource({ http: this.http })
@@ -166,6 +168,7 @@ export class SourceRegistry {
       this.audius,
       this.bandcamp,
       this.ccmixter,
+      this.nhaccuatui,
       this.archive,
       this.deezer,
       this.radioparadise,
@@ -205,6 +208,8 @@ export class SourceRegistry {
       local: 0.25,
       [this.defaultSearch]: 0.15,
       audius: 0.1,
+      // Vietnamese catalogue: when it has the song, it is the right copy.
+      nhaccuatui: 0.08,
       archive: 0.05,
       ccmixter: 0.05,
       ytmusic: -0.15, // it cannot play; it is here to name things

@@ -1,7 +1,7 @@
 # Livy 📻
 
 **NodeJS + ICEcast.** A single small Node process that runs as many radio stations as you like, pulls
-music from sixteen sources (SoundCloud first), mixes the seams like a DJ — real beatmatching, not a
+music from seventeen sources (SoundCloud first), mixes the seams like a DJ — real beatmatching, not a
 fade — and streams each station as one continuous MP3 with ICY metadata. Feeds that are not MP3 —
 AAC, HLS, Ogg, FLAC — are transcoded on the way in by **MetroS**, its Rust engine.
 
@@ -47,7 +47,7 @@ curl -s -H 'Icy-MetaData: 1' -D - http://localhost:2333/stream/night-drive-fm.mp
 |---|---|
 | **Stations** | many per process, each with its own queue, rotation, requests, automix and listeners |
 | **Audio path** | MP3 in → MP3 out, byte for byte, no ffmpeg. Anything else is decoded and re-encoded by MetroS at 70–150x realtime. |
-| **Sources** | soundcloud · audius · bandcamp · ccmixter · archive.org · deezer · radio paradise (FLAC) · somafm · podcast/RSS · vimeo · **youtube music** · mirror (Spotify/Apple/YouTube links) · **song.link** · radio-browser · http/icecast/HLS · local (mp3 · flac · m4a · ogg · wav…) · tts |
+| **Sources** | soundcloud · audius · bandcamp · ccmixter · **nhaccuatui** · archive.org · deezer · radio paradise (FLAC) · somafm · podcast/RSS · vimeo · **youtube music** · mirror (Spotify/Apple/YouTube links) · **song.link** · radio-browser · http/icecast/HLS · local (mp3 · flac · m4a · ogg · wav…) · tts |
 | **Automix** | loudness-matched, cue-trimmed, **beatmatched** seams, **ten transitions chosen per seam**, blends up to 30 s, and the heavy DSP in Rust off the event loop |
 | **DJ** | optional voice-tracking over the seam with a real sidechain duck |
 | **Request line** | request, upvote, vote-skip, per-listener limits, bans — all persisted in SQLite |
@@ -120,6 +120,7 @@ the station and MetroS take it from there.
 | **archive** (hi-res) | `iasearch:<terms>`, `ia:<identifier>`, archive.org URLs | Real MP3 files, frequently 192–320 kbps VBR. Filtered to `.mp3` and biased away from talk/audiobook collections. |
 | **bandcamp** | `bcsearch:<terms>`, `<artist>.bandcamp.com/track|album/…` | Full-length `mp3-128` streams from the page's `data-tralbum` blob. Search uses the site's own autocomplete API (the HTML search is now a JS challenge) and carries the artwork and URL, so the page is only fetched on first play. |
 | **ccmixter** (hi-res) | `ccsearch:<terms>`, ccmixter.org file URLs | Creative Commons remixes, mostly VBR ~192 kbps — a good clone target. |
+| **nhaccuatui** | `nctsearch:<terms>`, `nct:<terms>`, nhaccuatui.com song/playlist URLs | Vietnam's largest catalogue, and the one a Vietnamese request should land on. The JSON API is undocumented and signed per call (`a`/`s`/`t`, HMAC-SHA512 with a key the site ships AES-wrapped); playback goes through the same `/download/song` call its own web player makes, which answers with a public CDN MP3. Unofficial, so it is allowed to break — the registry falls through when it does. |
 | **somafm** | `soma:groovesalad`, `somafm:<channel>`, somafm.com URLs | 24/7 curated channels; the highest-quality MP3 playlist is parsed out of the `.pls`. |
 | **podcast** | `pcsearch:<terms>`, `podcast:darknet diaries`, `rss:<feed url>` | iTunes search → RSS → MP3 enclosures. Spoken-word episodes bypass the automix. |
 | **radioparadise** (lossless) | `rp:mellow`, `rp:0`…`rp:4`, radioparadise.com URLs | Listener-supported radio served as **FLAC blocks** with the running order attached, so the station announces the right song at the right moment. Transcoded by MetroS as it downloads. |

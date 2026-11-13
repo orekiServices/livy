@@ -14,6 +14,7 @@ import { SourceRegistry, similarity, fingerprintOf } from '../src/sources/index.
 import { SoundCloudSource } from '../src/sources/soundcloud.js'
 import { BandcampSource } from '../src/sources/bandcamp.js'
 import { PodcastSource } from '../src/sources/podcast.js'
+import { NhacCuaTuiSource } from '../src/sources/nhaccuatui.js'
 import { pageDataFrom, platformLinks } from '../src/sources/songlink.js'
 import { splitTitle } from '../src/sources/ytmusic.js'
 import { quietLogs } from './helpers.js'
@@ -425,4 +426,199 @@ test('Audius fails over to a second discovery node without re-discovering', asyn
     server.close()
     dead.close()
   }
+})
+
+/* --------------------------- NhacCuaTui -------------------------------- */
+
+/**
+ * NhacCuaTui's API is signed and reached over `node:https` (the responses have
+ * headers too large for undici), so these tests intercept the transport rather
+ * than `fetch` — the same lesson as ccMixter's, one layer down.
+ */
+async function withNct({ api, download, stream } = {}, body) {
+  const https = await import('node:https')
+  const { EventEmitter } = await import('node:events')
+  const original = https.default.request
+
+  https.default.request = (url, options, callback) => {
+    const req = new EventEmitter()
+    req.destroy = (error) => req.emit('error', error)
+    req.end = () => {
+      const parsed = new URL(url)
+      const payload = api?.(parsed.pathname.replace(/^\/api\//, ''), parsed.searchParams) ?? { data: { items: [] } }
+      const res = new EventEmitter()
+      res.statusCode = 200
+      const text = typeof payload === 'string' ? payload : JSON.stringify(payload)
+      setImmediate(() => {
+        res.emit('data', Buffer.from(text))
+        res.emit('end')
+      })
+      callback(res)
+    }
+    return req
+  }
+
+  if (download || stream) {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/download/song/')) return download()
+      return stream ? stream() : { ok: false, status: 404 }
+    }
+    try {
+      return await body()
+    } finally {
+      globalThis.fetch = originalFetch
+      https.default.request = original
+    }
+  }
+  try {
+    return await body()
+  } finally {
+    https.default.request = original
+  }
+}
+
+test('a NhacCuaTui search becomes tracks that carry the key the stream needs', async () => {
+  const source = new NhacCuaTuiSource()
+
+  const tracks = await withNct(
+    {
+      api: (path) => {
+        assert.equal(path, 'search/all', 'search hits search/all')
+        return {
+          data: {
+            items: [
+              { key: 'abc123', name: 'Em Của Ngày Hôm Qua', artistName: 'Sơn Tùng M-TP', duration: 252, image: 'https://x/a.jpg' },
+              // The console-facing type must be honoured: a playlist is not a song.
+              { key: 'pl999', name: 'Some playlist', type: 'playlist' }
+            ]
+          }
+        }
+      }
+    },
+    () => source.search('son tung')
+  )
+
+  assert.equal(tracks.length, 1, 'the playlist row is dropped')
+  assert.equal(tracks[0].id, 'nct:abc123')
+  assert.equal(tracks[0].nctKey, 'abc123', 'the raw key travels separately from the prefixed id')
+  assert.equal(tracks[0].title, 'Em Của Ngày Hôm Qua')
+  assert.equal(tracks[0].artist, 'Sơn Tùng M-TP')
+  assert.equal(tracks[0].duration, 252_000, 'seconds become milliseconds')
+  assert.equal(tracks[0].source, 'nhaccuatui')
+})
+
+test('an empty artist field does not blank the artist, and an artist array is joined', async () => {
+  // `artistName: ''` is not nullish, so a `??` chain took the empty string and
+  // the row went on air as "by " — take the first field that has text.
+  const source = new NhacCuaTuiSource()
+  const tracks = await withNct(
+    {
+      api: () => ({
+        data: {
+          items: [
+            { key: 'k1', name: 'One', artistName: '', singers: [{ name: 'Sơn Tùng M-TP' }], image: '' },
+            { key: 'k2', name: 'Two', artistName: '  ', artists: [{ name: 'A' }, { name: 'B' }] },
+            { key: 'k3', name: 'Three' }
+          ]
+        }
+      })
+    },
+    () => source.search('x')
+  )
+
+  assert.equal(tracks[0].artist, 'Sơn Tùng M-TP', 'the array is used when the scalar is blank')
+  assert.equal(tracks[1].artist, 'A, B', 'every credited name, joined')
+  assert.equal(tracks[2].artist, 'NhacCuaTui', 'and a real fallback when there is nothing')
+  assert.equal(tracks[0].artwork, null, 'a blank image is not artwork')
+})
+
+test('a NhacCuaTui song link resolves to one track, and the detail URL is kept', async () => {
+  const source = new NhacCuaTuiSource()
+
+  const result = await withNct(
+    {
+      api: (path) =>
+        path === 'media/info'
+          ? {
+              data: {
+                key: 'HUrRmiQuz1P7',
+                name: 'Fly Away',
+                artistName: 'TheFatRat',
+                streamURL: [
+                  { typeUI: '128', stream: 'https://cdn/x_128.mp3' },
+                  { typeUI: '320', stream: 'https://cdn/x_320.mp3' }
+                ]
+              }
+            }
+          : { data: {} }
+    },
+    () => source.resolve('https://www.nhaccuatui.com/bai-hat/fly-away.HUrRmiQuz1P7.html')
+  )
+
+  assert.equal(result.type, 'track')
+  assert.equal(result.tracks.length, 1)
+  assert.equal(result.tracks[0].directUrl, 'https://cdn/x_320.mp3', 'the highest tier offered is chosen')
+  assert.equal(result.tracks[0].bitrate, 320, 'and the bitrate follows the tier')
+})
+
+test('the download endpoint is the fallback when the detail response has no stream', async () => {
+  const source = new NhacCuaTuiSource()
+  const track = { id: 'nct:KEY1', nctKey: 'KEY1', title: 'x', bitrate: 128 }
+
+  const url = await withNct(
+    {
+      download: () => ({
+        ok: true,
+        json: async () => ({ error_message: 'Success', data: { stream_url: 'https://download.s81.stream.nixcdn.com/a.mp3' } })
+      })
+    },
+    () => source.getTrackUrl(track)
+  )
+
+  assert.equal(url, 'https://download.s81.stream.nixcdn.com/a.mp3')
+})
+
+test('a stream is audio/mpeg, and a charged or missing url is an error rather than silence', async () => {
+  const source = new NhacCuaTuiSource()
+
+  const opened = await withNct(
+    {
+      download: () => ({
+        ok: true,
+        json: async () => ({ data: { stream_url: 'https://cdn/a.mp3', is_charge: 'false' } })
+      }),
+      stream: () => ({ ok: true, body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1])); c.close() } }), headers: new Map([['content-type', 'audio/mpeg']]) })
+    },
+    () => source.stream({ id: 'nct:K', nctKey: 'K', bitrate: 128 })
+  )
+  assert.equal(opened.contentType, 'audio/mpeg')
+  assert.equal(opened.mode, 'nhaccuatui')
+
+  await assert.rejects(
+    () => withNct({ download: () => ({ ok: true, json: async () => ({ error_message: 'Bài hát VIP', data: {} }) }) }, () => source.getTrackUrl({ nctKey: 'VIP' })),
+    /no stream url|VIP/
+  )
+})
+
+test('the NhacCuaTui secret unwraps to the key the API signature uses', async () => {
+  // The one part of this source that can be pinned without the network: the
+  // AES blob in the site's bundle must yield the same HMAC key every time.
+  const crypto = await import('node:crypto')
+  const blob = 'U2FsdGVkX19BWoF1uTP8o90p9KAWsXZ/VJ41PG7XYF/63qnjiMh1TLy8zAfZBMa9iqiGyPiN5iMUocpD74kAsg=='
+  const raw = Buffer.from(blob, 'base64')
+  assert.equal(raw.subarray(0, 8).toString('binary'), 'Salted__', 'an OpenSSL salted blob')
+
+  const salt = raw.subarray(8, 16)
+  const blocks = []
+  let previous = Buffer.alloc(0)
+  while (Buffer.concat(blocks).length < 48) {
+    previous = crypto.createHash('md5').update(Buffer.concat([previous, Buffer.from('nhaccuatui'), salt])).digest()
+    blocks.push(previous)
+  }
+  const material = Buffer.concat(blocks)
+  const decipher = crypto.createDecipheriv('aes-256-cbc', material.subarray(0, 32), material.subarray(32, 48))
+  const secret = Buffer.concat([decipher.update(raw.subarray(16)), decipher.final()]).toString('utf8')
+
+  assert.equal(secret, '6847f1a4fc2f4eb6ab13f9084e082ef4', 'EVP_BytesToKey(MD5) derives the documented key')
 })
