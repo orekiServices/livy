@@ -1,5 +1,6 @@
 import { AnimatableFilter } from './AnimatableFilter.js'
 import { Biquad } from './dsp/biquad.js'
+import { fx } from '../../util/fx.js'
 import { clamp, SAMPLE_RATE } from './constants.js'
 
 /**
@@ -27,11 +28,13 @@ export class HighpassFilter extends AnimatableFilter {
   #sampleRate
   #left = new Biquad()
   #right = new Biquad()
+  #native
   #current = 10
 
   constructor(config = {}, { sampleRate = SAMPLE_RATE } = {}) {
     super()
     this.#sampleRate = sampleRate
+    this.#native = fx?.Biquad ? new fx.Biquad() : null
     this.update(config)
     this.#retune(this.cutoff())
   }
@@ -59,6 +62,7 @@ export class HighpassFilter extends AnimatableFilter {
     const q = Math.SQRT1_2 + clamp(this.config.resonance ?? 0, 0, 10) * 0.15
     this.#left.highpass(cutoff, this.#sampleRate, q)
     this.#right.copyCoefficients(this.#left)
+    this.#native?.setHighpass(cutoff, this.#sampleRate, q)
   }
 
   process(left, right, length) {
@@ -66,6 +70,10 @@ export class HighpassFilter extends AnimatableFilter {
     const cutoff = this.cutoff()
     if (cutoff <= 11) return
     this.#retune(cutoff)
+    if (this.#native) {
+      this.#native.process(left, right, length)
+      return
+    }
     for (let i = 0; i < length; i += 1) {
       left[i] = this.#left.run(left[i])
       right[i] = this.#right.run(right[i])
@@ -75,6 +83,7 @@ export class HighpassFilter extends AnimatableFilter {
   reset() {
     this.#left.reset()
     this.#right.reset()
+    this.#native?.reset()
     this.#current = 10
   }
 }

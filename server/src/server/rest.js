@@ -28,6 +28,7 @@ import { buildIcyMetadataBlock } from '../util/icyClient.js'
 import { resolveStaticFile, sendFile } from '../util/files.js'
 import { paths } from '../config.js'
 import { hostInfo } from '../util/platform.js'
+import { fxInfo } from '../util/fx.js'
 import { createOwnerRouter, isOwner, ownerKey } from './owner.js'
 import { StreamErrorVoice, failStream } from './streamErrors.js'
 import { LANGUAGES } from '../tts/index.js'
@@ -366,6 +367,8 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             // Termux/Android gets a smaller training budget; a client can
             // show which one this node chose without guessing from a UA.
             device: hostInfo(),
+            // Which filter kernels are loaded: MetroFX native, or JS.
+            fx: fxInfo(),
             uptime: Date.now() - startedAt,
             sources: sources.sources.map((s) => s.name),
             defaultSearch: sources.defaultSearch,

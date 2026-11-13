@@ -16,7 +16,7 @@ Bun + Rust. No ffmpeg, no database server, no external mixer.
 server/   the node — sources, automix, filters, REST + ICY
 web/      the owner console — Next.js, exported to static files
 client/   the listener player — created with create-next-app, exported to /listen
-native/   MetroS (reframing/transcoding) and MetroDB (SQLite), in Rust
+native/   MetroS (reframing/transcoding), MetroDB (SQLite), MetroFX (DSP), in Rust
 api/      the Vercel function entry point
 docs/     research notes, including Apple Music AutoMix
 ```
@@ -40,7 +40,8 @@ cd server && bun install && bun run build:web && bun start
 Bun 1.1+, or Node 22.13+ (see [Termux](#on-a-phone-termux--android)). No
 ffmpeg, no Postgres, no build toolchain (a prebuilt MetroS and MetroDB ship in
 `native/`; `bun run build:metro` / `build:db` rebuild them when Rust is
-installed).
+installed; MetroFX, the optional native filter kernels, builds in CI and falls
+back to JavaScript on hosts that have no binary).
 
 A fresh install has **no stations**. Open the URL and the console walks you
 through the first one: owner key → name → sources → crossfade and beatmatching
@@ -86,7 +87,7 @@ What changes on a phone:
 | | Server | Termux/Android |
 |---|---|---|
 | SQLite | MetroDB (Rust) | `node:sqlite` (built in) |
-| DSP | libmetro native | JavaScript fallback |
+| DSP | libmetro / MetroFX native | JavaScript fallback (`LIVY_DISABLE_FX=1`) |
 | Policies | 2 candidates × up to 120 epochs | 1 candidate × 26 epochs |
 | Network | 24→16 | 12 |
 | Seams used | 20,000 | 1,200 most recent |
@@ -357,13 +358,35 @@ bun run test                # from the repo root
 bun run test:node           # node --test, for a Node-only host
 ```
 
-296 tests. Sources are stubbed at the transport rather than at the module, so no
+302 tests (301 on a host without a MetroFX binary). Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
 air, the Android training budget, model presets, `node:sqlite`, and private Hugging Face
 push/pull with a fake `fetch`. Source tests cover the NhacCuaTui
 detail/playlist/retry paths, and the API test drives a real listener pick onto
 a live station.
+
+## Filters
+
+The chain is a fixed order of small DSP objects (`server/src/core/filters/`),
+each with the same four-method contract, so a station can stack EQ, compression,
+reverb, distortion and the modulation effects without special cases.
+
+| | What it does |
+|---|---|
+| **Biquad** | transposed direct-form II, RBJ peaking/low/high-pass; 15-band EQ runs one section per band |
+| **Moving delay** | Catmull-Rom interpolation, not linear: vibrato, chorus and flanger stay in tune across the fractional samples where their heads actually live |
+| **Compressor** | 6 dB soft knee, per-sample attack/release; input `gain` is real drive, `makeupGain` sits after the detector |
+| **Distortion** | 4× oversampled waveshaper with a 0.45·fs anti-image low-pass before decimation, so harmonics fold back far less |
+| **Reverb** | Freeverb: 8 damped combs + 4 all-passes per channel, stereo spread |
+
+The four per-sample kernels also exist in Rust as **MetroFX**
+(`native/metrofx/`, napi-rs). It is optional by design: `server/src/util/fx.js`
+loads a binary when one matches the host and otherwise keeps the JavaScript
+implementation, so a clone with no toolchain, a phone, or an unsupported libc
+still boots. `GET /api/v1/info` reports `fx.engine` — `native` or
+`javascript` — and the boot banner says which is running. `LIVY_DISABLE_FX=1`
+forces the reference path; the test suite passes both ways.
 
 ## API
 

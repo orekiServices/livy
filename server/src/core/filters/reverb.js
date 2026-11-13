@@ -1,5 +1,6 @@
 import { AnimatableFilter } from './AnimatableFilter.js'
 import { clamp, SAMPLE_RATE } from './constants.js'
+import { fx } from '../../util/fx.js'
 
 /**
  * Reverb — a Freeverb-style network: eight parallel combs into four all-passes
@@ -86,6 +87,7 @@ export class ReverbFilter extends AnimatableFilter {
   #right = []
   #allpassL = []
   #allpassR = []
+  #native = null
 
   constructor(config = {}, { sampleRate = SAMPLE_RATE } = {}) {
     super()
@@ -95,6 +97,7 @@ export class ReverbFilter extends AnimatableFilter {
     this.#right = COMB_DELAYS.map((size) => new Comb(Math.round((size + STEREO_SPREAD) * scale)))
     this.#allpassL = ALLPASS_DELAYS.map((size) => new Allpass(Math.round(size * scale)))
     this.#allpassR = ALLPASS_DELAYS.map((size) => new Allpass(Math.round((size + STEREO_SPREAD) * scale)))
+    this.#native = fx?.Reverb ? new fx.Reverb(sampleRate) : null
     this.update(config)
   }
 
@@ -112,6 +115,13 @@ export class ReverbFilter extends AnimatableFilter {
       comb.feedback = feedback
       comb.damp = damp
     }
+    this.#native?.setParams(
+      this.config.roomSize ?? 0,
+      this.config.damping ?? 0,
+      this.config.width ?? 0,
+      this.config.mix > 0 ? this.config.mix : (this.config.wetLevel ?? 0),
+      this.config.mix > 0 ? 1 - this.config.mix : (this.config.dryLevel ?? 1)
+    )
     return this
   }
 
@@ -129,6 +139,13 @@ export class ReverbFilter extends AnimatableFilter {
     const wet = mix > 0 ? mix : clamp(wetLevel, 0, 1)
     const dry = mix > 0 ? 1 - mix : clamp(dryLevel, 0, 1)
     const spread = clamp(width, 0, 1)
+
+    if (this.#native) {
+      // The animated update may have moved any of these since the last block.
+      this.#native.setParams(this.config.roomSize ?? 0, this.config.damping ?? 0, spread, wet, dry)
+      this.#native.process(left, right, length)
+      return
+    }
 
     for (let i = 0; i < length; i += 1) {
       const input = (left[i] + right[i]) * 0.5 * INPUT_GAIN
@@ -154,6 +171,7 @@ export class ReverbFilter extends AnimatableFilter {
     for (const comb of this.#right) comb.reset()
     for (const allpass of this.#allpassL) allpass.reset()
     for (const allpass of this.#allpassR) allpass.reset()
+    this.#native?.reset()
   }
 }
 

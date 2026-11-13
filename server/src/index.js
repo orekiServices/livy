@@ -22,6 +22,7 @@ import Memory from './core/memory.js'
 import SmartQueue from './core/smartQueue.js'
 import { engineInfo } from './util/metro.js'
 import { hostInfo } from './util/platform.js'
+import { fxEngine, fxInfo } from './util/fx.js'
 import { AutoTrainer, configureModels } from './core/models/index.js'
 
 const log = createLogger('livy')
@@ -160,6 +161,8 @@ export async function createRadioServer(overrides = {}) {
     plugins: plugins ? `${plugins.list().filter((p) => p.status === 'ready').length}/${plugins.list().length} active` : 'off',
     // Which relay engine is in play: native libmetro, or the JS fallback.
     engine: engineInfo().describe,
+    // MetroFX native filter kernels, or the JavaScript reference path.
+    fx: fxEngine === 'native' ? fxInfo().describe : 'javascript (MetroFX not built for this host)',
     // `android` on a Termux node: smaller models, node:sqlite, no GPU probe.
     device: hostInfo().mobile ? `${hostInfo().profile}${hostInfo().termux ? ' (Termux)' : ''} · ${hostInfo().cpus} cores · ${hostInfo().memoryMb} MB` : null
   })

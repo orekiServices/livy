@@ -66,6 +66,8 @@ test('a fresh node is healthy, empty and asks to be set up', async (t) => {
   assert.equal(info.defaultSearch, 'local', '…and the default search provider is configurable')
   assert.deepEqual(info.legacyNames, ['nodecast'], 'an upgraded console can still recognise this node')
   assert.ok(info.transitions.includes('crossfade'))
+  assert.ok(info.fx, 'the node reports which filter kernels are loaded')
+  assert.ok(['native', 'javascript'].includes(info.fx.engine), 'and which engine is live')
 
   const setup = await api(base, '/api/v1/setup')
   assert.equal(setup.configured, false)
