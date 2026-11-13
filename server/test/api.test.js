@@ -466,3 +466,34 @@ test('the plugin, log and store control planes are wired to the real thing', asy
     assert.equal((await api(base, route))._status, 401, `${route} must be gated`)
   }
 })
+
+test('a listener can put one song on air from the web client', async (t) => {
+  const { base, manager, mediaDir } = await node(t, {
+    stations: (mediaDir) => [{ id: 'fm', name: 'FM', playlists: [`local:${mediaDir}`], autoStart: false }]
+  })
+  const station = manager.get('fm')
+  await station.load()
+  await station.start()
+  await waitFor(() => station.nowPlaying(), { label: 'the station on air' })
+
+  const result = await api(base, '/api/v1/stations/fm/play', {
+    method: 'POST',
+    body: { query: `local:${path.join(mediaDir, 'Test Artist - Track 2.mp3')}`, by: 'listener' }
+  })
+  assert.equal(result._status, 200, JSON.stringify(result))
+  assert.equal(result.playingNext, true)
+  assert.equal(result.queued.title, 'Track 2')
+  await waitFor(() => station.nowPlaying()?.track?.title === 'Track 2', { label: 'the picked song on air' })
+})
+
+test('play-now is refused when the owner turned it off', async (t) => {
+  const { base } = await node(t, {
+    stations: () => [{ id: 'fm', name: 'FM', playlists: [], autoStart: false, allowPlayNow: false }]
+  })
+  const result = await api(base, '/api/v1/stations/fm/play', {
+    method: 'POST',
+    body: { query: 'anything' }
+  })
+  assert.equal(result._status, 403, JSON.stringify(result))
+  assert.match(result.message, /does not let listeners pick songs/i)
+})

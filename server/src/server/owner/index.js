@@ -368,7 +368,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         if (method === 'GET') return send(res, 200, { queue: target.queue })
         if (method === 'POST') {
           const body = await readJson(req)
-          let tracks = body.track ? [body.track] : []
+          let tracks = body.track ? [await sources.rehydrate(body.track)] : []
           if (!tracks.length && body.query) {
             const resolved = await sources.resolve(body.query)
             tracks = resolved.tracks ?? []

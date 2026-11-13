@@ -239,6 +239,7 @@ export class SoundCloudSource {
       duration: raw.duration ?? raw.full_duration ?? 0,
       artwork,
       url: raw.permalink_url,
+      pageUrl: raw.permalink_url,
       genre: raw.genre || null,
       playbackCount: raw.playback_count ?? 0,
       likes: raw.likes_count ?? 0,

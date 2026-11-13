@@ -59,6 +59,7 @@ export function configureModels({ config = {}, store = null } = {}) {
   state.hf.enabled = Boolean(state.hf.enabled || process.env.LIVY_HF_MODELS === '1')
   state.hf.repo = process.env.LIVY_HF_REPO ?? state.hf.repo ?? ''
   state.autoTrain = process.env.LIVY_AUTO_TRAIN === '0' ? false : state.autoTrain !== false
+  state.fast = process.env.LIVY_MODEL_FAST === '0' ? false : state.fast !== false
   state.saveDir = process.env.LIVY_MODEL_DIR ?? state.saveDir ?? ''
   state.enabled = process.env.LIVY_MODELS === '0' ? false : state.enabled !== false
   return state

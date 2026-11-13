@@ -470,7 +470,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             if (method === 'POST') {
               if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
               const body = await readJson(req)
-              const station = manager.add(body)
+              // Created through the API is still an owned station: it must
+              // survive a restart, not just this process.
+              const station = manager.add({ ...body, _owned: true })
               if (body.autoStart !== false) {
                 station.load().then(() => station.start()).catch((e) => log.warn(e.message))
               }
@@ -522,6 +524,34 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             }
           }
 
+          /* ----- listener play-now: the web client's search → play ----- */
+          if (action === 'play' && method === 'POST') {
+            if (station.options.allowPlayNow === false) {
+              return fail(res, 403, 'This station does not let listeners pick songs')
+            }
+            const body = await readJson(req)
+            const who = body.requesterId ?? requesterId(req, body)
+            if (station.store?.isBanned?.(who)) return fail(res, 403, 'Your line has been restricted by the station owner')
+            try {
+              let track = body.track
+              if (!track && body.query) {
+                const resolved = await sources.resolve(body.query, { limit: 5 })
+                track = resolved.tracks.find((candidate) => candidate.streamable !== false)
+              }
+              if (!track) return fail(res, 400, 'Provide "track" or "query"')
+              if (typeof sources.rehydrate === 'function') track = await sources.rehydrate(track)
+              const queued = station.playNow(track, { by: body.by ?? 'listener' })
+              return send(res, 200, {
+                queued: publicTrack(queued),
+                station: station.id,
+                playingNext: true,
+                queueLength: station.queue.length
+              })
+            } catch (error) {
+              return fail(res, error.status ?? 400, error.message)
+            }
+          }
+
           if (action === 'requests' && param && seg[6] === 'vote' && method === 'POST') {
             const body = await readJson(req)
             try {
@@ -553,7 +583,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
 
             if (method === 'POST') {
               const body = await readJson(req)
-              let tracks = body.track ? [body.track] : body.tracks
+              let tracks = body.track
+                ? [typeof sources.rehydrate === 'function' ? await sources.rehydrate(body.track) : body.track]
+                : body.tracks
               if (!tracks) {
                 if (!body.query) return fail(res, 400, 'Provide "query", "track" or "tracks"')
                 const resolved = await sources.resolve(body.query, { limit: body.limit ?? 50 })

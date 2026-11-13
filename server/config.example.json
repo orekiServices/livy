@@ -60,9 +60,25 @@
     "automix": {
       "enabled": true,
       "crossfadeMs": 6000,
-      "effect": "crossfade",
-      "beatmatch": true
-    }
+      "effect": "auto",
+      "beatmatch": true,
+      "model": true
+    },
+    "allowPlayNow": true
   },
-  "stations": []
+  "stations": [],
+  "models": {
+    "autoTrain": true,
+    "fast": true,
+    "candidates": 2,
+    "pollMs": 60000,
+    "everySeams": 60,
+    "minSeams": 40,
+    "saveDir": "",
+    "hf": {
+      "repo": "",
+      "private": true,
+      "token": ""
+    }
+  }
 }

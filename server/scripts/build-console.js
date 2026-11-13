@@ -63,5 +63,28 @@ const walk = (dir) => {
 }
 walk(target)
 
+const clientDir = path.resolve(root, '..', 'client')
+const listenExport = path.join(clientDir, 'out')
+const listenTarget = path.join(target, 'listen')
+
+if (fs.existsSync(clientDir)) {
+  if (!fs.existsSync(path.join(clientDir, 'node_modules'))) {
+    console.log('· installing listener dependencies…')
+    run('bun', ['install'], clientDir)
+  }
+  console.log('· building the listener app…')
+  run('bun', ['run', 'build'], clientDir)
+  if (!fs.existsSync(listenExport)) {
+    console.error('✖ the listener build produced no out/ directory')
+    process.exit(1)
+  }
+  fs.rmSync(listenTarget, { recursive: true, force: true })
+  fs.cpSync(listenExport, listenTarget, { recursive: true })
+}
+
+files = 0
+bytes = 0
+walk(target)
+
 console.log(`\n✓ console installed → server/plugins/console/public (${files} files, ${(bytes / 1024 / 1024).toFixed(2)} MB)`)
-console.log('  the console plugin serves it from the node\'s own port — same origin, one process.')
+console.log(`  console  /        ·  listener  /listen/  — same origin, one process.`)

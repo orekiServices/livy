@@ -120,7 +120,7 @@ export default function StudioPage() {
   const loadInfo = useCallback(async () => {
     if (!authed || !stationId) return
     try {
-      const payload = await owner(`/stations/${stationId}`)
+      const payload = await owner(`/stations/${stationId}?queue=1`)
       setInfo(payload)
     } catch (problem) {
       setNotice(problem.message)

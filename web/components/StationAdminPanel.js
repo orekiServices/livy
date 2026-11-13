@@ -36,6 +36,7 @@ export default function StationAdminPanel({ station, stations = [], onChanged, s
           genre: info.genre ?? '',
           description: info.description ?? '',
           allowRequests: info.allowRequests === true,
+          allowPlayNow: info.allowPlayNow !== false,
           playlists: (info.playlists ?? []).join('\n')
         })
       )
@@ -53,6 +54,7 @@ export default function StationAdminPanel({ station, stations = [], onChanged, s
           genre: form.genre || null,
           description: form.description || null,
           allowRequests: form.allowRequests,
+          allowPlayNow: form.allowPlayNow,
           playlists: form.playlists.split('\n').map((line) => line.trim()).filter(Boolean)
         }
       })
@@ -146,6 +148,15 @@ export default function StationAdminPanel({ station, stations = [], onChanged, s
                 onChange={(event) => setForm({ ...form, allowRequests: event.target.checked })}
               />
               Take listener requests
+            </label>
+
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={form.allowPlayNow}
+                onChange={(event) => setForm({ ...form, allowPlayNow: event.target.checked })}
+              />
+              Let listeners play a song now (the /listen client)
             </label>
 
             <button className="btn primary block" disabled={Boolean(busy)} onClick={save}>

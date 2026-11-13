@@ -137,6 +137,14 @@ function durationMs(value) {
   return Math.round(n > 10_000 ? n : n * 1000)
 }
 
+/** `streamURL` is an array on the current API; tolerate a bare string too. */
+function streamEntries(row = {}) {
+  const value = row?.streamURL
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string' && value) return [{ stream: value, onlyVIP: false, status: 1, order: 1 }]
+  return []
+}
+
 /** Is this stream entry one we can actually open? */
 function playable(entry) {
   return Boolean(entry?.stream) && entry.onlyVIP !== true && entry.status !== 0
@@ -150,10 +158,12 @@ function playable(entry) {
  * because its number is bigger means silence. So filter to what is playable,
  * *then* rank.
  */
+function bestStreams(streams = []) {
+  return streams.filter(playable).slice().sort((a, b) => (Number(b.order) || 0) - (Number(a.order) || 0))
+}
+
 function bestStream(streams = []) {
-  const open = streams.filter(playable)
-  if (!open.length) return null
-  return open.slice().sort((a, b) => (Number(b.order) || 0) - (Number(a.order) || 0))[0]
+  return bestStreams(streams)[0] ?? null
 }
 
 /** A signed URL is only followed to a host the service actually serves from. */
@@ -196,7 +206,7 @@ export class NhacCuaTuiSource {
 
     // A track with no open stream at all is not queueable — airing it would
     // fail at the first byte, after the queue has already committed to it.
-    const stream = bestStream(Array.isArray(row.streamURL) ? row.streamURL : [])
+    const stream = bestStream(streamEntries(row))
     const page = firstText(row.url) ?? `${PAGE}/song/${key}`
 
     return {
@@ -230,13 +240,32 @@ export class NhacCuaTuiSource {
 
     const rows = Array.isArray(data?.songs) ? data.songs : []
     const tracks = []
+    const pending = []
+    const seen = new Set()
     for (const row of rows) {
       const track = this.#track(row)
+      const key = track?.nctKey ?? firstText(row?.key, row?.songKey)
+      if (key && seen.has(key)) continue
+      if (key) seen.add(key)
       if (track?.streamable) tracks.push(track)
+      else if (key) pending.push(key)
       if (tracks.length >= limit) break
     }
-    log.debug(`search "${keyword}" -> ${tracks.length}/${rows.length}`)
-    return tracks
+
+    // Search rows often omit `streamURL`; the song still exists and usually
+    // has an open 128. Ask detail for a few of them rather than returning a
+    // short list that looks like the catalogue is empty.
+    const missing = Math.min(pending.length, Math.max(0, limit - tracks.length), 6)
+    if (missing > 0) {
+      const settled = await Promise.allSettled(pending.slice(0, missing).map((key) => this.#detail(key)))
+      for (const result of settled) {
+        if (result.status === 'fulfilled' && result.value?.streamable) tracks.push(result.value)
+      }
+    }
+
+    const unique = [...new Map(tracks.map((track) => [track.nctKey, track])).values()].slice(0, limit)
+    log.debug(`search "${keyword}" -> ${unique.length}/${rows.length}`)
+    return unique
   }
 
   /** Song detail. This is the call that carries the signed stream URLs. */
@@ -253,7 +282,10 @@ export class NhacCuaTuiSource {
 
     // `/song/<key>` is the current shape; the older `/bai-hat/<slug>.<key>.html`
     // still resolves because links to it are all over the web.
-    const songKey = /\/song\/([A-Za-z0-9]+)/i.exec(q)?.[1] ?? /\/bai-hat\/[^/]*?\.([A-Za-z0-9]+)\.html/i.exec(q)?.[1]
+    const songKey =
+      /\/song\/(?:[^/?#]*?\.)?([A-Za-z0-9]+)(?:\.html)?(?:[/?#]|$)/i.exec(q)?.[1] ??
+      /\/bai-hat\/[^/]*?\.([A-Za-z0-9]+)\.html/i.exec(q)?.[1] ??
+      /\/\/www\.nhaccuatui\.com\/l\/([A-Za-z0-9]+)/i.exec(q)?.[1]
     if (songKey) {
       const track = await this.#detail(songKey)
       if (!track?.streamable) throw new Error('Nothing playable at that NhacCuaTui link')
@@ -269,7 +301,24 @@ export class NhacCuaTuiSource {
         rn: Math.min(Math.max(positive(limit, 30), 1), 100)
       })
       const rows = Array.isArray(data?.listSong) ? data.listSong : []
-      const tracks = rows.map((row) => this.#track(row)).filter((track) => track?.streamable).slice(0, limit)
+      const tracks = rows.map((row) => this.#track(row)).filter((track) => track?.streamable)
+      // Playlist rows are frequently detail-shaped but streamless. Resolve a
+      // handful so a playlist of 40 songs does not lose two thirds of itself.
+      if (tracks.length < Math.min(limit, rows.length)) {
+        const have = new Set(tracks.map((track) => track.nctKey))
+        const missing = rows
+          .filter((row) => !have.has(firstText(row?.key, row?.songKey)))
+          .slice(0, Math.max(0, Math.min(8, limit - tracks.length)))
+        const settled = await Promise.allSettled(
+          missing.map((row) => this.#detail(firstText(row?.key, row?.songKey))).filter(Boolean)
+        )
+        for (const result of settled) {
+          if (result.status === 'fulfilled' && result.value?.streamable && !have.has(result.value.nctKey)) {
+            tracks.push(result.value)
+            have.add(result.value.nctKey)
+          }
+        }
+      }
       if (!tracks.length) throw new Error('Nothing playable in that NhacCuaTui playlist')
       return { type: 'playlist', name: firstText(data?.title, data?.name) ?? tracks[0].album ?? 'NhacCuaTui playlist', tracks }
     }
@@ -291,26 +340,35 @@ export class NhacCuaTuiSource {
     if (!key) return null
 
     const data = await api(`/api/v1/song/detail/${encodeURIComponent(key)}`)
-    const streams = Array.isArray(data?.streamURL) ? data.streamURL : []
-    const chosen = bestStream(streams)
-    // `download` is the same file offered as a download; prefer it only when
-    // `stream` is missing, because the download tier can be the VIP one.
-    const url = trustedStreamUrl(chosen?.stream) ?? trustedStreamUrl(chosen?.download)
-    if (!url) throw new Error('nhaccuatui: no playable stream')
-    return url.toString()
+    // Walk every open tier, best first. The top one can be an expired or
+    // host-shifted URL; the next is still the same song.
+    for (const entry of bestStreams(streamEntries(data))) {
+      const url = trustedStreamUrl(entry.stream) ?? trustedStreamUrl(entry.download)
+      if (url) return url.toString()
+    }
+    throw new Error('nhaccuatui: no playable stream')
   }
 
   async stream(track) {
     const url = await this.getTrackUrl(track)
     if (!url) throw new Error('nhaccuatui: no stream url')
 
-    const res = await fetch(url, {
-      // The CDN checks the referer, and answers 206 to a Range request, which
-      // is exactly what a seek in the console sends.
-      headers: { 'user-agent': HEADERS['user-agent'], referer: `${PAGE}/` },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(20_000)
-    })
+    const open = (target) =>
+      fetch(target, {
+        // The CDN checks the referer, and answers 206 to a Range request,
+        // which is exactly what a seek in the console sends.
+        headers: { 'user-agent': HEADERS['user-agent'], referer: `${PAGE}/` },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(20_000)
+      })
+
+    let res = await open(url)
+    // Signed URLs die between queueing and play. One fresh detail call is
+    // cheaper than dropping the song.
+    if ([401, 403, 404, 410].includes(res.status)) {
+      const fresh = await this.getTrackUrl(track)
+      if (fresh && fresh !== url) res = await open(fresh)
+    }
     if (!res.ok && res.status !== 206) throw new Error(`nhaccuatui stream ${res.status}`)
     if (!res.body) throw new Error('nhaccuatui stream: empty body')
 

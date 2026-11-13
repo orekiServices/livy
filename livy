@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# One command: install, build the console, start the node.
+set -euo pipefail
+cd "$(dirname "$0")"
+if ! command -v bun >/dev/null 2>&1; then
+  echo "bun is required — curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+(cd server && bun install)
+bun run build:web
+exec bun run start

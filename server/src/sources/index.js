@@ -608,15 +608,56 @@ export class SourceRegistry {
    * plays natively in a browser — an `<audio>` tag cannot consume an
    * already-open ICY socket, but it can fetch SoundCloud's CDN file.
    */
+  /**
+   * Put a public track back together.
+   *
+   * Search results and queue payloads deliberately drop the upstream handles
+   * (a SoundCloud `_transcodings` object, an archive file URL, an NCT key), so
+   * a track that crossed the wire cannot always be streamed again. Resolving
+   * its own page link restores the handle, and with it the ability to play a
+   * song a listener picked — not just the station's own rotation.
+   */
+  async rehydrate(track) {
+    if (!track || track.metadataOnly || track.live) return track
+    const hint = track.link ?? track.pageUrl
+    if (!hint || !/^https?:/i.test(String(hint))) return track
+    try {
+      const resolved = await this.resolve(hint, { limit: 5 })
+      const exact = resolved.tracks?.find((candidate) => candidate.id === track.id) ?? resolved.tracks?.[0]
+      if (!exact) return track
+      return {
+        ...exact,
+        title: track.title ?? exact.title,
+        artist: track.artist ?? exact.artist,
+        artwork: track.artwork ?? exact.artwork,
+        duration: track.duration || exact.duration,
+        requestedBy: track.requestedBy,
+        clonedFrom: track.clonedFrom
+      }
+    } catch (error) {
+      log.debug(`rehydrate ${track.id} failed: ${error.message}`)
+      return track
+    }
+  }
+
   async trackUrl(track) {
     if (!track || track.metadataOnly || track.live) return null
-    const source = this.get(track.source)
+    const direct = await this.#directUrl(track)
+    if (direct) return direct
+    // The public shape lost the handle; ask the provider for it once.
+    const full = await this.rehydrate(track)
+    if (full && full !== track) return this.#directUrl(full)
+    return null
+  }
+
+  async #directUrl(track) {
+    const source = this.get(track?.source)
     if (typeof source?.getTrackUrl !== 'function') return null
     try {
       const url = await source.getTrackUrl(track)
       return typeof url === 'string' ? url : url?.url ?? null
     } catch (error) {
-      log.debug(`trackUrl via ${track.source} failed: ${error.message}`)
+      log.debug(`trackUrl via ${track?.source} failed: ${error.message}`)
       return null
     }
   }

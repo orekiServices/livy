@@ -82,7 +82,7 @@ export async function openDatabase(file) {
     ;({ default: Database } = await import('better-sqlite3'))
   } catch (error) {
     throw new Error(
-      `No SQLite binding is available (${error.message}). ` +
+      `SQLite is required but no binding is available (${error.message}). ` +
         'Build MetroDB with `cd native/metrodb && cargo build --release && node scripts/link-local.js`, ' +
         'or run Livy on Bun, or start with `store.enabled: false` to run without persistence.'
     )

@@ -107,6 +107,7 @@ export default function ModelsPanel({ station = null, say }) {
 
   const auto = state.auto ?? {}
   const active = state.active?.model ?? null
+  const activeRun = active ? (state.runs ?? []).find((run) => run.best === active.name) ?? state.runs?.[0] : null
   const settings = state.settings ?? {}
   const hf = state.hf ?? {}
 
@@ -118,7 +119,9 @@ export default function ModelsPanel({ station = null, say }) {
             <div className="eyebrow">Learned transitions</div>
             <div className="hero-title truncate">{active ? active.name : 'Heuristic only'}</div>
             <div className="dim">
-              {active ? `${pct(active.steps ? state.runs?.[0]?.accuracy : null)} · ${active.parameters} params · ${active.source}` : 'No model on air — the heuristic is choosing'}
+              {active
+                ? `${activeRun ? `${pct(activeRun.accuracy)} held out · ` : ''}${active.parameters} params · ${active.source}`
+                : 'No model on air — the heuristic is choosing'}
             </div>
           </div>
           <div className={`orb ${active ? 'live' : ''}`}>

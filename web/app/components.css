@@ -1,0 +1,243 @@
+/* ------------------------------- lyrics ------------------------------- */
+
+/* The stage: the words take whatever the header and seat leave, and the
+   element scrolls inside that. `min-height: 0` is load-bearing — without it
+   a flex child refuses to shrink below its content, the scroll range grows
+   past the viewport, and the whole page scrolls instead of the lyrics. */
+.np-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.np-lyrics-host {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-self: stretch;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Fade the top and bottom edges rather than cutting lines dead, so words
+   arrive and leave instead of appearing. The middle stays clear. */
+.np-lyrics {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 74%, transparent 97%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 74%, transparent 97%);
+  --am-lyrics-highlight-color: #fff;
+  --highlight-color: #fff;
+  --hover-background-color: rgba(255, 255, 255, 0.07);
+}
+
+/* Unsynced words: a wall of text, still lit by the record behind it. */
+.np-plain {
+  display: block;
+  max-width: 720px;
+  margin: 0 auto;
+  overflow-y: auto;
+  padding: 8px 4px 24px;
+  white-space: pre-wrap;
+  font-size: 17px;
+  line-height: 2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.86);
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.5);
+  mask-image: linear-gradient(180deg, transparent 0, #000 8%, #000 92%, transparent 100%);
+}
+
+.np-note {
+  margin: 0;
+  padding: 0 20px;
+  text-align: center;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Wide screens: the words get a column, and the page keeps them centred. */
+@media (min-width: 900px) {
+  .np {
+    padding-inline: clamp(24px, 6vw, 96px);
+  }
+
+  .np-head {
+    max-width: 1100px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .np-foot {
+    max-width: 1100px;
+    width: 100%;
+    margin-inline: auto;
+  }
+}
+
+/* -------------------------------- queue ------------------------------- */
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  touch-action: pan-y;
+}
+
+.queue-item.dragging {
+  opacity: 0.5;
+  border-color: var(--text);
+}
+
+.queue-item.over {
+  border-color: var(--text);
+}
+
+.handle {
+  color: var(--dim);
+  padding: 0 4px;
+  touch-action: none;
+  display: grid;
+  place-items: center;
+}
+
+.queue-index {
+  width: 20px;
+  text-align: right;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+
+/* -------------------------------- sheet ------------------------------- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.6);
+  animation: fade 0.16s ease;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding: 10px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  animation: rise 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sheet .grabber {
+  width: 36px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--surface-3);
+  margin: 4px auto 14px;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(16%);
+    opacity: 0.5;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (min-width: 900px) {
+  .sheet {
+    left: 50%;
+    right: auto;
+    bottom: 50%;
+    transform: translate(-50%, 50%);
+    width: 620px;
+    max-height: 80dvh;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--line);
+  }
+}
+
+/* ------------------------------ utilities ----------------------------- */
+
+.spin {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--surface-3);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+
+.bars i {
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: bounce 900ms ease-in-out infinite;
+}
+
+.bars i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.bars i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes bounce {
+  0%,
+  100% {
+    height: 4px;
+  }
+  50% {
+    height: 12px;
+  }
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--tabs) + var(--player) + 18px);
+  z-index: 70;
+  padding: 11px 18px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  font-size: 13px;
+  max-width: 88vw;
+  animation: fade 0.16s ease;
+}

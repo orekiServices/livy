@@ -1,0 +1,740 @@
+/*
+ * Livy console — phone first, in the shape YouTube Music taught
+ * everybody to expect.
+ *
+ * The borrowed ideas are structural, not decorative: a near-black canvas so
+ * artwork is the only colour on screen; a mini player that lives directly
+ * above the tab bar and expands into a full-height sheet; square-ish rounded
+ * artwork at three fixed sizes; horizontal "shelves" of cards for browsing
+ * and flat rows for lists; pill chips for filters. The only screen allowed a
+ * background of its own is Now Playing, where Kawarp warps the artwork
+ * behind the controls.
+ */
+
+:root {
+  --bg: #06080a;
+  --bg-soft: #0b0f12;
+  --surface: #0f1418;
+  --surface-2: #151c21;
+  --surface-3: #1e272e;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #eef3ec;
+  --muted: #9aa7a3;
+  --dim: #66736f;
+  --accent: #c9f24a;
+  --accent-ink: #101405;
+  --accent-soft: rgba(201, 242, 74, 0.14);
+  --accent-2: #59e1d0;
+  --accent-2-soft: rgba(89, 225, 208, 0.12);
+  --live: #ff4d6d;
+  --warn: #ffc857;
+  --radius: 16px;
+  --radius-lg: 24px;
+  --tap: 48px;
+  --tabs: calc(62px + env(safe-area-inset-bottom, 0px));
+  --player: 66px;
+  --font: 'Inter', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono: 'SFMono-Regular', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.4;
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(900px 520px at 8% -10%, rgba(201, 242, 74, 0.07), transparent 60%),
+    radial-gradient(760px 480px at 110% 8%, rgba(89, 225, 208, 0.06), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ------------------------------- shell -------------------------------- */
+
+.app {
+  min-height: 100dvh;
+  padding-bottom: calc(var(--tabs) + var(--player));
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(56px + env(safe-area-inset-top, 0px));
+  background: var(--bg);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.topbar .sub {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: -1px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.page {
+  padding: 4px 16px 28px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+@media (min-width: 900px) {
+  .page {
+    max-width: 1080px;
+    padding: 12px 28px 40px;
+  }
+}
+
+/* ------------------------------- chips -------------------------------- */
+
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 6px 0 12px;
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  border: 0;
+}
+
+.chip.on {
+  background: var(--text);
+  color: #000;
+  font-weight: 600;
+}
+
+.chip.quiet {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+.dot.live {
+  background: var(--live);
+}
+
+/* ------------------------------ shelves ------------------------------- */
+
+.shelf-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 12px;
+}
+
+.shelf-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.shelf-head .more {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.shelf {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 6px;
+  scrollbar-width: none;
+}
+
+.shelf::-webkit-scrollbar {
+  display: none;
+}
+
+.tile {
+  flex: 0 0 148px;
+  scroll-snap-align: start;
+  text-align: left;
+}
+
+.tile .cover {
+  width: 148px;
+  height: 148px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  background: linear-gradient(140deg, var(--surface-3), var(--surface));
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  position: relative;
+  overflow: hidden;
+}
+
+.tile .name {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tile .meta {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  font-size: 11px;
+  backdrop-filter: blur(4px);
+}
+
+/* -------------------------------- rows -------------------------------- */
+
+.row-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 0;
+  text-align: left;
+}
+
+.row-item:active {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.art {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: linear-gradient(140deg, var(--surface-3), var(--surface));
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  flex: none;
+}
+
+.art.lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+}
+
+.row-item .body {
+  min-width: 0;
+  flex: 1;
+}
+
+.row-item .t {
+  font-size: 14.5px;
+  font-weight: 500;
+}
+
+.row-item .s {
+  font-size: 12.5px;
+  color: var(--dim);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.dim {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.error {
+  color: #ff6b81;
+  font-size: 13px;
+}
+
+/* ------------------------------ controls ------------------------------ */
+
+.btn {
+  min-height: var(--tap);
+  padding: 0 20px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn.primary {
+  background: var(--text);
+  color: #000;
+}
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+.btn.small {
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.btn.block {
+  width: 100%;
+}
+
+.btn[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.icon-btn {
+  width: var(--tap);
+  height: var(--tap);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text);
+}
+
+.icon-btn:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='search'],
+textarea,
+select {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  outline: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--line);
+  background: var(--surface-3);
+}
+
+textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+label.field {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.card + .card {
+  margin-top: 12px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 20px 2px 10px;
+  font-weight: 600;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+/* ---------------------------- mini player ----------------------------- */
+
+.player {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(var(--tabs) + 6px);
+  z-index: 45;
+  height: var(--player);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.player .art {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+}
+
+.player .info {
+  min-width: 0;
+  flex: 1;
+}
+
+.player .t {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.player .s {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.player .bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.player .bar i {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  transition: width 0.6s linear;
+}
+
+/* -------------------------------- tabs -------------------------------- */
+
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  height: var(--tabs);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--surface);
+}
+
+.tabs a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.tabs a.on {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ----------------------------- now playing ---------------------------- */
+
+.np {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: 0 20px calc(var(--tabs) + var(--player) + 12px);
+  overflow: hidden;
+}
+
+/* Kawarp lives here and nowhere else: the warped artwork *is* the
+   background of this screen. Everything above it gets a scrim so text
+   stays legible over whatever the cover happens to be. */
+.np-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+}
+
+.np-bg canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.np-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* One line of chrome, and it fades out rather than cutting off: the words
+   should feel like they are the page, not content in a box under a title. */
+.np-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 2px 10px;
+}
+
+.np-head-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.np-head-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.55);
+}
+
+.np-head-artist {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5);
+}
+
+.np-head-artist em {
+  font-style: normal;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.np-head-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.08);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.np-head-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+/* The seat under the words. Its own gradient, so the transport stays
+   readable over a bright frame of the warp. */
+.np-foot {
+  flex: none;
+  margin-top: auto;
+  padding: 14px 2px 4px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+
+.np-scrub {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+  margin: 0 0 6px;
+  overflow: hidden;
+}
+
+.np-scrub i {
+  display: block;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.92);
+  transition: width 0.6s linear;
+}
+
+.np-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+.np-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+  margin: 10px 0 4px;
+}
+
+.np-soft {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.8);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.np-soft:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.np-play {
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  color: #000;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  transition: transform 0.12s ease, background-color 0.15s ease;
+}
+
+.np-play:active {
+  transform: scale(0.95);
+}
+
+/* The sync nudge: small, quiet, and out of the way until wanted. It sits
+   under the words because that is where a listener notices they are off. */
+.np-sync {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 4px 0 2px;
+}
+
+.np-sync-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.07);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.np-sync-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.np-sync-btn.on {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.np-sync-tag {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+}
