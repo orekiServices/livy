@@ -197,6 +197,30 @@ optional, it can only choose from transitions the heuristic already allows, and
 a missing or corrupt model falls back to the JS heuristic without stopping the
 station.
 
+Two things keep that policy current:
+
+- **Recency weighting.** Every labelled seam is weighted by its age, halving
+  every 14 days (`LIVY_RECENCY_HALF_LIFE`), with a floor of 0.05 so old
+  evidence keeps a quiet vote. Eight months of log no longer outvote the last
+  six weeks of behaviour. Training shuffles the rows each epoch (seeded, so
+  runs stay reproducible), because a chronological log fed in order means every
+  epoch ends on the same handful of newest seams and the weights stop meaning
+  anything.
+- **A scoreboard for transitions.** The same log answers a simpler question:
+  *this transition, on this station — do listeners stay?* Each effect gets a
+  completion rate, Laplace-smoothed and recency-weighted, and once it carries
+  eight shows of weight it nudges its own score in `chooseEffect` by at most
+  ±0.06 — enough to settle an argument between two plausible transitions,
+  never enough to override "there is no beat to roll on". `GET
+  /owner/stations/:id/seams` (and `/automix`) returns it under `outcomes`.
+
+A run report also says how much to trust the result, not just whether it
+improved: `eval.skill` scores the predicted distribution against a uniform
+guess via the Brier score (`0` = no better than guessing), `eval.confidence` is
+the probability it puts on its own first choice, `eval.support` counts which
+transitions the training rows actually covered, and `recency` reports the mean
+weight and how many rows had faded out.
+
 Defaults are what a radio node actually wants:
 
 | Setting | Default | Why |
@@ -329,6 +353,12 @@ that sounds like an earlier one). Their opinions are fused (agreement outranks
 a lone voice) and announced as `seam` events while the song is still
 streaming.
 
+**The scoreboard** (`core/automix/outcomes.js`) is the third opinion at a
+seam, and the least clever: what each transition has actually done here,
+smoothed and time-weighted. It is folded into `rankEffects` as a small nudge
+(see above), travels with `/owner/stations/:id/automix`, and is what the
+console's *Seams* view lists next to the RL table.
+
 **RL** (`core/models/rl.ts`) is one small model for the track change. It sorts
 every beat into a kind — `silence`, `sparse`, `groove`, `build`, `drop`,
 `break`, `vocal`, `fade` — with centroids fitted to what the station has aired,
@@ -418,6 +448,7 @@ For a station that stays on air, run the node on a VM or container with
 | `SERVER_PASSWORD` | empty | legacy password for the stream/API surface |
 | `OWNER_KEY` | empty | explicit owner credential; survives alongside a password |
 | `OWNER_PASSWORD` | empty | owner password, hashed at boot; set it in the environment instead of the console |
+| `LIVY_RECENCY_HALF_LIFE` | `14` | days before an old seam counts half in training |
 | `LIVY_TRAIN_BACKEND` | `auto` | `auto`, `js` (never leave the process) or `torch` (PyTorch, fall back on failure) |
 | `LIVY_PYTHON` | auto-detected | interpreter for the PyTorch trainer; `off` disables it |
 | `LIVY_TORCH_BATCH` / `LIVY_TORCH_MAX_STEPS` | size of the data / 1200 | tune a PyTorch run on an unusual host |
@@ -484,8 +515,8 @@ cd server && bun test test/seams.test.js   # one file at a time
 cd server && LIVY_DISABLE_METRO=1 bun test # the JavaScript engines only
 ```
 
-349 tests (three transcoder tests skip without a libmetro binary, and three
-more run only there; five cover the PyTorch trainer and skip where torch is
+361 tests (three transcoder tests skip without a libmetro binary, and three
+more run only there; six cover the PyTorch trainer and skip where torch is
 not installed).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.

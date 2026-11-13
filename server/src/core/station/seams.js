@@ -7,6 +7,13 @@
 import { SeamScout, ForeverJukebox } from '../seams/index.ts'
 import { rl } from '../models/rl.ts'
 import { effectUsable } from '../automix/effects.js'
+import { effectOutcomes, outcomeReport } from '../automix/outcomes.js'
+import { readSeams } from '../models/trainer/dataset.js'
+
+/** How long a station trusts its own scoreboard before re-reading the log. */
+const OUTCOME_TTL_MS = 60_000
+/** Seams considered: recent enough to describe the station as it is today. */
+const OUTCOME_ROWS = 4000
 
 /** RL speaks once it has seen this many seams between two kinds of beat. */
 const MIN_EVIDENCE = 6
@@ -92,6 +99,29 @@ export const seamMethods = {
     return { effect: top.effect, source: 'rl', baseline: choice.baseline ?? choice.effect, margin: Number((top.score - current).toFixed(3)), model: 'RL' }
   },
 
+  /**
+   * What each transition has actually done on this station.
+   *
+   * `chooseEffect` asks for this at every seam; reading a few thousand log
+   * lines per track change would be silly, so the answer is cached for a
+   * minute. A station with no log, no store and no history answers `null`, and
+   * the heuristic then behaves exactly as it did before this existed.
+   */
+  effectOutcomes({ refresh = false } = {}) {
+    const cache = this._outcomeCache
+    if (!refresh && cache && Date.now() - cache.at < OUTCOME_TTL_MS) return cache.value
+    let value = null
+    try {
+      const records = readSeams({ store: this.store, file: this.options?.seamLogFile ?? undefined, limit: OUTCOME_ROWS })
+      value = records.length ? effectOutcomes(records) : null
+    } catch (error) {
+      this.log?.debug?.(`seam scoreboard: ${error.message}`)
+      value = null
+    }
+    this._outcomeCache = { at: Date.now(), value }
+    return value
+  },
+
   /** Owner control: Forever mode on or off. Off lets the song finish. */
   setForever(on = true) {
     this.options.forever = Boolean(on)
@@ -124,7 +154,9 @@ export const seamMethods = {
       seams: analysis ? analysis.candidates.map((c) => ({ atMs: c.atMs, score: c.score, detectors: c.detectors, why: c.why })) : [],
       jukebox: jukebox ? { branching: jukebox.branching, threshold: jukebox.threshold, lastBranch: jukebox.lastBranch, longestBackward: jukebox.longestBackward, engine: jukebox.engine } : null,
       forever: this.foreverInfo(),
-      rl: rl().info()
+      rl: rl().info(),
+      // The scoreboard the automix uses: how each transition has done here.
+      outcomes: outcomeReport(this.effectOutcomes())
     }
   },
 

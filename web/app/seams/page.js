@@ -168,6 +168,59 @@ function RLPanel({ rl }) {
   )
 }
 
+/**
+ * The scoreboard: what each transition has actually done on this station.
+ *
+ * It is the automix's memory, and it is deliberately a small panel — the
+ * numbers that matter are the rate (did listeners stay?) and whether the
+ * effect has enough plays to be trusted at all.
+ */
+function Scoreboard({ outcomes }) {
+  const rows = outcomes?.rows ?? []
+  if (!rows.length) {
+    return (
+      <Panel title="Scoreboard" subtitle="What each transition does here, from the seams this station has played.">
+        <Empty>No completed seams yet. The first few track changes start the record.</Empty>
+      </Panel>
+    )
+  }
+  return (
+    <Panel
+      title="Scoreboard"
+      subtitle={`${outcomes.seams} seams · halves every ${outcomes.halfLifeDays} days · ${outcomes.minShows} plays before it counts`}
+      actions={<Badge tone={outcomes.trusted.length ? 'lime' : 'ink'}>{outcomes.trusted.length} trusted</Badge>}
+    >
+      <table className="w-full text-left text-xs">
+        <thead className="text-[10px] uppercase tracking-wider text-ink-500">
+          <tr>
+            <th className="py-1">transition</th>
+            <th className="py-1 text-right">plays</th>
+            <th className="py-1 text-right">stayed</th>
+            <th className="py-1 text-right">skipped</th>
+            <th className="py-1 text-right">rate</th>
+          </tr>
+        </thead>
+        <tbody className="font-mono text-ink-200">
+          {rows.map((row) => (
+            <tr key={row.effect} className="border-t border-ink-700/60">
+              <td className="py-1">
+                {row.effect} {row.trusted ? <Badge tone="lime">counts</Badge> : <span className="text-ink-500">provisional</span>}
+              </td>
+              <td className="py-1 text-right">{row.plays}</td>
+              <td className="py-1 text-right text-lime">{Math.round(row.completed)}</td>
+              <td className="py-1 text-right text-rose">{Math.round(row.skipped)}</td>
+              <td className="py-1 text-right">{Math.round(row.rate * 100)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[11px] text-ink-300">
+        These numbers nudge the choice — at most ±6 % of a score — and are smoothed, so one bad night does not retire a transition.
+      </p>
+    </Panel>
+  )
+}
+
 function SeamsBody() {
   const params = useSearchParams()
   const { stations, key } = useRadio()
@@ -244,6 +297,7 @@ function SeamsBody() {
               <div className="space-y-4">
                 <Jukebox graph={data?.jukebox} forever={data?.forever} stationId={stationId} onRefreshed={load} />
                 <RLPanel rl={data?.rl} />
+                <Scoreboard outcomes={data?.outcomes} />
               </div>
             </div>
           </div>

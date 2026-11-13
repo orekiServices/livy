@@ -132,7 +132,7 @@ def forward(torch, weights, biases, rows):
     return activations
 
 
-def fit(torch, x, y, shape, seed, epochs: int, learning_rate: float, batch: int, l2: float, max_steps: int, device: str):
+def fit(torch, x, y, shape, seed, epochs: int, learning_rate: float, batch: int, l2: float, max_steps: int, device: str, w=None):
     """Train one candidate.
 
     Backpropagation is written out rather than taken from autograd. That looks
@@ -143,6 +143,11 @@ def fit(torch, x, y, shape, seed, epochs: int, learning_rate: float, batch: int,
     same mathematics — mean squared error, leaky ReLU, Adam with the same
     betas and the same L2 term the JavaScript trainer uses — in eight matrix
     operations, which is where the speed comes from.
+
+    `w` is a per-row weight (recency, see ``dataset.sampleWeight``). It scales
+    the row's gradient and the loss, and the batch mean is taken over the
+    weights rather than the row count, which is exactly what the JavaScript
+    trainer does with the same numbers.
     """
     weights, biases = build(torch, x.shape[1], shape, y.shape[1], seed, device)
     moment_w = [torch.zeros_like(weight) for weight in weights]
@@ -171,11 +176,18 @@ def fit(torch, x, y, shape, seed, epochs: int, learning_rate: float, batch: int,
                 if index.numel() == 0:
                     continue
                 xb, yb = x[index], y[index]
+                wb = w[index].unsqueeze(1) if w is not None else None
                 activations = forward(torch, weights, biases, xb)
                 output = activations[-1]
-                # d(mse)/d(output) for the mean over the batch.
-                delta = 2.0 * (output - yb) / output.shape[0]
-                loss = float(((output - yb) ** 2).mean())
+                error = output - yb
+                if wb is None:
+                    # d(mse)/d(output) for the mean over the batch.
+                    delta = 2.0 * error / output.shape[0]
+                    loss = float((error**2).mean())
+                else:
+                    total = torch.clamp(wb.sum(), min=1e-6)
+                    delta = 2.0 * error * wb / total
+                    loss = float(((error**2) * wb).sum() / total)
                 grad_w = [None] * len(weights)
                 grad_b = [None] * len(weights)
                 for layer in range(len(weights) - 1, -1, -1):
@@ -277,6 +289,16 @@ def train(request: dict, emit: bool = True) -> dict:
         return stop(f"{x.shape[0]} feature rows but {y.shape[0]} label rows")
     if x.shape[0] == 0:
         return stop("empty dataset")
+    # Optional per-row weights; absent or malformed means "all one", which is
+    # the unweighted trainer.
+    w = None
+    if request.get("w") is not None:
+        try:
+            w = torch.tensor(request["w"], dtype=torch.float32)
+            if w.ndim != 1 or w.shape[0] != x.shape[0]:
+                return stop(f"{w.shape[0] if w.ndim else 1} weights for {x.shape[0]} rows")
+        except Exception as error:
+            return stop(f"bad weights ({error})")
 
     epochs = max(1, int(request.get("epochs") or 120))
     learning_rate = float(request.get("learningRate") or 0.01)
@@ -306,6 +328,8 @@ def train(request: dict, emit: bool = True) -> dict:
     try:
         x = x.to(device)
         y = y.to(device)
+        if w is not None:
+            w = w.to(device)
     except Exception:
         device = "cpu"
         x, y = x.to(device), y.to(device)
@@ -327,6 +351,7 @@ def train(request: dict, emit: bool = True) -> dict:
             l2=l2,
             max_steps=max_steps,
             device=device,
+            w=w,
         )
         export_w, export_b = to_export(torch, weights, biases)
         results.append(

@@ -333,6 +333,9 @@ export async function trainWithTorch({ train = [], jobs = [], epochs = 120, lear
     kind: 'train',
     x: train.map((row) => row.x),
     y: train.map((row) => row.y),
+    // Recency weights (see `sampleWeight`): the same rows the JavaScript
+    // trainer would weight, so both backends fit the same objective.
+    w: train.map((row) => (Number.isFinite(row.w) ? row.w : 1)),
     epochs,
     learningRate,
     batch: perStep,

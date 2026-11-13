@@ -167,6 +167,25 @@ function Report({ report }) {
         <Stat label="Backend" value={report.backend} hint={report.torch?.used ? `torch ${report.torch.version?.split('+')[0]}` : report.torch?.reason?.slice(0, 28) ?? ''} accent={report.backend === 'torch' ? 'cyan' : 'ink'} />
         <Stat label="Took" value={`${report.ms} ms`} hint={`${report.epochs} epochs · ${report.parameters} params`} />
       </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat
+          label="Skill"
+          value={report.eval?.skill == null ? '—' : `${Math.round(report.eval.skill * 100)}%`}
+          hint={report.eval ? `vs a uniform guess · Brier ${report.eval.brier}` : 'not scored'}
+          accent={report.eval?.skill > 0.2 ? 'lime' : 'ink'}
+        />
+        <Stat label="Confidence" value={report.eval?.confidence == null ? '—' : `${Math.round(report.eval.confidence * 100)}%`} hint="on its own first choice" />
+        <Stat
+          label="Recency"
+          value={`${report.recency?.halfLifeDays ?? '—'} d`}
+          hint={report.recency ? `mean weight ${Math.round((report.recency.mean ?? 0) * 100)}% · ${report.recency.faded} faded` : 'unweighted'}
+        />
+        <Stat
+          label="Answers"
+          value={Object.entries(report.eval?.support ?? {}).filter(([, count]) => count > 0).length}
+          hint="transitions the run saw"
+        />
+      </div>
       <table className="mt-3 w-full text-left text-xs">
         <thead className="text-[10px] uppercase tracking-wider text-ink-500">
           <tr>

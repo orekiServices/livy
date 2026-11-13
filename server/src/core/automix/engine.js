@@ -658,6 +658,10 @@ export class Automix {
     // Which transition? Either the one the owner named, or — the default —
     // one chosen for this particular seam (see chooseEffect).
     const wanted = this.options.effect ?? AUTO_EFFECT
+    // What this station's own log says about each transition (see
+    // ./outcomes.js). One cached read, not one per seam: the station answers
+    // from memory and refreshes on a timer.
+    const outcomes = typeof this.ctx.station?.effectOutcomes === 'function' ? this.ctx.station.effectOutcomes() : null
     const seamDescription = {
       beat: confident,
       matched: Boolean(beatmatch),
@@ -674,7 +678,8 @@ export class Automix {
       loudnessGap: matchDb,
       vocalOut: vocal?.outgoing ? 1 : 0,
       vocalIn: vocal?.incoming ? 1 : 0,
-      phraseAligned: Boolean(phrase)
+      phraseAligned: Boolean(phrase),
+      outcomes
     }
     let choice = { effect: chooseEffect(seamDescription, this.options.effectPool ?? []), source: 'heuristic' }
     if (wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted]) {

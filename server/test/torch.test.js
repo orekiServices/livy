@@ -71,6 +71,37 @@ test('the backend can be chosen from the environment, and "js" never spawns Pyth
   assert.ok(pythonCandidates({ LIVY_PYTHON: 'off' }).every((name) => !name.includes('off')))
 })
 
+test('recency weights reach the interpreter: the heavy row decides', async (t) => {
+  const status = await torchStatus({ fresh: true })
+  if (!status.available) return t.skip(`no PyTorch here (${status.reason})`)
+
+  // One row, two contradictory opinions about it. The weight is the only thing
+  // that says which way the fit should go, so a trainer that dropped `w` would
+  // answer the same in both runs.
+  const x = new Array(FEATURES.length).fill(0.25)
+  const label = (index) => {
+    const y = new Array(ACTIONS.length).fill(0)
+    y[index] = 1
+    return y
+  }
+  const slam = ACTIONS.indexOf('slam')
+  const crossfade = ACTIONS.indexOf('crossfade')
+  // The trainer will not wake the interpreter for two rows, so the rest of the
+  // set is inert filler: same features, zero weight, no vote.
+  const filler = Array.from({ length: 10 }, () => ({ x, y: new Array(ACTIONS.length).fill(0), w: 0 }))
+  const rows = [...filler, { x, y: label(slam), w: 1 }, { x, y: label(crossfade), w: 0.02 }]
+  const flipped = [...filler, { x, y: label(slam), w: 0.02 }, { x, y: label(crossfade), w: 1 }]
+
+  const run = async (train) => {
+    const result = await trainWithTorch({ train, jobs: [{ shape: [8], seed: 771 }], epochs: 120, learningRate: 0.02, batch: 2, maxSteps: 800 })
+    assert.equal(result.available, true, result.reason)
+    const output = Array.from(result.results[0].network.predict(x))
+    return output.indexOf(Math.max(...output))
+  }
+  assert.equal(await run(rows), slam, 'the heavily weighted label wins')
+  assert.equal(await run(flipped), crossfade, 'and the same rows with the weights swapped win the other way')
+}, { timeout: 120_000 })
+
 test('the torch worker trains a network this build can load', async (t) => {
   const status = await torchStatus({ fresh: true })
   if (!status.available) return t.skip(`no PyTorch here (${status.reason})`)

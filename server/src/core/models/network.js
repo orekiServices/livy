@@ -146,7 +146,13 @@ export class Network {
    * of a 12-input policy is uneven: the same step size that moves the tempo
    * weights is far too big for the loudness ones, and a fixed rate oscillates.
    *
-   * @param {Array<{x: number[], y: number[]}>} batch
+   * Rows may carry a `w` (see `sampleWeight` in the trainer's dataset): a
+   * weighted row pulls the optimiser proportionally harder, and the batch mean
+   * is taken over the weights rather than the count, so recency weighting
+   * changes *what* the gradient says and not merely its scale. A batch with no
+   * weights is exactly the unweighted trainer it always was.
+   *
+   * @param {Array<{x: number[], y: number[], w?: number}>} batch
    * @param {object} [options]
    * @returns {{loss: number, gradNorm: number}}
    */
@@ -155,8 +161,11 @@ export class Network {
     const gradW = this.weights.map((w) => new Float64Array(w.length))
     const gradB = this.biases.map((b) => new Float64Array(b.length))
     let loss = 0
+    let weightSum = 0
 
-    for (const { x, y } of batch) {
+    for (const { x, y, w } of batch) {
+      const weight = Number.isFinite(w) && w > 0 ? w : 1
+      weightSum += weight
       const { output, activations } = this.forward(x)
       let delta = new Float64Array(output.length)
       // Mean squared error on the linear output.
@@ -170,8 +179,8 @@ export class Network {
       // this small network to 95 % held-out accuracy in a few hundred steps.
       for (let j = 0; j < output.length; j += 1) {
         const error = output[j] - (y[j] ?? 0)
-        loss += error * error
-        delta[j] = error
+        loss += weight * error * error
+        delta[j] = error * weight
       }
 
       for (let layer = this.weights.length - 1; layer >= 0; layer -= 1) {
@@ -225,7 +234,7 @@ export class Network {
     for (let layer = 0; layer < this.weights.length; layer += 1) {
       const w = this.weights[layer]
       for (let i = 0; i < w.length; i += 1) {
-        const gradient = gradW[layer][i] / batch.length + l2 * w[i]
+        const gradient = gradW[layer][i] / weightSum + l2 * w[i]
         gradNorm += gradient * gradient
         adam.m[layer][i] = beta1 * adam.m[layer][i] + (1 - beta1) * gradient
         adam.v[layer][i] = beta2 * adam.v[layer][i] + (1 - beta2) * gradient * gradient
@@ -235,7 +244,7 @@ export class Network {
       }
       const bias = this.biases[layer]
       for (let j = 0; j < bias.length; j += 1) {
-        const gradient = gradB[layer][j] / batch.length
+        const gradient = gradB[layer][j] / weightSum
         adam.mb[layer][j] = beta1 * adam.mb[layer][j] + (1 - beta1) * gradient
         adam.vb[layer][j] = beta2 * adam.vb[layer][j] + (1 - beta2) * gradient * gradient
         const mHat = adam.mb[layer][j] / correction1
@@ -244,7 +253,7 @@ export class Network {
       }
     }
 
-    return { loss: loss / batch.length, gradNorm: Math.sqrt(gradNorm) }
+    return { loss: loss / Math.max(weightSum, 1e-9), gradNorm: Math.sqrt(gradNorm) }
   }
 
   /** Parameters as plain arrays, ready for `packModel`. */
