@@ -154,9 +154,10 @@ Everything a station needs is on one owner page, arranged like a control room:
 | **Desk cards** | now playing, next up, requests and bans, programme metadata, recent seams |
 | **Dock (10 views)** | stations · queue · requests · seams · models · automix · filters · plugins · ops · logs |
 
-Owner pages are gated by the owner password (or an explicit owner key) and are *action-first*: every row has the
-verb you would want next to it (play/pause, ban, push, activate, delete), rather
-than a read-only table with a form somewhere else.
+Owner pages are gated by the owner password (or an explicit owner key); change
+it under **Ops → Owner password**. Every row is *action-first*: it has the verb
+you would want next to it (play/pause, ban, push, activate, delete), rather than
+a read-only table with a form somewhere else.
 
 ## Automix, models and training
 
