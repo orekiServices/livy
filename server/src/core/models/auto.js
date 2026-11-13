@@ -11,6 +11,7 @@ import createLogger from '../../util/logger.js'
 import { modelSettings } from './settings.js'
 import { trainModels } from './trainer/index.js'
 import { seamCount } from './trainer/dataset.js'
+import { models } from './host.js'
 import { hfConfig, hfReady } from './storage/hf.js'
 import { pushModels } from './registry.js'
 
@@ -36,9 +37,12 @@ export class AutoTrainer {
 
   start() {
     if (!this.enabled || this.timer) return this.state()
-    // Prime with what already exists so a restart does not immediately retrain
-    // on a log the previous process already learned from.
-    this.lastSeams = seamCount({ store: this.store })
+    // With a model already loaded, prime with what exists: a restart should
+    // not retrain on a log the previous process already learned from. Without
+    // one, start at zero so the first poll can learn from the seams already on
+    // disk instead of waiting for another `everySeams` transitions.
+    const seams = seamCount({ store: this.store })
+    this.lastSeams = models.active ? seams : 0
     const interval = Math.max(10_000, Number(modelSettings().pollMs) || 60_000)
     this.timer = setInterval(() => {
       this.tick().catch((error) => {
@@ -47,7 +51,13 @@ export class AutoTrainer {
       })
     }, interval)
     this.timer.unref?.()
-    this.log.info(`auto-train on · every ${Math.round(interval / 1000)}s · ${modelSettings().everySeams} new seams (${modelSettings().preset ?? 'auto'} · ${modelSettings().candidates} candidate${modelSettings().candidates === 1 ? '' : 's'})`)
+    this.log.info(
+      `auto-train on · every ${Math.round(interval / 1000)}s · ` +
+        (this.lastSeams === 0 && seams > 0
+          ? `first model from ${seams} seam${seams === 1 ? '' : 's'}`
+          : `${modelSettings().everySeams} new seams`) +
+        ` (${modelSettings().preset ?? 'auto'} · ${modelSettings().candidates} candidate${modelSettings().candidates === 1 ? '' : 's'})`
+    )
     return this.state()
   }
 
@@ -64,8 +74,13 @@ export class AutoTrainer {
 
     const settings = modelSettings()
     const seams = seamCount({ store: this.store })
+    // A node with no model is bootstrapping: the seams already collected are
+    // the point, so the first run is due as soon as `minSeams` is reached and
+    // does not need `everySeams` *new* ones. Once a model exists, the regular
+    // cadence applies again.
+    const bootstrap = !models.active && this.lastSeams === 0
     if (!force && seams < settings.minSeams) return { skipped: `only ${seams} seams (${settings.minSeams} needed)` }
-    if (!force && seams - this.lastSeams < settings.everySeams) {
+    if (!force && !bootstrap && seams - this.lastSeams < settings.everySeams) {
       return { skipped: `waiting for ${settings.everySeams} new seams (${seams - this.lastSeams})` }
     }
 

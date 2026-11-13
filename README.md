@@ -194,8 +194,17 @@ Defaults are what a radio node actually wants:
 | `models.preset` | `auto` | which architecture to train; `auto` follows the device |
 | `models.candidates` | **2** | multi-train: keep the loser, activate the winner |
 | `models.pollMs` | `60_000` | check once a minute |
+| `models.minSeams` | `40` | first model once there are 40 labelled seams |
 | `models.everySeams` | `60` | train once 60 new seams exist |
 | `models.hf.private` | **true** | listener behaviour never lands in a public repo |
+
+A rendered transition is noted immediately and written to `dj_seams` (and
+`dj-seams.jsonl`) when the incoming track plays out or is skipped. On a node
+with no model yet, the first poll trains from the seams already on disk once
+`minSeams` is reached — a restart does not throw that history away. With a
+model loaded, only `everySeams` **new** seams trigger another run. A custom
+`models.saveDir` (`LIVY_MODEL_DIR`) is the first directory the host searches,
+so a model trained there is the one automix picks.
 
 ### Model presets
 
@@ -373,7 +382,7 @@ bun run test                # from the repo root
 bun run test:node           # node --test, for a Node-only host
 ```
 
-308 tests (two native-kernel tests skip on a host without a MetroFX binary).
+311 tests (two native-kernel tests skip on a host without a MetroFX binary).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on

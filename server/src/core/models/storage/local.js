@@ -11,18 +11,28 @@ import path from 'node:path'
 import { paths } from '../../../config.js'
 import { unpackModel, digestOf, packModel } from '../format.js'
 import { FEATURES } from '../features.js'
+import { modelSettings } from '../settings.js'
 
 export const MANIFEST = 'manifest.json'
 
-/** Writable first, then the baked release folder. */
-export function modelDirs() {
-  const baked = path.join(paths.root, 'models')
-  const writable = path.join(paths.data, 'models')
-  return baked === writable ? [baked] : [writable, baked]
+/**
+ * Where trained models are written.
+ *
+ * `models.saveDir` (and `LIVY_MODEL_DIR`) let an owner put weights on a bigger
+ * disk. That directory then has to be the *first* place the host looks, or a
+ * model can be trained and activated without automix ever finding it.
+ */
+export function writableModelDir() {
+  const configured = modelSettings()?.saveDir
+  if (configured) return path.isAbsolute(configured) ? configured : path.resolve(paths.root, configured)
+  return path.join(paths.data, 'models')
 }
 
-export function writableModelDir() {
-  return path.join(paths.data, 'models')
+/** Configured writable first, then the baked release folder. */
+export function modelDirs() {
+  const baked = path.join(paths.root, 'models')
+  const writable = writableModelDir()
+  return path.resolve(writable) === path.resolve(baked) ? [baked] : [writable, baked]
 }
 
 function readManifest(dir) {

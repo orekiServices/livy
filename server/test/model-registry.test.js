@@ -10,12 +10,14 @@ import path from 'node:path'
 import Store from '../src/store/index.js'
 import { ACTIONS, FEATURES } from '../src/core/models/features.js'
 import { Network } from '../src/core/models/network.js'
-import { listModels, saveModel, writableModelDir } from '../src/core/models/storage/local.js'
+import { listModels, resolveModel, saveModel, writableModelDir } from '../src/core/models/storage/local.js'
 import { activateModel, modelInventory, pullModels, pushModels } from '../src/core/models/registry.js'
 import { configureModels, modelSettings } from '../src/core/models/settings.js'
 import { AutoTrainer } from '../src/core/models/auto.js'
-import { trainModels, recordSeam } from '../src/core/models/trainer/index.js'
+import { models } from '../src/core/models/host.js'
+import { buildDataset, seamCount, trainModels, recordSeam } from '../src/core/models/trainer/index.js'
 import { ensureRepo, hubStatus, uploadFile } from '../src/core/models/storage/hf.js'
+import { queueMethods } from '../src/core/station/queue.js'
 import { tmpdir } from './helpers.js'
 
 const seams = (count = 240) => {
@@ -124,6 +126,105 @@ test('auto-train runs while the station is on air, off the seam table', async ()
   assert.equal(run.trained, true)
   configureModels({ config: { models: {} }, store: null })
   store.close()
+})
+
+test('a rendered seam becomes a training row through the station path', async () => {
+  const store = await Store.open(':memory:', { memory: true })
+  const file = path.join(tmpdir('dj-seam-log-'), 'dj-seams.jsonl')
+  const station = {
+    ...queueMethods,
+    store,
+    options: { seamLogFile: file },
+    _lastSeam: null,
+    log: { warn() {}, debug() {} }
+  }
+
+  const noted = station.noteSeam({
+    at: Date.now(),
+    effect: 'bass-swap',
+    decision: { source: 'heuristic', baseline: 'crossfade' },
+    beat: { bpm: 124, incomingBpm: 126, matched: true, phrase: { beats: 8 } },
+    correlation: 0.42,
+    loudness: { appliedDb: -1.2 },
+    entryEnergy: 0.7,
+    blendMs: 8000,
+    vocal: { outgoing: true, incoming: false },
+    from: 'A',
+    to: 'B'
+  })
+  assert.equal(noted.effect, 'bass-swap')
+  assert.equal(noted.phraseAligned, true)
+  assert.equal(station._lastSeam, noted, 'the station remembers the seam for a skip')
+
+  assert.equal(station._logSeam({ ...noted, outcome: 'completed', completedAfterMs: 120_000 }), true)
+  assert.equal(store.countSeams(), 1)
+  assert.equal(fs.existsSync(file), true)
+
+  // A skip inside the attribution window closes the same seam as a negative
+  // label instead of being lost.
+  station._lastSeam = noted
+  assert.equal(station._recordSkip('track-b'), true)
+  assert.equal(store.countSeams(), 2)
+  const outcomes = store.recentSeams(2).map((row) => row.outcome)
+  assert.deepEqual(outcomes, ['completed', 'skipped'])
+
+  // And the row is already the shape the trainer consumes.
+  const [pair] = buildDataset(store.recentSeams(2))
+  assert.equal(pair.x.length, FEATURES.length)
+  assert.equal(pair.y[ACTIONS.indexOf('bass-swap')], 1)
+
+  configureModels({ config: { models: {} }, store: null })
+  store.close()
+})
+
+test('the seam count falls back to the JSONL log when the table is empty', async () => {
+  const store = await Store.open(':memory:', { memory: true })
+  const file = path.join(tmpdir('dj-seam-count-'), 'dj-seams.jsonl')
+  for (const seam of seams(7)) recordSeam(seam, { file })
+  assert.equal(store.countSeams(), 0)
+  assert.equal(seamCount({ file, store }), 7)
+  assert.equal(seamCount({ file, store: null }), 7)
+  store.close()
+})
+
+test('auto-train bootstraps from old seams and automix finds the saved model', async () => {
+  const store = await Store.open(':memory:', { memory: true })
+  for (const seam of seams(80)) store.saveSeam(seam)
+  const saveDir = tmpdir('dj-bootstrap-models-')
+  const missing = path.join(tmpdir('dj-no-model-'), 'none.bin')
+  const previous = process.env.LIVY_DJ_MODEL
+  process.env.LIVY_DJ_MODEL = missing
+  models.forget()
+  configureModels({ config: { models: { minSeams: 12, everySeams: 60, candidates: 1, fast: true, saveDir } }, store })
+
+  const trainer = new AutoTrainer({ store })
+  try {
+    const started = trainer.start()
+    trainer.stop()
+    assert.equal(started.lastSeams, 0, 'no model, so existing seams are due')
+
+    // No `force`: the regular poll must pick up the seams already on disk.
+    const report = await trainer.tick()
+    assert.equal(report.trained, true, report.reason)
+    assert.equal(trainer.state().lastSeams, 80)
+    assert.ok(report.best?.name, 'a model was written')
+
+    // The custom save directory is part of the host search path, otherwise a
+    // freshly trained model is never used by automix.
+    delete process.env.LIVY_DJ_MODEL
+    models.forget()
+    const found = resolveModel()
+    assert.ok(found, 'the active model is discoverable')
+    assert.equal(path.dirname(found.file), path.resolve(saveDir))
+    assert.equal(models.active?.name, report.best.name)
+  } finally {
+    trainer.stop()
+    if (previous === undefined) delete process.env.LIVY_DJ_MODEL
+    else process.env.LIVY_DJ_MODEL = previous
+    configureModels({ config: { models: {} }, store: null })
+    models.forget()
+    store.close()
+  }
 })
 
 /* ------------------------------ HF storage ----------------------------- */

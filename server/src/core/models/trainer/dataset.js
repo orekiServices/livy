@@ -22,19 +22,23 @@ export const MAX_LOG_LINES = 20_000
  * is cheap and the row is what a live trainer polls.
  */
 export function recordSeam(record, { file = LOG_FILE(), store = null } = {}) {
+  let saved = false
   try {
-    if (store?.saveSeam) store.saveSeam(record)
+    if (store?.saveSeam) {
+      store.saveSeam(record)
+      saved = true
+    }
   } catch (error) {
     log.debug(`seam row: ${error.message}`)
   }
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.appendFileSync(file, `${JSON.stringify(record)}\n`)
-    return true
+    saved = true
   } catch (error) {
     log.debug(`could not record a seam: ${error.message}`)
-    return false
   }
+  return saved
 }
 
 /** Read the log, newest last. Missing file → empty. */
@@ -108,11 +112,15 @@ export function loss(network, pairs) {
 
 /** Count lines without parsing them, for "is there enough data yet?". */
 export function seamCount({ file = LOG_FILE(), store = null } = {}) {
+  // The table wins only when it actually has rows, exactly like `readSeams`:
+  // a node that logged seams to JSONL before it had a database (or whose row
+  // write failed) still has training data, and it must not look empty.
   if (store?.countSeams) {
     try {
-      return store.countSeams()
+      const rows = store.countSeams()
+      if (rows > 0) return rows
     } catch {
-      // fall through
+      // fall through to the log
     }
   }
   try {
