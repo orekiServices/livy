@@ -431,7 +431,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
           if (problem) return fail(res, 400, problem)
           const result = setPassword(config, body.password)
           if (result.problem) return fail(res, 400, result.problem)
-          log.info(`owner password set during first-run setup (${result.persisted ? 'saved' : 'this process only'})`)
+          log.info(`owner credential created during first-run setup (${result.persisted ? 'saved' : 'this process only'})`)
           return send(res, 201, { configured: true, persisted: result.persisted, ...passwordInfo(config) })
         }
 

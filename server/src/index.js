@@ -39,9 +39,9 @@ export async function createRadioServer(overrides = {}) {
   // environment or from a previous first-run setup; otherwise a key is
   // generated once and printed. Never both by accident.
   const auth = prepareOwnerAuth(config)
-  if (auth.problem) log.warn(`OWNER_PASSWORD ignored: ${auth.problem}`)
-  if (auth.fromEnv) log.info('owner password loaded from OWNER_PASSWORD')
-  if (auth.configured && !auth.persisted) log.warn('owner password is valid for this process only (data folder is not writable)')
+  if (auth.problem) log.warn(`the owner credential from the environment was ignored: ${auth.problem}`)
+  if (auth.fromEnv) log.info('owner credential loaded from the environment')
+  if (auth.configured && !auth.persisted) log.warn('the owner credential is valid for this process only (data folder is not writable)')
   const owner = ensureOwnerKey(config)
   if (!owner.key && !auth.configured) log.warn('no owner credential configured — the console is open to anyone who can reach it')
   if (owner.created) log.info(`owner key generated: ${owner.key}  (saved next to the database — keep it)`)
@@ -255,7 +255,7 @@ export function createApp(overrides = {}) {
     const config = deepMerge(loadConfig(), overrides)
     configureLogging(config.logging)
     const auth = prepareOwnerAuth(config)
-    if (auth.problem) log.warn(`OWNER_PASSWORD ignored: ${auth.problem}`)
+    if (auth.problem) log.warn(`the owner credential from the environment was ignored: ${auth.problem}`)
     const owner = ensureOwnerKey(config)
 
     const store =

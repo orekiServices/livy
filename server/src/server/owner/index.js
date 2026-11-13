@@ -177,7 +177,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
       const had = hasPassword(config)
       const result = setPassword(config, body.password)
       if (result.problem) return fail(res, 400, result.problem)
-      log.info(`owner password ${had ? 'updated' : 'set'} (${result.persisted ? 'saved' : 'this process only'})`)
+      log.info(`owner credential ${had ? 'updated' : 'set'} (${result.persisted ? 'saved' : 'this process only'})`)
       return send(res, 200, { ...passwordInfo(config), persisted: result.persisted })
     }
 
