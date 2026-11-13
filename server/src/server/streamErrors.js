@@ -4,11 +4,11 @@
  * A media player is not a browser. Point VLC at a station that does not
  * exist and it shows nothing useful; the listener just hears silence and
  * assumes the node is broken. Radio has always solved this the same way — an
- * intercept recording that *tells you* what went wrong — so Nodecast does
+ * intercept recording that *tells you* what went wrong — so Livy does
  * too: `/stream/<id>.mp3` answers with a short spoken MP3 explaining itself.
  *
  * The status code stays honest (404, 403, 503). The body is audio, the
- * headers say what happened (`x-nodecast-error`), and a caller that asks for
+ * headers say what happened (`x-livy-error`), and a caller that asks for
  * JSON still gets JSON.
  *
  * **It answers in the listener's language.** Every line ships translated,
@@ -331,8 +331,8 @@ export async function failStream(req, res, { voice, reason, station = null, stat
     'access-control-allow-origin': cors,
     'cache-control': 'no-store',
     // Machine-readable, whatever the body turns out to be.
-    'x-nodecast-error': spec.code,
-    'x-nodecast-reason': reason
+    'x-livy-error': spec.code,
+    'x-livy-reason': reason
   }
 
   if (wantsJson) {
@@ -351,7 +351,7 @@ export async function failStream(req, res, { voice, reason, station = null, stat
     'content-type': 'audio/mpeg',
     'content-length': String(audio.length),
     'content-language': language,
-    'icy-name': 'Nodecast',
+    'icy-name': 'Livy',
     'icy-description': spec.http,
     'accept-ranges': 'none'
   })

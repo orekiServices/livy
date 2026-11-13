@@ -1,7 +1,7 @@
 /**
  * Where the voices come from.
  *
- * Nodecast speaks through one of two services, and the interesting design
+ * Livy speaks through one of two services, and the interesting design
  * question is what they share. A station's *language* and *pace* are
  * properties of the station — they should not change because the owner
  * switched provider. A *voice id* is the opposite: it means nothing outside
@@ -17,7 +17,7 @@
  * each service keeps its own knobs. Both implement the same tiny contract:
  * `speak({ text, language, speed, settings })` → an MP3 Buffer.
  */
-const UA = 'Nodecast/3 (radio node; +https://github.com/nodecast)'
+const UA = 'Livy/3 (radio node; +https://github.com/livy)'
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
@@ -105,7 +105,7 @@ const FLOWERY = 'https://api.flowery.pw'
  * engines: Azure, Polly, Speechify, Cartesia, eSpeak and friends. Two
  * thousand voices, 254 languages, no key.
  *
- * Nodecast talks to its OpenAI-compatible endpoint, which takes plain text,
+ * Livy talks to its OpenAI-compatible endpoint, which takes plain text,
  * a voice id and a speed, and answers with an MP3 — no SSML to build and
  * nothing to escape.
  *

@@ -1,7 +1,7 @@
-# Nodecast 📻
+# Livy 📻
 
 **NodeJS + ICEcast.** A single small Node process that runs as many radio stations as you like, pulls
-music from fifteen sources (SoundCloud first), mixes the seams like a DJ — real beatmatching, not a
+music from sixteen sources (SoundCloud first), mixes the seams like a DJ — real beatmatching, not a
 fade — and streams each station as one continuous MP3 with ICY metadata. Feeds that are not MP3 —
 AAC, HLS, Ogg, FLAC — are transcoded on the way in by **MetroS**, its Rust engine.
 
@@ -17,13 +17,21 @@ npm start             # → http://localhost:2333
 ```
 
 A fresh install has **no stations**. Open the URL and the console walks you through creating the first
-one: owner key → name → sources → crossfade, transition and beatmatching → on air. The owner key is
-generated on first boot and printed in the log:
+one: owner key → name → sources → crossfade, transition and beatmatching → on air.
+
+> **Upgrading from Nodecast.** Livy is the same node under a new name, and an existing install is adopted
+> in place. On first boot it looks for `nodecast.db` (and before that `radio.db`) next to the new
+> `livy.db` and moves it over — stations, queue, requests, bans, plugins and settings included; a JSON
+> store from before SQLite is imported the same way. `NODECAST_DISABLE_METRO` and
+> `NODECAST_DISABLE_METRODB` still work as aliases for the `LIVY_*` switches, and the API still answers
+> with the old name in `legacyNames` so a cached console keeps finding its node.
+
+The owner key is generated on first boot and printed in the log:
 
 ```
-INFO  [nodecast] owner key generated: Nznc9u54VY2YWYjDPNXoww  (saved next to the database — keep it)
-INFO  [nodecast] listening on http://0.0.0.0:2333  ·  0 station(s)
-INFO  [nodecast] first run: open http://0.0.0.0:2333/ and create your first station
+INFO  [livy] owner key generated: Nznc9u54VY2YWYjDPNXoww  (saved next to the database — keep it)
+INFO  [livy] listening on http://0.0.0.0:2333  ·  0 station(s)
+INFO  [livy] first run: open http://0.0.0.0:2333/ and create your first station
 ```
 
 Then point anything at the stream:
@@ -39,7 +47,7 @@ curl -s -H 'Icy-MetaData: 1' -D - http://localhost:2333/stream/night-drive-fm.mp
 |---|---|
 | **Stations** | many per process, each with its own queue, rotation, requests, automix and listeners |
 | **Audio path** | MP3 in → MP3 out, byte for byte, no ffmpeg. Anything else is decoded and re-encoded by MetroS at 70–150x realtime. |
-| **Sources** | soundcloud · audius · bandcamp · ccmixter · archive.org · deezer · radio paradise (FLAC) · somafm · podcast/RSS · vimeo · **youtube music** · mirror (Spotify/Apple/YouTube links) · radio-browser · http/icecast/HLS · local (mp3 · flac · m4a · ogg · wav…) · tts |
+| **Sources** | soundcloud · audius · bandcamp · ccmixter · archive.org · deezer · radio paradise (FLAC) · somafm · podcast/RSS · vimeo · **youtube music** · mirror (Spotify/Apple/YouTube links) · **song.link** · radio-browser · http/icecast/HLS · local (mp3 · flac · m4a · ogg · wav…) · tts |
 | **Automix** | loudness-matched, cue-trimmed, **beatmatched** seams, **ten transitions chosen per seam**, blends up to 30 s, and the heavy DSP in Rust off the event loop |
 | **DJ** | optional voice-tracking over the seam with a real sidechain duck |
 | **Request line** | request, upvote, vote-skip, per-listener limits, bans — all persisted in SQLite |
@@ -48,11 +56,11 @@ curl -s -H 'Icy-MetaData: 1' -D - http://localhost:2333/stream/night-drive-fm.mp
 | **Voice** | two speech services — Google Translate and [Flowery](https://flowery.pw) (2,000 voices, 254 languages) — sharing one language and pace |
 | **Memory** | a station comes back mid-song after a restart, with its queue, out of the same SQLite file |
 | **Smart queue** | autoplay that follows what the station has been playing, so the rotation never simply stops |
-| **MetroS** | the relay engine: frame scanning, live re-framing, **decoding and transcoding** — AAC, HLS/MPEG-TS, Ogg, FLAC, MP4 → MP3 — as an optional Rust addon (`libmetro`) with a JavaScript fallback for the MP3 path |
+| **MetroS** | the relay engine: frame scanning, live re-framing, **decoding and transcoding** — AAC, HLS/MPEG-TS, Ogg, FLAC, MP4 → MP3 — as an optional Rust addon (`native/libmetro`) with a JavaScript fallback for the MP3 path |
 | **Plugins** | drop-in `plugins/` folder — sources, transitions, routes and event hooks, switchable at runtime **per node or per station**, with **self-describing settings** the console renders as a form |
 | **Storage** | one migrated SQLite file for everything; `npm run db` for info, backups and vacuum |
 | **Logging** | levelled, scoped, colourised, redacted, ring-buffered and readable from the console |
-| **Dependencies** | `ws`, `@breezystack/lamejs`, `mpg123-decoder` — plus two optional Rust addons of our own: **libmetro** (audio) and **MetroDB** (SQLite, replacing `better-sqlite3`) |
+| **Dependencies** | `ws`, `@breezystack/lamejs`, `mpg123-decoder` — plus two optional Rust addons of our own: **libmetro** (audio) and **MetroDB** (SQLite, replacing `better-sqlite3`), both under `native/` |
 
 ## Why it's fast
 
@@ -108,23 +116,47 @@ the station and MetroS take it from there.
 | Source | Accepts | Notes |
 |---|---|---|
 | **soundcloud** (primary) | `scsearch:<terms>`, `sc:`, any soundcloud.com track/set/user URL, bare text | `client_id` scraped from SoundCloud's own asset bundle, auto-refreshed on 401/403. Prefers the `progressive` MP3; falls back to concatenating HLS MP3 segments. 128 kbps. |
-| **audius** (hi-res) | `adsearch:<terms>`, `audius:trending:<genre>`, audius.co URLs | Artist-owned catalogue, **320 kbps MP3**, no key. Only `is_streamable` tracks. |
+| **audius** (hi-res) | `adsearch:<terms>`, `ausearch:<terms>`, `audius:trending:<genre>`, audius.co URLs | Artist-owned catalogue, **320 kbps MP3**, no key. Discovery nodes come from `api.audius.co`; a node that 5xxes is rotated off mid-request and the call retried on another. |
 | **archive** (hi-res) | `iasearch:<terms>`, `ia:<identifier>`, archive.org URLs | Real MP3 files, frequently 192–320 kbps VBR. Filtered to `.mp3` and biased away from talk/audiobook collections. |
-| **bandcamp** | `bcsearch:<terms>`, `<artist>.bandcamp.com/track|album/…` | Full-length `mp3-128` streams from the page's `data-tralbum` blob. |
+| **bandcamp** | `bcsearch:<terms>`, `<artist>.bandcamp.com/track|album/…` | Full-length `mp3-128` streams from the page's `data-tralbum` blob. Search uses the site's own autocomplete API (the HTML search is now a JS challenge) and carries the artwork and URL, so the page is only fetched on first play. |
 | **ccmixter** (hi-res) | `ccsearch:<terms>`, ccmixter.org file URLs | Creative Commons remixes, mostly VBR ~192 kbps — a good clone target. |
 | **somafm** | `soma:groovesalad`, `somafm:<channel>`, somafm.com URLs | 24/7 curated channels; the highest-quality MP3 playlist is parsed out of the `.pls`. |
 | **podcast** | `pcsearch:<terms>`, `podcast:darknet diaries`, `rss:<feed url>` | iTunes search → RSS → MP3 enclosures. Spoken-word episodes bypass the automix. |
 | **radioparadise** (lossless) | `rp:mellow`, `rp:0`…`rp:4`, radioparadise.com URLs | Listener-supported radio served as **FLAC blocks** with the running order attached, so the station announces the right song at the right moment. Transcoded by MetroS as it downloads. |
 | **vimeo** | `vimeo:76979871`, vimeo.com / player.vimeo.com URLs | The audio of a Vimeo video: progressive MP4 when the uploader allowed it, otherwise the HLS rendition. AAC either way, so MetroS decodes it. |
 | **mirror** | `https://open.spotify.com/track/…`, Apple Music, YouTube, `mirror:<artist – title>` | Metadata only. A link that cannot legally stream is **matched to a source that can**, and the original artwork/title stays on air (`mirroredFrom`). |
-| **deezer** (metadata) | `dzsearch:<terms>`, deezer.com URLs | Exact title/artist/artwork/ISRC, then cloned to a playable provider. |
+| **songlink** (metadata) | `https://song.link/s/…`, `album.link`, `odesli.co`, `songlink:<terms>` | Odesli's universal resolver. Reads *where else* the recording exists (API first, the page's embedded JSON when the API rate-limits) and hands each platform link to **mirror**, so a Spotify or Apple Music share becomes something that actually plays. |
+| **deezer** (metadata) | `dzsearch:<terms>`, `dzisrc:<ISRC>`, deezer.com URLs | Exact title/artist/artwork/ISRC, then cloned to a playable provider. The ISRC is what makes the clone certain rather than a title guess, and the 30 s preview is offered for browser playback. |
 | **radiobrowser** | `radio:<name or tag>`, `rbsearch:<terms>` | 50k community-indexed live MP3 stations. ICY `StreamTitle` becomes now-playing, and it is the last-resort "never go silent" source. |
-| **http** | `https://host/track.mp3`, Icecast/Shoutcast, `.pls` / `.m3u`, **HLS `.m3u8`**, `.aac` / `.m4a` / `.ogg` / `.flac` | Direct files and live relays. An HLS playlist is followed segment by segment; anything that is not MP3 is transcoded. |
+| **http** | `https://host/track.mp3`, Icecast/Shoutcast, `.pls` / `.m3u`, **HLS `.m3u8`**, `.aac` / `.m4a` / `.ogg` / `.flac` | Direct files and live relays. An HLS playlist is followed segment by segment; anything that is not MP3 is transcoded. A URL that answers with HTML is refused rather than aired as noise. |
 | **local** | `local:folder`, `local:/path/file.flac` | Files under `server/media` — jingles, idents, offline fallback, or a whole library. MP3 is aired byte for byte; FLAC, M4A, Ogg, WAV and friends are transcoded on the way out (needs libmetro). |
 | **tts** | `tts:<text>`, `say:`, `announce:` | Speech as a track: idents, owner announcements, DJ links. |
 
 Adding a provider is ~40 lines: drop a class in `src/sources/`, register it in `src/sources/index.js`.
 The station core never learns provider specifics.
+
+A provider is *self-describing*, so a console can list it without knowing how it is built —
+`GET /api/v1/sources` returns what each one claims (`prefixes`), whether it can search, which of them are
+**metadata-only** (they name the song; the registry finds the audio), and which are hi-res:
+
+```jsonc
+{ "sources": [ { "name": "soundcloud", "prefixes": ["scsearch:", "sc:"], "hiRes": false,
+                 "metadataOnly": false, "canSearch": true }, … ],
+  "hiRes": { "enabled": true, "minKbps": 192 } }
+```
+
+Providers may also implement one optional method:
+
+| Method | Used by | For |
+|---|---|---|
+| `getTrackUrl(track)` | `POST /api/v1/track-url` | the *direct* audio URL — what a browser's `<audio>` needs to play one song with a scrubber. The station's `/stream/<id>.mp3` is one continuous mix for everyone; this is one file for one listener. `null` when the provider cannot answer (a live ICY relay), and the console falls back to the station stream. |
+
+### Resolution is forgiving
+
+A query is claimed by the first provider that recognises it. Anything else goes to the default search
+provider — and if *that* is down (SoundCloud's `client_id` is scraped, so it is allowed to be), the query
+is retried across every other searchable provider instead of failing the listener's request. A dead
+default search costs a ranked result, not a request.
 
 ### Hi-res re-clone
 
@@ -160,7 +192,7 @@ keeps broadcasting.
 ### Beatmatching (the Apple-AutoMix part)
 
 Aligning the downbeat is not enough — if the songs are at different tempos the blend drifts apart within a
-bar. So Nodecast does what a DJ does and **changes the tempo of the outgoing song to meet the incoming one**:
+bar. So Livy does what a DJ does and **changes the tempo of the outgoing song to meet the incoming one**:
 
 1. **Detect** both grids — spectral-flux onset envelope → autocorrelation over 60–200 BPM with a
    log-Gaussian prior at 120 BPM (parabolic interpolation on the ACF peak) → pulse-train phase.
@@ -347,7 +379,7 @@ INFO automix:lofi | roll 16875ms (9 bars) equal-power beatmatched 124→126bpm:
 The two expensive stages are beat detection (an STFT plus an autocorrelation
 over every plausible lag) and the WSOLA time stretch. Both were JavaScript
 on the same thread that releases an MP3 frame every 26 ms. At six seconds
-nobody noticed; at thirty it was audible. They are now Rust, in `libmetro`,
+nobody noticed; at thirty it was audible. They are now Rust, in `native/libmetro`,
 and they run **on the thread pool**:
 
 | 60 s window | JavaScript | libmetro |
@@ -434,7 +466,7 @@ rendered by [`<am-lyrics>`](https://github.com/uimaxbai/apple-music-web-componen
 — a Lit web component that handles the scroll, the per-word sweep and the
 interpolation between beats.
 
-It can fetch lyrics itself. Nodecast does not let it: the **node** looks them
+It can fetch lyrics itself. Livy does not let it: the **node** looks them
 up on [LRCLIB](https://lrclib.net), converts the line-synced LRC into the
 word-level TTML the component renders, and hands that over finished. So no
 listener's browser talks to a lyrics service, a node on a LAN fetches each
@@ -454,7 +486,7 @@ is and looks right. A stream has no `currentTime`, so the client anchors on
 
 ## VNNews — bản tin 17:00–19:00
 
-Vietnamese radio has a rush-hour news slot, so Nodecast ships one. Between
+Vietnamese radio has a rush-hour news slot, so Livy ships one. Between
 **17:00 and 19:00 Hanoi time** the `vnnews` plugin interrupts the music every
 half hour, reads the headlines from VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí
 and VOV, and hands the music back. Outside the window it does nothing.
@@ -519,7 +551,7 @@ at the same time.
 
 ## Two voices, one set of settings
 
-Nodecast speaks through either of two free services, and the split between
+Livy speaks through either of two free services, and the split between
 their settings is the point:
 
 | | Google Translate | [Flowery](https://flowery.pw/docs) |
@@ -573,7 +605,7 @@ is a table — which is what makes the next feature possible.
 
 ## Smart queue: autoplay that follows the station
 
-When the queue runs low, Nodecast looks at what this station has actually
+When the queue runs low, Livy looks at what this station has actually
 been playing, asks every source for more of it, and keeps going:
 
 ```
@@ -595,12 +627,12 @@ compiles at install time. On a Raspberry Pi, in a slim container, or on any
 machine without a compiler and Python, that compile is the single most
 likely thing to fail — *after* somebody has decided to try the project.
 
-`metrodb/` is the same database with none of that: SQLite compiled into a
+`native/metrodb/` is the same database with none of that: SQLite compiled into a
 Rust addon, prebuilt for every platform by the same universal build as
-libmetro, with **better-sqlite3's API**:
+`native/libmetro`, with **better-sqlite3's API**:
 
 ```js
-const db = new Database('nodecast.db')
+const db = new Database('livy.db')
 db.exec('CREATE TABLE plays (id INTEGER PRIMARY KEY, title TEXT)')
 db.prepare('INSERT INTO plays (title) VALUES (?)').run('Get Lucky')   // { changes, lastInsertRowid }
 db.prepare('SELECT * FROM plays WHERE id = ?').get(1)                  // row, or undefined
@@ -616,12 +648,12 @@ The store tries three drivers in order — **MetroDB**, `bun:sqlite`,
 INFO store | persistence: metrodb (rust, sqlite 3.46.0) · schema v7
 ```
 
-`NODECAST_DISABLE_METRODB=1` forces the old path, and the store's own test
+`LIVY_DISABLE_METRODB=1` forces the old path, and the store's own test
 suite runs identically on whichever driver is present. Build it like
 libmetro:
 
 ```sh
-cd metrodb && cargo build --release && node scripts/link-local.js
+cd native/metrodb && cargo build --release && node scripts/link-local.js
 ./scripts/build-linux-universal.sh     # x64/arm64 · gnu/musl · armv7
 ```
 
@@ -654,7 +686,29 @@ $ curl 'localhost:2333/api/v1/search?q=tycho+awake&limit=4'
  0.667  bandcamp    Tycho   Dye
 ```
 
-### YouTube Music, as a card index
+### Song.link, and the card-index sources
+
+A `song.link` URL is Odesli's universal resolver: it does not stream anything,
+it lists *where else* the recording exists. `songlink` reads that list — from
+the API when anonymous access allows it, from the page's own embedded JSON
+when it does not — orders the candidates by whether they can be played
+(SoundCloud and Bandcamp before Spotify and Tidal), and hands each link to
+`mirror`:
+
+```bash
+curl -X POST localhost:2333/api/v1/owner/resolve \
+  -H "x-owner-key: $KEY" -H 'content-type: application/json' \
+  -d '{"query":"https://song.link/s/4eoOQgFQ0rLMKNP8KcUNWc"}'
+
+# → plays from soundcloud, with Odesli's title, artist and artwork,
+#   mirroredFrom: "song.link → spotify"
+```
+
+The page parser is worth a note: Song.link embeds its state as a JSON
+*document inside a JSON string* inside a script payload, so every quote is
+escaped. The parser peels one level of escaping at a time and only then
+looks for the object — scanning braces through a wall of backslashes cannot
+tell a structural brace from a quoted one.
 
 NodeLink resolves Spotify and YouTube Music links by finding the recording
 somewhere playable, and `ytmusic` does the same here. YouTube Music knows
@@ -688,14 +742,14 @@ the right thing; the bytes come from somewhere that is happy to be played.
 
 ## Persistence (SQLite)
 
-Every node keeps **all** of its state in one SQLite file — `server/data/nodecast.db` by default. There is
+Every node keeps **all** of its state in one SQLite file — `server/data/livy.db` by default. There is
 no JSON fallback: a node that cannot open its database says so instead of quietly forgetting things.
 
-The schema is versioned and migrated on boot (`server/src/store/migrations.js`), so upgrading Nodecast is
+The schema is versioned and migrated on boot (`server/src/store/migrations.js`), so upgrading Livy is
 just starting the new version:
 
 ```
-INFO  [store] migrated nodecast.db  v2 → v5  (plugins, play_index, drop_dialer, requests_status)
+INFO  [store] migrated livy.db  v2 → v5  (plugins, play_index, drop_dialer, requests_status)
 ```
 
 | Table | Holds |
@@ -852,7 +906,7 @@ One line per event, and the line tells you where it came from:
   in messages *and* in field values, so a log can be pasted into an issue.
 * **Ring buffer** — the last few hundred lines are kept in memory and served to the console's **Logs**
   panel (`GET /api/v1/owner/logs?limit=&level=&scope=`), with a live tail, level filter and scope filter.
-* **File sink** — `LOG_FILE=/var/log/nodecast.log` (or `logging.file.enabled`) writes JSON lines with
+* **File sink** — `LOG_FILE=/var/log/livy.log` (or `logging.file.enabled`) writes JSON lines with
   size-based rotation (`maxMb`, `keep`).
 
 ## HTTP API (default `:2333`)

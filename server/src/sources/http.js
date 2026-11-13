@@ -32,6 +32,8 @@ export class HttpSource {
       /\.(mp3|aac|m4a|ogg|oga|opus|flac|wav|m3u8)$/i,
       ''
     )
+    // A path of "/stream" or "/;listen" is a mount point, not a title.
+    const title = name && !/^[;.]|^(stream|listen|live|radio)$/i.test(name) ? name : new URL(resolved).hostname
 
     const hls = isHlsUrl(resolved)
     const decodable = DECODABLE.test(resolved)
@@ -43,7 +45,7 @@ export class HttpSource {
         {
           source: 'http',
           id: `http:${createHash('sha1').update(resolved).digest('hex').slice(0, 16)}`,
-          title: name || 'HTTP stream',
+          title,
           artist: new URL(resolved).hostname,
           duration: 0, // unknown / endless
           artwork: null,
@@ -58,17 +60,27 @@ export class HttpSource {
     }
   }
 
-  async stream(track, { onMetadata } = {}) {
+  getTrackUrl(track) {
+    // HLS is a playlist a browser can play natively; a live ICY socket cannot
+    // be handed to an <audio> tag, so only the playlist case answers.
+    return track.format === 'hls' || isHlsUrl(track.url) ? track.url : null
+  }
+
+  async stream(track, { onMetadata, signal } = {}) {
     // HLS is a playlist, not a socket: hand the URL back and let the station
     // follow it segment by segment.
     if (track.format === 'hls' || isHlsUrl(track.url)) {
       return { url: track.url, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
     }
 
-    const res = await connectStream(track.url, { metadata: true, timeout: 12_000 })
+    const res = await connectStream(track.url, { metadata: true, timeout: 12_000, signal })
     const metaint = res.headers['icy-metaint'] ? Number(res.headers['icy-metaint']) : 0
 
     const contentType = res.headers['content-type'] ?? 'audio/mpeg'
+    if (/text\/html|application\/json/i.test(contentType)) {
+      res.body.destroy?.()
+      throw new Error(`that URL is a web page, not audio (${contentType})`)
+    }
     // Trust the header when it says something other than MP3 — and keep
     // trusting the bytes: MetroS sniffs the stream anyway.
     const transcode = Boolean(track.transcode) || !/mpeg|mp3/i.test(contentType)

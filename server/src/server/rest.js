@@ -1,5 +1,5 @@
 /**
- * Nodecast HTTP surface (node:http, no framework): the REST API, the MP3
+ * Livy HTTP surface (node:http, no framework): the REST API, the MP3
  * broadcast endpoint and the static web console — one port, one origin.
  *
  * Responses are built from explicit projections (`publicTrack`), so upstream
@@ -34,6 +34,8 @@ import Lyrics from '../core/lyrics.js'
 import { publicTrack } from '../core/station.js'
 import createLogger from '../util/logger.js'
 import { EFFECTS } from '../core/automix.js'
+import { describe as describeFilters } from '../core/filters/index.js'
+import { isServerless } from '../config.js'
 
 const log = createLogger('http')
 const VERSION = createRequire(import.meta.url)('../../package.json').version
@@ -336,7 +338,26 @@ export function createRequestHandler({ manager, config, sources, store = null, t
 
         if (resource === 'info') {
           return send(res, 200, {
-            name: 'nodecast',
+            name: 'livy',
+            // Where this is running, and what that costs: a serverless
+            // deployment cannot stream, cannot keep a socket open and does not
+            // keep its data. Saying so in the first endpoint a client calls is
+            // how an operator finds out before they build on it.
+            deployment: {
+              serverless: isServerless(),
+              storage: paths.writable,
+              writable: paths.writable,
+              limits: {
+                streaming: !isServerless(),
+                websocket: !isServerless(),
+                persistence: paths.writable === 'disk',
+                maxFunctionSeconds: isServerless() ? 300 : null
+              }
+            },
+            // What this node used to be called. The console probes for it so
+            // that a self-hosted node can be upgraded server-first without
+            // its (older, cached) UI losing track of it.
+            legacyNames: ['nodecast'],
             version: VERSION,
             uptime: Date.now() - startedAt,
             sources: sources.sources.map((s) => s.name),
@@ -369,6 +390,16 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             owner: isOwner(req, config, url) && Boolean(ownerKey(config)),
             sources: sources.sources.map((s) => ({ name: s.name, prefixes: s.prefixes ?? [] })),
             transitions: [...EFFECTS],
+            // The filter surface the console and any NodeLink-shaped client
+            // needs: band centres, parameter ranges, and defaults. Read-only —
+            // changing a chain is an owner action.
+            filters: describeFilters(),
+            // The learned DJ policy, if one is installed: what it is, how many
+            // parameters, and whether the last seam was its call or the
+            // heuristic's. `null` model means the heuristic is in charge.
+            djModel: await import('../core/models/index.js')
+              .then(({ models }) => models.info())
+              .catch(() => null),
             defaults: {
               crossfadeMs: config.stationDefaults?.automix?.crossfadeMs ?? 6000,
               effect: config.stationDefaults?.automix?.effect ?? 'crossfade',
@@ -393,11 +424,31 @@ export function createRequestHandler({ manager, config, sources, store = null, t
 
         if (resource === 'sources' && method === 'GET') {
           return send(res, 200, {
-            sources: sources.sources.map((s) => ({ name: s.name, prefixes: s.prefixes ?? [], hiRes: s.hiRes === true })),
+            // `describe()` is the one place that knows how a provider is
+            // shaped; the console renders this list directly.
+            sources: sources.describe(),
             hiRes: { enabled: sources.hiRes, minKbps: sources.hiResMinKbps },
             fallbackOrder: sources.fallbackOrder,
             liveFallback: sources.liveFallback
           })
+        }
+
+        /**
+         * The direct audio URL for a track, for a browser's own player.
+         *
+         * The station's stream is one continuous MP3 for everybody; a person
+         * listening in the console wants *this song*, scrubbable, which is a
+         * different question. Only some providers can answer it (SoundCloud
+         * progressive, Audius, archive, Bandcamp, a local file, a Deezer
+         * preview…) and the answer is null when nothing can — never an error,
+         * because the console falls back to the station stream.
+         */
+        if (resource === 'track-url' && method === 'POST') {
+          const body = await readJson(req)
+          const track = body?.track ?? body
+          if (!track?.source) return fail(res, 400, 'Missing track')
+          const url = await sources.trackUrl(track)
+          return send(res, 200, { url, source: track.source, playable: Boolean(url) })
         }
 
         if (resource === 'resolve' && method === 'GET') {
@@ -545,6 +596,14 @@ export function createRequestHandler({ manager, config, sources, store = null, t
           }
 
           return fail(res, 404, 'Unknown station action')
+        }
+
+        // The WebSocket lives on the node's own socket, which a serverless
+        // function does not have. Say that, rather than 404 — a client polling
+        // this deserves to know the difference between "wrong URL" and "this
+        // deployment cannot do that".
+        if (resource === 'events' && isServerless()) {
+          return fail(res, 501, 'Live events need a long-lived connection; run the node (npm start) instead of a serverless deployment')
         }
 
         return fail(res, 404, 'Unknown API route')

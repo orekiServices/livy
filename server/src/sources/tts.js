@@ -82,6 +82,20 @@ export class TtsSource {
       }))
   }
 
+  /**
+   * An announcement is a finished MP3 on disk; a browser can play it directly
+   * once the render exists. Rendering has a side effect (a cache write), so
+   * this is opt-in from the console rather than free.
+   */
+  async getTrackUrl(track) {
+    const rendered = await this.engine.speak(track.text, {
+      bundled: track.bundled,
+      file: track.file,
+      language: track.language
+    })
+    return rendered?.file ?? null
+  }
+
   async stream(track) {
     const rendered = await this.engine.speak(track.text, {
       bundled: track.bundled,

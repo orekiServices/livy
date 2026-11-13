@@ -95,7 +95,7 @@ export const MIGRATIONS = [
     id: 2,
     name: 'retire-dialer',
     up(db) {
-      // Nodecast is pure radio: the switchboard era leaves no tables behind.
+      // Livy is pure radio: the switchboard era leaves no tables behind.
       for (const table of ['calls', 'numbers', 'carriers', 'call_log', 'voice_sessions']) {
         if (hasTable(db, table)) db.exec(`DROP TABLE ${table};`)
       }

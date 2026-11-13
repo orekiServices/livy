@@ -3,7 +3,7 @@
  *
  * The console shows Apple-Music-style word-synced lyrics with the
  * `<am-lyrics>` web component. That component can fetch lyrics itself, but
- * Nodecast fetches them **here**, on the server, for three reasons:
+ * Livy fetches them **here**, on the server, for three reasons:
  *
  *   • a listener's browser never talks to a third party on our behalf — no
  *     leaked listening habits, no keys, nothing to block;
@@ -23,7 +23,7 @@ import createLogger from '../util/logger.js'
 const log = createLogger('lyrics')
 
 const API = 'https://lrclib.net/api'
-const AGENT = 'Nodecast/3 (https://github.com/nodecast)'
+const AGENT = 'Livy/3 (https://github.com/livy)'
 
 /** Strip the noise that stops a search matching: "(Official Video)" etc. */
 export function cleanTitle(title = '') {

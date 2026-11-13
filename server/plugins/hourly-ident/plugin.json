@@ -2,7 +2,7 @@
   "name": "Hourly ident",
   "version": "1.0.0",
   "description": "Speaks the time and the station name on the hour. Ships disabled because it talks on air.",
-  "author": "nodecast",
+  "author": "livy",
   "main": "index.js",
   "enabled": false,
   "settings": {

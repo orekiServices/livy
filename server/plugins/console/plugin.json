@@ -1,8 +1,8 @@
 {
   "name": "Web console",
   "version": "1.1.0",
-  "description": "The Nodecast web UI (station wall, station pages, owner console) served from this node's own port. Boots even when the build is missing.",
-  "author": "nodecast",
+  "description": "The Livy web UI (station wall, station pages, owner console) served from this node's own port. Boots even when the build is missing.",
+  "author": "livy",
   "main": "index.js",
   "enabled": true,
   "settings": {

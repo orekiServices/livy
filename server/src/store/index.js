@@ -1,7 +1,7 @@
 /**
  * Persistence — one SQLite file per node.
  *
- * Every Nodecast node now stores state in **SQLite3**: stations the owner
+ * Every Livy node now stores state in **SQLite3**: stations the owner
  * created, the request line, one-vote-per-listener constraints, play history,
  * bans, plugin state and settings. One file you can copy, back up, inspect
  * with `sqlite3` and upgrade in place:
@@ -32,6 +32,13 @@ const parseJson = (value, fallback = {}) => {
   }
 }
 
+/**
+ * A switch is on when it is set to `1`, under either this name or the one the
+ * node used before the rename. Upgrades must not silently change behaviour
+ * because an environment file was written for Nodecast.
+ */
+const disabled = (...names) => names.some((name) => process.env[name] === '1')
+
 /* ------------------------------------------------------------------ *
  * Driver
  * ------------------------------------------------------------------ */
@@ -41,7 +48,7 @@ const parseJson = (value, fallback = {}) => {
  *
  * Three, in order of preference:
  *
- *   1. **MetroDB** — our own Rust addon (`metrodb/`). SQLite is compiled
+ *   1. **MetroDB** — our own Rust addon (`native/metrodb/`). SQLite is compiled
  *      into it, so there is no node-gyp, no Python and no compiler needed
  *      at install time, which is exactly the step that fails on a Pi or in
  *      a slim container.
@@ -60,13 +67,13 @@ async function openDatabase(file) {
   }
 
   // 1. MetroDB, unless it was switched off or has no binary for this host.
-  if (process.env.NODECAST_DISABLE_METRODB !== '1') {
+  if (!disabled('LIVY_DISABLE_METRODB', 'NODECAST_DISABLE_METRODB')) {
     try {
       const { createRequire } = await import('node:module')
       const require = createRequire(import.meta.url)
       let MetroDb
       try {
-        MetroDb = require('../../../metrodb/index.js')
+        MetroDb = require('../../../native/metrodb/index.js')
       } catch {
         MetroDb = require('metrodb')
       }
@@ -113,8 +120,8 @@ async function openDatabase(file) {
   } catch (error) {
     throw new Error(
       `SQLite is required but no binding is available (${error.message}). ` +
-        'Build the bundled one with `cd metrodb && cargo build --release && node scripts/link-local.js`, ' +
-        'or `npm install better-sqlite3`, or run Nodecast on Bun, ' +
+        'Build the bundled one with `cd native/metrodb && cargo build --release && node scripts/link-local.js`, ' +
+        'or `npm install better-sqlite3`, or run Livy on Bun, ' +
         'or start with `store.enabled: false` to run without persistence.'
     )
   }
@@ -134,19 +141,92 @@ async function openDatabase(file) {
 }
 
 /**
- * Older installs kept their database in `radio.db`. If the new file is not
- * there yet and the old one is, take it over — name, WAL and all — so an
- * upgrade is still just "start the new version".
+ * Older installs kept their database under another name — `radio.db` from the
+ * pre-SQLite era, `nodecast.db` from before this node was called Livy. If the
+ * target file is not there yet and one of those is, take it over — name, WAL
+ * and all — so an upgrade is still just "start the new version".
+ *
+ * The name is a display detail; the *data* is the product, and losing a
+ * station list to a rebrand would be absurd.
  */
+const LEGACY_DATABASES = ['nodecast.db', 'radio.db']
+
 function adoptLegacyFile(file) {
   if (fs.existsSync(file)) return false
-  const legacy = path.join(path.dirname(file), 'radio.db')
-  if (legacy === file || !fs.existsSync(legacy)) return false
+  const dir = path.dirname(file)
+  const legacy = LEGACY_DATABASES.map((name) => path.join(dir, name)).find(
+    (candidate) => candidate !== file && fs.existsSync(candidate)
+  )
+  if (!legacy) return false
   for (const suffix of ['', '-wal', '-shm']) {
     if (fs.existsSync(legacy + suffix)) fs.renameSync(legacy + suffix, file + suffix)
   }
   log.info(`adopted the existing database ${path.basename(legacy)} → ${path.basename(file)}`)
   return true
+}
+
+/**
+ * A SQLite database that lives in this process only.
+ *
+ * MetroDB and better-sqlite3 both accept `:memory:` — SQLite has had an
+ * in-memory pager forever — so the *same* SQL runs, the same migrations
+ * apply, and the full test suite exercises one code path. What it does not
+ * give you is persistence, which is exactly what a serverless function cannot
+ * have and should not pretend to.
+ *
+ * The driver name carries the warning: it shows up in `/api/v1/info` and in
+ * the boot banner, so an operator who expected a database sees
+ * `memory (ephemeral)` rather than silently losing every station at the next
+ * cold start.
+ */
+async function openMemoryDatabase() {
+  const make = (raw, driver) => {
+    raw.exec('PRAGMA foreign_keys = ON;')
+    return {
+      driver,
+      raw,
+      exec: (sql) => raw.exec(sql),
+      run: (sql, params = []) => raw.prepare(sql).run(...params),
+      get: (sql, params = []) => raw.prepare(sql).get(...params),
+      all: (sql, params = []) => raw.prepare(sql).all(...params),
+      transaction: (fn) => raw.transaction(fn)(),
+      close: () => raw.close()
+    }
+  }
+
+  if (!disabled('LIVY_DISABLE_METRODB', 'NODECAST_DISABLE_METRODB')) {
+    try {
+      const { createRequire } = await import('node:module')
+      const require = createRequire(import.meta.url)
+      let MetroDb
+      try {
+        MetroDb = require('../../../native/metrodb/index.js')
+      } catch {
+        MetroDb = require('metrodb')
+      }
+      if (MetroDb?.available) {
+        const raw = new MetroDb(':memory:')
+        return make(
+          {
+            exec: (sql) => raw.exec(sql),
+            prepare: (sql) => raw.prepare(sql),
+            transaction: (fn) => raw.transaction(fn),
+            close: () => raw.close()
+          },
+          `memory (ephemeral, sqlite ${MetroDb.sqliteVersion()})`
+        )
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  try {
+    const { default: Database } = await import('better-sqlite3')
+    return make(new Database(':memory:'), 'memory (ephemeral, better-sqlite3)')
+  } catch (error) {
+    throw new Error(`an in-memory SQLite driver is required (${error.message})`)
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -158,11 +238,17 @@ export class Store {
    * @param {string} file  path to the SQLite database (created if missing)
    * @param {{ migrate?: boolean }} [options]
    */
-  static async open(file, { migrate: runMigrations = true } = {}) {
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    adoptLegacyFile(file)
-    const db = await openDatabase(file)
-    const store = new Store(db, file)
+  static async open(file, { migrate: runMigrations = true, memory = false } = {}) {
+    // Memory driver: for a serverless function, where the bundle is read-only
+    // and `/tmp` dies with the instance. The schema is created in-memory and
+    // the store says `driver: 'memory (...)'`, so `/api/v1/info` can tell the
+    // owner the truth instead of pretending to have saved something.
+    const db = memory ? await openMemoryDatabase() : await (async () => {
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      adoptLegacyFile(file)
+      return openDatabase(file)
+    })()
+    const store = new Store(db, memory ? ':memory:' : file)
 
     if (runMigrations) {
       const result = migrate(db, { log })
@@ -195,11 +281,21 @@ export class Store {
   /* --------------------------- legacy import -------------------------- */
 
   /**
-   * Adopt a pre-SQLite node: if `radio.db.json` sits next to the database and
-   * we have not imported it before, copy every row in and rename the file to
+   * Adopt a pre-SQLite node: if a JSON store sits next to the database and we
+   * have not imported it before, copy every row in and rename the file to
    * `.imported`. Runs once, silently does nothing afterwards.
+   *
+   * Both the current name (`livy.json`) and the one older nodes used
+   * (`nodecast.json`, `radio.db.json`) are looked for, in that order.
    */
-  importJson(jsonFile = this.file.replace(/\.(db|sqlite3?)$/i, '') + '.json') {
+  importJson(jsonFile = null) {
+    if (!jsonFile) {
+      const base = this.file.replace(/\.(db|sqlite3?)$/i, '')
+      const dir = path.dirname(this.file)
+      const candidates = [`${base}.json`, ...['livy.json', 'nodecast.json', 'radio.db.json'].map((name) => path.join(dir, name))]
+      jsonFile = candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]
+    }
+    if (this.file === ':memory:') return null
     if (!fs.existsSync(jsonFile) || this.get('legacy.jsonImported')) return null
 
     let data

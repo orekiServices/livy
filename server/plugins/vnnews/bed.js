@@ -52,7 +52,7 @@ export async function loadBed(settings, ctx) {
   let bytes = null
 
   if (/^https?:\/\//i.test(reference)) {
-    const res = await fetch(reference, { headers: { 'user-agent': 'Nodecast/3 (news bed)' } })
+    const res = await fetch(reference, { headers: { 'user-agent': 'Livy/3 (news bed)' } })
     if (!res.ok) throw new Error(`bed ${res.status}`)
     bytes = Buffer.from(await res.arrayBuffer())
   } else if (fs.existsSync(reference)) {

@@ -44,7 +44,7 @@
 import { VoicePool } from './voice.js'
 import { mixWithBed, loadBed } from './bed.js'
 
-const AGENT = 'Mozilla/5.0 (compatible; Nodecast/3 VNNews)'
+const AGENT = 'Mozilla/5.0 (compatible; Livy/3 VNNews)'
 
 /* ------------------------------ feed bits ----------------------------- */
 

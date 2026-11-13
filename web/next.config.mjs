@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 
 /**
- * Nodecast console — a *static* Next export.
+ * Livy console — a *static* Next export.
  *
  * `next build` writes plain HTML/CSS/JS to web/out, which the radio node
  * serves from its own port. That means: one process, one origin, no Node

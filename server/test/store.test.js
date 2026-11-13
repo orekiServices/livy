@@ -14,7 +14,7 @@ import { tmpdir, quietLogs } from './helpers.js'
 
 quietLogs()
 
-const dbFile = (name = 'nodecast.db') => path.join(tmpdir('nodecast-store-'), name)
+const dbFile = (name = 'livy.db') => path.join(tmpdir('livy-store-'), name)
 
 test('a fresh database is migrated to the current schema', async () => {
   const file = dbFile()
@@ -37,13 +37,43 @@ test('a fresh database is migrated to the current schema', async () => {
   again.close()
 })
 
-test('an older node is upgraded in place: dialer tables go, new columns arrive', async () => {
-  const file = dbFile('legacy.db')
-  const { default: Database } = await import('better-sqlite3')
+/**
+ * A raw SQLite handle, for building a *pre-migration* database from scratch.
+ *
+ * `better-sqlite3` is an optional dependency of the node and is frequently
+ * absent (MetroDB is the default driver), so the test asks whichever driver
+ * the store itself would pick rather than assuming one. `? 1 : 1` is SQLite
+ * for "true"; the store's driver wrappers all understand it.
+ */
+async function rawDatabase(file) {
+  try {
+    const { default: Database } = await import('better-sqlite3')
+    return new Database(file)
+  } catch {
+    const { createRequire } = await import('node:module')
+    const require = createRequire(import.meta.url)
+    let MetroDb
+    try {
+      MetroDb = require('../../native/metrodb/index.js')
+    } catch {
+      MetroDb = require('metrodb')
+    }
+    if (!MetroDb?.available) return null
+    // MetroDB's module *is* the constructor, with named exports hung off it.
+    const Constructor = typeof MetroDb === 'function' ? MetroDb : MetroDb.Database
+    return new Constructor(file)
+  }
+}
 
+test('an older node is upgraded in place: dialer tables go, new columns arrive', async (t) => {
+  const file = dbFile('legacy.db')
   // Recreate what a v2 node left behind: core tables, no schema_migrations,
-  // and the switchboard tables Nodecast no longer has.
-  const raw = new Database(file)
+  // and the switchboard tables Livy no longer has.
+  const raw = await rawDatabase(file)
+  if (!raw) {
+    t.skip('no usable SQLite driver on this host')
+    return
+  }
   raw.exec(`
     CREATE TABLE stations (id TEXT PRIMARY KEY, config TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE requests (id TEXT PRIMARY KEY, station_id TEXT NOT NULL, track TEXT NOT NULL, title TEXT, by TEXT, requester_id TEXT, votes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, played_at INTEGER);
@@ -87,9 +117,9 @@ test('an older node is upgraded in place: dialer tables go, new columns arrive',
 })
 
 test('a radio.db from an older install is adopted under the new name', async () => {
-  const dir = tmpdir('nodecast-adopt-')
+  const dir = tmpdir('livy-adopt-')
   const legacy = path.join(dir, 'radio.db')
-  const target = path.join(dir, 'nodecast.db')
+  const target = path.join(dir, 'livy.db')
 
   const first = await Store.open(legacy)
   first.saveStation({ id: 'keepme', name: 'Keep Me' })
@@ -102,10 +132,10 @@ test('a radio.db from an older install is adopted under the new name', async () 
 })
 
 test('a JSON store from a node without SQLite is imported once', async () => {
-  const dir = tmpdir('nodecast-json-')
-  const file = path.join(dir, 'nodecast.db')
+  const dir = tmpdir('livy-json-')
+  const file = path.join(dir, 'livy.db')
   fs.writeFileSync(
-    path.join(dir, 'nodecast.json'),
+    path.join(dir, 'livy.json'),
     JSON.stringify({
       stations: [{ id: 'old', config: JSON.stringify({ id: 'old', name: 'Old FM' }), created_at: 1, updated_at: 1 }],
       requests: [{ id: 'r1', station_id: 'old', track: JSON.stringify({ id: 't', title: 'T' }), by: 'mai', votes: 2, status: 'pending', created_at: 1 }],
@@ -119,7 +149,7 @@ test('a JSON store from a node without SQLite is imported once', async () => {
   assert.equal(store.listStations()[0].name, 'Old FM')
   assert.equal(store.pendingRequests('old').length, 1)
   assert.equal(store.isBanned('spammer'), true)
-  assert.ok(fs.existsSync(path.join(dir, 'nodecast.json.imported')), 'the JSON file is retired')
+  assert.ok(fs.existsSync(path.join(dir, 'livy.json.imported')), 'the JSON file is retired')
   store.close()
 
   const reopened = await Store.open(file)

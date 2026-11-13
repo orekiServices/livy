@@ -2,7 +2,7 @@
   "name": "Now Playing",
   "version": "1.2.0",
   "description": "Writes what is on air to data/now-playing.json (and optionally a webhook), plus a public /api/v1/x/now-playing endpoint for overlays and websites.",
-  "author": "nodecast",
+  "author": "livy",
   "main": "index.js",
   "enabled": true,
   "settings": {

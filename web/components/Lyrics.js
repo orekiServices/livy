@@ -31,7 +31,9 @@ const AmLyrics = dynamic(
   { ssr: false }
 )
 
-const OFFSET_KEY = 'nodecast-lyrics-offset'
+const OFFSET_KEY = 'livy-lyrics-offset'
+/** Where the previous name kept the same number. */
+const OFFSET_KEY_LEGACY = 'nodecast-lyrics-offset'
 
 export default function Lyrics({ station, nowPlaying }) {
   const [lyrics, setLyrics] = useState(null)
@@ -44,8 +46,15 @@ export default function Lyrics({ station, nowPlaying }) {
   const trackId = nowPlaying?.track?.id ?? null
 
   useEffect(() => {
-    const saved = Number(window.localStorage.getItem(OFFSET_KEY))
-    if (Number.isFinite(saved)) setOffsetMs(saved)
+    // Read through from the pre-rename key and migrate it: someone who had
+    // spent time nudging lyrics into sync should not lose that to a rebrand.
+    const stored = window.localStorage.getItem(OFFSET_KEY) ?? window.localStorage.getItem(OFFSET_KEY_LEGACY)
+    const saved = Number(stored)
+    if (stored !== null && Number.isFinite(saved)) {
+      setOffsetMs(saved)
+      window.localStorage.setItem(OFFSET_KEY, String(saved))
+      window.localStorage.removeItem(OFFSET_KEY_LEGACY)
+    }
   }, [])
 
   /* ------------------------- fetch per track ------------------------- */

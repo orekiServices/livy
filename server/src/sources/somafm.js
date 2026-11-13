@@ -40,17 +40,31 @@ export class SomaFmSource {
     return this.#channels
   }
 
-  /** The highest-quality MP3 playlist, resolved through its .pls file. */
+  /**
+   * The highest-quality MP3 playlist, resolved through its `.pls` file.
+   *
+   * The `.pls` body is *several* `FileN=…` entries (different edge servers);
+   * the first one is the live stream, which is what SomaFM's own players use.
+   * A bare `.m3u` line is accepted too, because not every channel ships a
+   * `.pls`.
+   */
   async #streamUrl(channel) {
+    const playlists = channel.playlists ?? []
     const playlist =
-      channel.playlists?.find((p) => p.format === 'mp3' && p.quality === 'highest') ??
-      channel.playlists?.find((p) => p.format === 'mp3')
+      playlists.find((p) => p.format === 'mp3' && p.quality === 'highest') ??
+      playlists.find((p) => p.format === 'mp3')
     if (!playlist) throw new Error(`${channel.id} has no MP3 stream`)
 
-    const res = await fetch(playlist.url, { headers: { 'user-agent': UA } })
+    const res = await fetch(playlist.url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(`somafm playlist ${res.status}`)
     const body = await res.text()
-    const url = /^File\d+=(.+)$/m.exec(body)?.[1]?.trim()
+
+    const files = [...body.matchAll(/^\s*File\d*\s*=\s*(\S+)\s*$/gim)].map((m) => m[1])
+    const bare = body
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+    const url = files[0] ?? bare[0]
     if (!url) throw new Error(`${channel.id} playlist had no stream URL`)
     return url
   }
@@ -113,6 +127,14 @@ export class SomaFmSource {
   async stream(track, options = {}) {
     if (!this.http) throw new Error('somafm needs the http source to stream')
     return this.http.stream({ ...track, source: 'http' }, options)
+  }
+
+  getTrackUrl(track) {
+    return track.url ?? null
+  }
+
+  getTrackUrl(track) {
+    return track.url ?? null
   }
 }
 
