@@ -431,194 +431,205 @@ test('Audius fails over to a second discovery node without re-discovering', asyn
 /* --------------------------- NhacCuaTui -------------------------------- */
 
 /**
- * NhacCuaTui's API is signed and reached over `node:https` (the responses have
- * headers too large for undici), so these tests intercept the transport rather
- * than `fetch` — the same lesson as ccMixter's, one layer down.
+ * NhacCuaTui now answers on `graph.nct.vn`, anonymously, over plain `fetch` —
+ * the old `beta.nhaccuatui.com` HMAC scheme is gone. These tests stub `fetch`
+ * and assert against the shapes recorded by a live probe of the service
+ * (2026-10-22): `{ code, msg, success, data }`, `data.songs[]` for search, a
+ * bare song for detail, and `streamURL[]` entries carrying
+ * `{ type, typeUI, stream, onlyVIP, status, order }`.
+ *
+ * The stub is installed for the whole body, so no test can reach the network
+ * even by accident — a test that hit the live API would be both slow and a
+ * lie about what it proves.
  */
-async function withNct({ api, download, stream } = {}, body) {
-  const https = await import('node:https')
-  const { EventEmitter } = await import('node:events')
-  const original = https.default.request
-
-  https.default.request = (url, options, callback) => {
-    const req = new EventEmitter()
-    req.destroy = (error) => req.emit('error', error)
-    req.end = () => {
-      const parsed = new URL(url)
-      const payload = api?.(parsed.pathname.replace(/^\/api\//, ''), parsed.searchParams) ?? { data: { items: [] } }
-      const res = new EventEmitter()
-      res.statusCode = 200
-      const text = typeof payload === 'string' ? payload : JSON.stringify(payload)
-      setImmediate(() => {
-        res.emit('data', Buffer.from(text))
-        res.emit('end')
-      })
-      callback(res)
-    }
-    return req
-  }
-
-  if (download || stream) {
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = async (url) => {
-      if (String(url).includes('/download/song/')) return download()
-      return stream ? stream() : { ok: false, status: 404 }
-    }
-    try {
-      return await body()
-    } finally {
-      globalThis.fetch = originalFetch
-      https.default.request = original
-    }
+async function withNct(body, fn) {
+  const original = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options })
+    const reply = typeof body === 'function' ? body(String(url), options, calls) : body
+    if (reply === undefined) return { ok: false, status: 404, json: async () => ({}) }
+    if (reply.__raw) return reply.__raw
+    return { ok: true, status: 200, json: async () => reply, headers: new Map([['content-type', 'application/json']]) }
   }
   try {
-    return await body()
+    return await fn(calls)
   } finally {
-    https.default.request = original
+    globalThis.fetch = original
   }
 }
 
-test('a NhacCuaTui search becomes tracks that carry the key the stream needs', async () => {
+/** A search row as the live API returns one. */
+const nctSong = (over = {}) => ({
+  key: 'x5DG3gBpOCYu',
+  name: 'Khong Mon Dang Ho Doi (Rumba Ver)',
+  artist: [
+    { key: 'a1', name: 'Nguyen Vi' },
+    { key: 'a2', name: 'Someone Else' }
+  ],
+  artistName: 'Nguyen Vi',
+  image: 'https://avatar.nct.vn/a.jpg',
+  duration: 214,
+  streamURL: [
+    { type: '128', typeUI: '128 kbps', stream: 'https://stream.nct.vn/a_128.mp3', onlyVIP: false, status: 1, order: 1 },
+    { type: '320', typeUI: '320 kbps', stream: 'https://stream.nct.vn/a_320.mp3', onlyVIP: true, status: 1, order: 3 }
+  ],
+  ...over
+})
+
+/** A detail payload for one key, with a signed URL we can vary per call. */
+const nctDetail = (signature = 'sig=1') => ({
+  code: 0,
+  data: {
+    key: 'k1',
+    name: 'A Song',
+    artist: [{ name: 'An Artist' }],
+    duration: 200,
+    streamURL: [{ type: '128', stream: `https://stream.nct.vn/a.mp3?${signature}`, onlyVIP: false, status: 1, order: 1 }]
+  }
+})
+
+test('NhacCuaTui search hits graph.nct.vn and keeps only what can be played', async () => {
   const source = new NhacCuaTuiSource()
 
   const tracks = await withNct(
     {
-      api: (path) => {
-        assert.equal(path, 'search/all', 'search hits search/all')
-        return {
-          data: {
-            items: [
-              { key: 'abc123', name: 'Em Của Ngày Hôm Qua', artistName: 'Sơn Tùng M-TP', duration: 252, image: 'https://x/a.jpg' },
-              // The console-facing type must be honoured: a playlist is not a song.
-              { key: 'pl999', name: 'Some playlist', type: 'playlist' }
-            ]
-          }
-        }
+      code: 0,
+      success: true,
+      data: {
+        songs: [
+          nctSong(),
+          nctSong({ key: 'viponly', streamURL: [{ type: '320', stream: 'https://stream.nct.vn/v.mp3', onlyVIP: true, status: 1 }] }),
+          nctSong({ key: 'dead', streamURL: [{ type: '128', stream: '', onlyVIP: false, status: 1 }] })
+        ]
       }
     },
-    () => source.search('son tung')
+    () => source.search('khong mon', 10)
   )
 
-  assert.equal(tracks.length, 1, 'the playlist row is dropped')
-  assert.equal(tracks[0].id, 'nct:abc123')
-  assert.equal(tracks[0].nctKey, 'abc123', 'the raw key travels separately from the prefixed id')
-  assert.equal(tracks[0].title, 'Em Của Ngày Hôm Qua')
-  assert.equal(tracks[0].artist, 'Sơn Tùng M-TP')
-  assert.equal(tracks[0].duration, 252_000, 'seconds become milliseconds')
-  assert.equal(tracks[0].source, 'nhaccuatui')
+  assert.equal(tracks.length, 1, 'a VIP-only row and a row with no stream are both dropped')
+  assert.equal(tracks[0].id, 'nct:x5DG3gBpOCYu')
+  assert.equal(tracks[0].nctKey, 'x5DG3gBpOCYu')
+  assert.equal(tracks[0].title, 'Khong Mon Dang Ho Doi (Rumba Ver)')
+  assert.equal(tracks[0].artist, 'Nguyen Vi, Someone Else', 'every credited artist, not just the collapsed name')
+  assert.equal(tracks[0].duration, 214_000, 'seconds become milliseconds')
+  assert.equal(tracks[0].bitrate, 128, 'anonymous playback is the 128 kbps tier')
 })
 
-test('an empty artist field does not blank the artist, and an artist array is joined', async () => {
-  // `artistName: ''` is not nullish, so a `??` chain took the empty string and
-  // the row went on air as "by " — take the first field that has text.
+test('NhacCuaTui sends the Android client identity the service expects', async () => {
   const source = new NhacCuaTuiSource()
-  const tracks = await withNct(
-    {
-      api: () => ({
-        data: {
-          items: [
-            { key: 'k1', name: 'One', artistName: '', singers: [{ name: 'Sơn Tùng M-TP' }], image: '' },
-            { key: 'k2', name: 'Two', artistName: '  ', artists: [{ name: 'A' }, { name: 'B' }] },
-            { key: 'k3', name: 'Three' }
-          ]
-        }
-      })
-    },
-    () => source.search('x')
-  )
-
-  assert.equal(tracks[0].artist, 'Sơn Tùng M-TP', 'the array is used when the scalar is blank')
-  assert.equal(tracks[1].artist, 'A, B', 'every credited name, joined')
-  assert.equal(tracks[2].artist, 'NhacCuaTui', 'and a real fallback when there is nothing')
-  assert.equal(tracks[0].artwork, null, 'a blank image is not artwork')
+  await withNct({ code: 0, data: { songs: [nctSong()] } }, async (calls) => {
+    await source.search('x', 5)
+    const url = new URL(calls[0].url)
+    assert.equal(url.origin + url.pathname, 'https://graph.nct.vn/api/v1/search/song')
+    assert.equal(url.searchParams.get('keyword'), 'x')
+    assert.equal(url.searchParams.get('correct'), 'true')
+    assert.equal(url.searchParams.get('pageindex'), '1')
+    assert.equal(calls[0].options.headers['x-os'], 'android')
+  })
 })
 
-test('a NhacCuaTui song link resolves to one track, and the detail URL is kept', async () => {
+test('a VIP 320 never wins over an open 128, however the tiers are ordered', async () => {
+  // The failure this prevents is subtle: ranking by `order` first picks the
+  // 320, and the 320 is `onlyVIP`, so the station goes silent on the first byte.
   const source = new NhacCuaTuiSource()
-
-  const result = await withNct(
-    {
-      api: (path) =>
-        path === 'media/info'
-          ? {
-              data: {
-                key: 'HUrRmiQuz1P7',
-                name: 'Fly Away',
-                artistName: 'TheFatRat',
-                streamURL: [
-                  { typeUI: '128', stream: 'https://cdn/x_128.mp3' },
-                  { typeUI: '320', stream: 'https://cdn/x_320.mp3' }
-                ]
-              }
-            }
-          : { data: {} }
-    },
-    () => source.resolve('https://www.nhaccuatui.com/bai-hat/fly-away.HUrRmiQuz1P7.html')
-  )
-
-  assert.equal(result.type, 'track')
-  assert.equal(result.tracks.length, 1)
-  assert.equal(result.tracks[0].directUrl, 'https://cdn/x_320.mp3', 'the highest tier offered is chosen')
-  assert.equal(result.tracks[0].bitrate, 320, 'and the bitrate follows the tier')
-})
-
-test('the download endpoint is the fallback when the detail response has no stream', async () => {
-  const source = new NhacCuaTuiSource()
-  const track = { id: 'nct:KEY1', nctKey: 'KEY1', title: 'x', bitrate: 128 }
 
   const url = await withNct(
     {
-      download: () => ({
-        ok: true,
-        json: async () => ({ error_message: 'Success', data: { stream_url: 'https://download.s81.stream.nixcdn.com/a.mp3' } })
-      })
+      code: 0,
+      data: {
+        key: 'k1',
+        name: 'A Song',
+        streamURL: [
+          { type: '128', stream: 'https://a01.nct.vn/a_128.mp3', onlyVIP: false, status: 1, order: 1 },
+          { type: '320', stream: 'https://a01.nct.vn/a_320.mp3', onlyVIP: true, status: 1, order: 9 }
+        ]
+      }
     },
-    () => source.getTrackUrl(track)
+    async () => {
+      const result = await source.resolve('https://www.nhaccuatui.com/song/k1')
+      return source.getTrackUrl(result.tracks[0])
+    }
   )
 
-  assert.equal(url, 'https://download.s81.stream.nixcdn.com/a.mp3')
+  assert.equal(url, 'https://a01.nct.vn/a_128.mp3', 'the open stream, not the higher-numbered VIP one')
 })
 
-test('a stream is audio/mpeg, and a charged or missing url is an error rather than silence', async () => {
+test('the stream URL is resolved at play time, because the CDN link expires', async () => {
+  // Two detail calls with different signatures: the point is that playback
+  // asks again rather than trusting a URL cached when the track was queued.
+  const source = new NhacCuaTuiSource()
+  let signature = 'sig=old'
+
+  const [first, second, calls] = await withNct(
+    () => nctDetail(signature),
+    async (calls) => {
+      const track = { id: 'nct:k1', nctKey: 'k1' }
+      const a = await source.getTrackUrl(track)
+      signature = 'sig=new'
+      const b = await source.getTrackUrl(track)
+      return [a, b, calls.length]
+    }
+  )
+
+  assert.match(first, /sig=old/)
+  assert.match(second, /sig=new/, 'a fresh signature is fetched, not the stale one')
+  assert.equal(calls, 2)
+})
+
+test('a stream URL off the service is refused rather than followed', async () => {
+  const source = new NhacCuaTuiSource()
+
+  await withNct(
+    { code: 0, data: { key: 'k1', name: 'A', streamURL: [{ type: '128', stream: 'https://evil.example.com/a.mp3', onlyVIP: false, status: 1, order: 1 }] } },
+    async () => {
+      await assert.rejects(() => source.getTrackUrl({ nctKey: 'k1' }), /no playable stream/)
+    }
+  )
+})
+
+test('an API error is thrown so the registry can fall through', async () => {
+  const source = new NhacCuaTuiSource()
+  await withNct({ code: 1001, msg: 'Invalid params', success: false }, async () => {
+    await assert.rejects(() => source.search('x'), /Invalid params/)
+  })
+})
+
+test('a song page link resolves through /api/v1/song/detail', async () => {
+  const source = new NhacCuaTuiSource()
+
+  await withNct({ code: 0, data: nctSong() }, async (calls) => {
+    const result = await source.resolve('https://www.nhaccuatui.com/song/x5DG3gBpOCYu')
+    assert.equal(result.type, 'track')
+    assert.equal(result.tracks[0].nctKey, 'x5DG3gBpOCYu')
+    assert.match(calls[0].url, /\/api\/v1\/song\/detail\/x5DG3gBpOCYu$/)
+  })
+
+  // The older dotted `.html` shape still resolves; links to it are everywhere.
+  await withNct({ code: 0, data: nctSong() }, async () => {
+    const legacy = await source.resolve('https://www.nhaccuatui.com/bai-hat/khong-mon.x5DG3gBpOCYu.html')
+    assert.equal(legacy.tracks[0].nctKey, 'x5DG3gBpOCYu')
+  })
+})
+
+test('a stream is audio/mpeg and accepts the 206 a seek produces', async () => {
   const source = new NhacCuaTuiSource()
 
   const opened = await withNct(
-    {
-      download: () => ({
-        ok: true,
-        json: async () => ({ data: { stream_url: 'https://cdn/a.mp3', is_charge: 'false' } })
-      }),
-      stream: () => ({ ok: true, body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1])); c.close() } }), headers: new Map([['content-type', 'audio/mpeg']]) })
+    (url) => {
+      if (url.includes('/api/v1/song/detail/')) return nctDetail()
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0xff, 0xfb]))
+          controller.close()
+        }
+      })
+      return { __raw: { ok: true, status: 206, body: stream, headers: new Map([['content-type', 'audio/mpeg']]) } }
     },
-    () => source.stream({ id: 'nct:K', nctKey: 'K', bitrate: 128 })
+    () => source.stream({ id: 'nct:k1', nctKey: 'k1', bitrate: 128 })
   )
+
   assert.equal(opened.contentType, 'audio/mpeg')
   assert.equal(opened.mode, 'nhaccuatui')
-
-  await assert.rejects(
-    () => withNct({ download: () => ({ ok: true, json: async () => ({ error_message: 'Bài hát VIP', data: {} }) }) }, () => source.getTrackUrl({ nctKey: 'VIP' })),
-    /no stream url|VIP/
-  )
-})
-
-test('the NhacCuaTui secret unwraps to the key the API signature uses', async () => {
-  // The one part of this source that can be pinned without the network: the
-  // AES blob in the site's bundle must yield the same HMAC key every time.
-  const crypto = await import('node:crypto')
-  const blob = 'U2FsdGVkX19BWoF1uTP8o90p9KAWsXZ/VJ41PG7XYF/63qnjiMh1TLy8zAfZBMa9iqiGyPiN5iMUocpD74kAsg=='
-  const raw = Buffer.from(blob, 'base64')
-  assert.equal(raw.subarray(0, 8).toString('binary'), 'Salted__', 'an OpenSSL salted blob')
-
-  const salt = raw.subarray(8, 16)
-  const blocks = []
-  let previous = Buffer.alloc(0)
-  while (Buffer.concat(blocks).length < 48) {
-    previous = crypto.createHash('md5').update(Buffer.concat([previous, Buffer.from('nhaccuatui'), salt])).digest()
-    blocks.push(previous)
-  }
-  const material = Buffer.concat(blocks)
-  const decipher = crypto.createDecipheriv('aes-256-cbc', material.subarray(0, 32), material.subarray(32, 48))
-  const secret = Buffer.concat([decipher.update(raw.subarray(16)), decipher.final()]).toString('utf8')
-
-  assert.equal(secret, '6847f1a4fc2f4eb6ab13f9084e082ef4', 'EVP_BytesToKey(MD5) derives the documented key')
+  assert.equal(opened.bitrate, 128)
 })

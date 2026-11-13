@@ -9,6 +9,9 @@ web/out/
 
 # Runtime state: the database, its WAL files, the owner key, logs, caches.
 server/data/
+# The TTS engine writes a synthesised fallback tone when every voice provider is
+# unreachable; it is derived, not source, so it is not worth committing.
+server/media/tts/fallback-tone.mp3
 # Trained DJ models are runtime state; the engine ships none by default.
 server/models/*.bin
 *.log
