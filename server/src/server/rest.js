@@ -89,13 +89,19 @@ export function createRequestHandler({ manager, config, sources, store = null, t
    * clients send no Origin at all and are allowed; a browser must be same-site.
    */
   const sameOrigin = (req) => {
+    // Browsers say how the request was made. `same-site` covers a dev console
+    // on :3000 and a node on :2333, or a sibling subdomain; `cross-site` is
+    // exactly the case this guard exists for.
+    const fetchSite = String(req.headers['sec-fetch-site'] ?? '')
+    if (fetchSite === 'cross-site') return false
+    if (fetchSite === 'same-origin' || fetchSite === 'same-site') return true
+
     const origin = req.headers.origin
-    if (!origin) return true
+    if (!origin) return true // curl, a native client, an old browser
     try {
       const from = new URL(origin)
       const host = new URL(`http://${req.headers.host}`)
-      // Same host, any port: the dev console runs on :3000 and the node on
-      // :2333. A malicious site cannot share the node's hostname.
+      // Same host, any port, for browsers that do not send Sec-Fetch-Site.
       return from.host === host.host || from.hostname === host.hostname
     } catch {
       return false
