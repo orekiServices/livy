@@ -22,7 +22,7 @@ import RequestsPanel from '../../components/RequestsPanel.js'
 import OpsPanel from '../../components/OpsPanel.js'
 import StationAdminPanel from '../../components/StationAdminPanel.js'
 import { useRadio } from '../../components/RadioProvider.js'
-import { owner, ownerKey } from '../../lib/api.js'
+import { clearOwnerKey, owner, ownerKey } from '../../lib/api.js'
 
 const VIEWS = [
   { id: 'desk', label: 'Desk', glyph: '◉' },
@@ -109,6 +109,22 @@ export default function StudioPage() {
   const [notice, setNotice] = useState(null)
 
   useEffect(() => setAuthed(Boolean(ownerKey())), [])
+
+  // A stored secret can be stale (a key retired by a password, or a password
+  // changed in another tab). Ask whoami once rather than showing a control
+  // room where every button quietly 401s.
+  useEffect(() => {
+    if (!authed) return undefined
+    let live = true
+    owner('/whoami').catch(() => {
+      if (!live) return
+      clearOwnerKey()
+      setAuthed(false)
+    })
+    return () => {
+      live = false
+    }
+  }, [authed])
 
   // An open node (no key, no password) needs no prompt. The setup payload is
   // the only place that knows, so apply it once it arrives.
