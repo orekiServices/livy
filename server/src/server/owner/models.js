@@ -11,6 +11,8 @@ import {
   forgetModel,
   hfConfig,
   hubStatus,
+  isModelPreset,
+  modelPresets,
   modelSettings,
   models,
   pullModels,
@@ -63,11 +65,16 @@ export async function trainForStation({ req = null, res, target = null, stationI
   const owner = stationId ?? target?.id ?? body.station ?? null
   const count = Math.max(1, Math.min(8, Number(body.count) || (body.multi ? 3 : 1)))
   const fast = body.fast !== false
+  const preset = body.preset ?? modelSettings().preset ?? 'auto'
+  if (!isModelPreset(preset)) {
+    return fail(res, 400, `Unknown model preset \"${preset}\" (try: ${modelPresets().map((entry) => entry.id).join(', ')})`)
+  }
   const report = await trainModels({
     store,
     station: owner,
     count,
     fast,
+    preset,
     epochs: body.epochs ? Math.max(10, Math.min(4000, Number(body.epochs))) : 0,
     learningRate: body.learningRate ? Math.max(0.0001, Math.min(0.5, Number(body.learningRate))) : 0.01,
     gpu: body.gpu === true ? true : body.gpu === false ? false : 'auto',
@@ -99,6 +106,7 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
     if (method !== 'GET') return fail(res, 405, 'Method not allowed')
     return send(res, 200, {
       ...(await registryState({ store, cfg })),
+      presets: modelPresets(),
       settings: modelSettings(),
       auto: autoTrainer?.state?.() ?? null,
       enabled: modelSettings().enabled !== false
@@ -120,9 +128,13 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
     if (method === 'GET') return send(res, 200, modelSettings())
     if (method !== 'PATCH' && method !== 'POST') return fail(res, 405, 'Method not allowed')
     const body = await readJson(req)
+    if (body.preset !== undefined && !isModelPreset(body.preset)) {
+      return fail(res, 400, `Unknown model preset \"${body.preset}\" (try: ${modelPresets().map((entry) => entry.id).join(', ')})`)
+    }
     const settings = updateModelSettings({
       autoTrain: body.autoTrain ?? body.enabled ?? modelSettings().autoTrain,
       fast: body.fast ?? modelSettings().fast,
+      preset: body.preset ?? modelSettings().preset ?? 'auto',
       candidates: body.candidates ? Math.max(1, Math.min(8, Number(body.candidates))) : modelSettings().candidates,
       minSeams: body.minSeams ? Math.max(12, Number(body.minSeams)) : modelSettings().minSeams,
       everySeams: body.everySeams ? Math.max(10, Number(body.everySeams)) : modelSettings().everySeams,

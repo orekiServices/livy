@@ -85,7 +85,12 @@ export default function ModelsPanel({ station = null, say }) {
     run('train', async () => {
       const report = await owner('/models/train', {
         method: 'POST',
-        body: { count, fast: state?.settings?.fast !== false, station: station ?? undefined }
+        body: {
+          count,
+          fast: state?.settings?.fast !== false,
+          preset: state?.settings?.preset ?? 'auto',
+          station: station ?? undefined
+        }
       })
       say?.(
         report.trained
@@ -110,6 +115,8 @@ export default function ModelsPanel({ station = null, say }) {
   const activeRun = active ? (state.runs ?? []).find((run) => run.best === active.name) ?? state.runs?.[0] : null
   const settings = state.settings ?? {}
   const hf = state.hf ?? {}
+  const presets = state.presets ?? []
+  const preset = presets.find((entry) => entry.id === (settings.preset ?? 'auto')) ?? presets[0] ?? null
 
   return (
     <div className="stack">
@@ -160,8 +167,34 @@ export default function ModelsPanel({ station = null, say }) {
           on={settings.fast !== false}
           onChange={(value) => patchSettings({ fast: value })}
           label="Fast trains"
-          hint="Small net, warm start, a few candidates — seconds, not minutes"
+          hint="Short run, warm start — seconds, not minutes. The architecture comes from the preset."
         />
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <label htmlFor="model-preset" className="grow" style={{ fontWeight: 600 }}>
+              Architecture
+            </label>
+            <select
+              id="model-preset"
+              value={settings.preset ?? 'auto'}
+              disabled={Boolean(busy) || presets.length === 0}
+              onChange={(event) => patchSettings({ preset: event.target.value })}
+              style={{ width: 'auto', minWidth: 150 }}
+            >
+              {presets.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="dim">
+            {preset?.description ?? 'Choose the network the next training run builds.'}
+            {preset?.shapes
+              ? ` · ${preset.shapes.map((shape) => shape.join('→')).join(' / ')} · ${preset.candidates} candidate${preset.candidates === 1 ? '' : 's'}`
+              : ''}
+          </div>
+        </div>
         {station ? (
           <Switch
             on={stationModel}

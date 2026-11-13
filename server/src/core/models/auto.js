@@ -47,7 +47,7 @@ export class AutoTrainer {
       })
     }, interval)
     this.timer.unref?.()
-    this.log.info(`auto-train on · every ${Math.round(interval / 1000)}s · ${modelSettings().everySeams} new seams (${modelSettings().candidates} candidate${modelSettings().candidates === 1 ? '' : 's'})`)
+    this.log.info(`auto-train on · every ${Math.round(interval / 1000)}s · ${modelSettings().everySeams} new seams (${modelSettings().preset ?? 'auto'} · ${modelSettings().candidates} candidate${modelSettings().candidates === 1 ? '' : 's'})`)
     return this.state()
   }
 
@@ -144,6 +144,7 @@ export class AutoTrainer {
       minSeams: settings.minSeams,
       candidates: settings.candidates,
       fast: settings.fast,
+      preset: settings.preset ?? 'auto',
       seams: seamCount({ store: this.store }),
       lastSeams: this.lastSeams,
       lastRunAt: this.lastRunAt,

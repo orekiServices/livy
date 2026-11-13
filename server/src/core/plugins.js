@@ -9,7 +9,7 @@
  *     now-playing/            ← folder plugin
  *       plugin.json           ← { "name": …, "version": …, "main": "index.js" }
  *       index.js
- *     backspin.js             ← single-file plugin
+ *     my-effect.js            ← single-file plugin
  *
  * A plugin module exports `setup` (or a default function):
  *

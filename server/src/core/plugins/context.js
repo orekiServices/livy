@@ -166,7 +166,7 @@ export function buildContext(host, record) {
         return provider
       },
 
-      /** Add an automix transition: `registerEffect('backspin', ctx => …)`. */
+      /** Add an automix transition: `registerEffect('my-effect', ctx => …)`. */
       registerEffect: (name, renderer) => {
         registerEffect(name, renderer)
         track('effects', name)

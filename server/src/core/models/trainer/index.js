@@ -117,10 +117,12 @@ export async function trainModels({
   shape = null,
   warm = false,
   station = null,
-  profile = null
+  profile = null,
+  preset = null
 } = {}) {
   const started = Date.now()
-  const budget = profile ?? trainingProfile()
+  // A per-run `preset` wins over the saved setting, which wins over `auto`.
+  const budget = profile ?? trainingProfile({ preset: preset ?? modelSettings().preset ?? 'auto' })
   // Bound the read as well as the set: a phone should not deserialize 20,000
   // rows only to throw most of them away.
   const records = readSeams({ file, store, limit: budget.maxPairs })
@@ -227,6 +229,8 @@ export async function trainModels({
     trained: true,
     mode: candidatesShapes.length > 1 ? 'multi' : 'single',
     profile: budget.id,
+    preset: budget.preset ?? 'auto',
+    host: budget.host ?? budget.id,
     fast: fastMode,
     seams: records.length,
     labelled: pairs.length,

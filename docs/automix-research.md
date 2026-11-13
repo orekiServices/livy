@@ -126,6 +126,10 @@ activated model is picked up at the next seam.
 - **Android budget.** A phone trains one 12-unit candidate for 26 epochs on
   the 1,200 most recent seams, yields every 4 epochs, and skips the WebGPU
   probe. The seam still decides the same way; only the learning budget changed.
+- **Named architectures.** `models.preset` chooses `auto`, `fast`, `balanced`,
+  `wide` or `deep`. The feature/action columns are unchanged, so candidates
+  from different presets are directly comparable and interchangeable at a
+  seam; a preset never widens a phone's batch, data cap, or GPU probe.
 
 ---
 

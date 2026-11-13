@@ -7,6 +7,7 @@
  */
 import { paths } from '../../config.js'
 import { hostInfo } from '../../util/platform.js'
+import { isModelPreset } from './presets.js'
 
 export const DEFAULT_MODEL_SETTINGS = {
   enabled: true,
@@ -21,6 +22,9 @@ export const DEFAULT_MODEL_SETTINGS = {
   // Fast is the default: a few candidates, a small net, a short run, warm
   // start from the incumbent. A "big" run is still available per request.
   fast: true,
+  // Which architecture to train. `auto` follows the host: phone-sized on
+  // Termux, two-layer server nets elsewhere. See models/presets.js.
+  preset: 'auto',
   candidates: 2,
   epochs: 0, // 0 = let the trainer pick per mode
   activate: true,
@@ -88,6 +92,11 @@ export function modelSettings() {
 /** Persist a patch (never the token) and return the new settings. */
 export function updateModelSettings(patch = {}) {
   const clean = { ...patch }
+  if (clean.preset !== undefined && !isModelPreset(clean.preset)) {
+    const error = new Error(`Unknown model preset \"${clean.preset}\" (try: auto, fast, balanced, wide, deep)`)
+    error.status = 400
+    throw error
+  }
   if (clean.hf) {
     const { token, ...rest } = clean.hf
     clean.hf = { ...rest, private: true }

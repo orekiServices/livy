@@ -176,17 +176,46 @@ Defaults are what a radio node actually wants:
 | Setting | Default | Why |
 |---|---|---|
 | `models.autoTrain` | **on** | a new node starts learning from its first seams |
-| `models.fast` | **on** | small nets, CPU, tens of milliseconds |
+| `models.fast` | **on** | short runs, CPU, tens of milliseconds |
+| `models.preset` | `auto` | which architecture to train; `auto` follows the device |
 | `models.candidates` | **2** | multi-train: keep the loser, activate the winner |
 | `models.pollMs` | `60_000` | check once a minute |
 | `models.everySeams` | `60` | train once 60 new seams exist |
 | `models.hf.private` | **true** | listener behaviour never lands in a public repo |
 
+### Model presets
+
+The transition set and the model's feature/action columns stay fixed; a preset
+only chooses the **architecture and training budget**. Every preset trains the
+same policy, so a `wide` model and a `fast` model are interchangeable at a seam
+— the registry activates whichever scored better on the same held-out split.
+
+| Preset | Hidden layers | Epochs (fast) | Best for |
+|---|---|---|---|
+| `auto` | device profile | 26–120 | the default; follows the host |
+| `fast` | 12 · 16→12 · 20→14 | 40 | a busy node, a phone, a quick experiment |
+| `balanced` | 24→16 · 28→18 · 24→20 | 60 | the server sweet spot |
+| `wide` | 48→24 · 64→32 · 48→32 | 70 | broad taste, still cheap per seam |
+| `deep` | 32→24→16 · 40→28→16 · 32→24→24→12 | 90 | a node with plenty of seams and CPU |
+
+`auto` is still the phone default: a Termux node keeps its one-candidate,
+1,200-seam budget. A named preset may widen the net on a phone, but never the
+batch size, the data cap, or the GPU probe. Choose a preset in the console
+(**Models → Architecture**), with `PATCH /api/v1/owner/models/settings`, or for
+a single run:
+
+```bash
+curl -X POST localhost:2333/api/v1/owner/models/train \
+  -H 'x-owner-key: …' -H 'content-type: application/json' \
+  -d '{"preset":"wide","count":3}'
+```
+
 Training runs **while stations are on air**. Seams are written to MetroDB as
 they happen (`dj_seams`); the trainer reads them in a transaction, yields
 between epochs, writes every candidate to `data/models/`, and activates the
 winner only if it beats the incumbent on a chronological held-out split. The
-change is picked up at the next seam — no restart, no dropped frame.
+change is picked up at the next seam — no restart, no dropped frame. The run
+report says which preset and host produced it (`profile`, `preset`, `host`).
 
 ```bash
 bun run start                                   # training is already on
@@ -328,10 +357,10 @@ bun run test                # from the repo root
 bun run test:node           # node --test, for a Node-only host
 ```
 
-291 tests. Sources are stubbed at the transport rather than at the module, so no
+296 tests. Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
-air, the Android training budget, `node:sqlite`, and private Hugging Face
+air, the Android training budget, model presets, `node:sqlite`, and private Hugging Face
 push/pull with a fake `fetch`. Source tests cover the NhacCuaTui
 detail/playlist/retry paths, and the API test drives a real listener pick onto
 a live station.

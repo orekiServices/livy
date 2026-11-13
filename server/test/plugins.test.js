@@ -228,10 +228,9 @@ test('the plugins shipped with Livy load in a real node and serve their routes',
   try {
     const byId = Object.fromEntries(instance.plugins.list().map((p) => [p.id, p]))
     assert.equal(byId['now-playing'].status, 'ready')
-    assert.equal(byId.backspin.status, 'ready')
     assert.equal(byId['hourly-ident'].status, 'disabled', 'the on-air ident is opt-in')
     assert.equal(byId['live-relay'].status, 'disabled', 'a plugin that can grab the transmitter is opt-in too')
-    assert.ok(EFFECTS.includes('backspin'), 'the plugin transition is selectable')
+    assert.equal(byId.backspin, undefined, 'the demo backspin transition is not shipped')
 
     const nowPlaying = await api(base, '/api/v1/x/now-playing/')
     assert.equal(nowPlaying._status, 200)

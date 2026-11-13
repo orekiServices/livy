@@ -21,6 +21,7 @@ export {
 export { downloadFile, ensureRepo, hfConfig, hfReady, hubStatus, listRemote, uploadFile } from './storage/hf.js'
 export { activateModel, forgetModel, modelInventory, pullModels, pushModels, recordModel, registryState } from './registry.js'
 export { DEFAULT_MODEL_SETTINGS, configureModels, modelSettings, updateModelSettings } from './settings.js'
+export { MODEL_PRESETS, MODEL_PRESET_IDS, isModelPreset, modelPresets } from './presets.js'
 export { AutoTrainer } from './auto.js'
 export {
   DEFAULT_SHAPE,
