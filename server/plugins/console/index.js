@@ -2,7 +2,7 @@
  * Livy console — the web app, as a plugin.
  *
  * The UI used to be baked into the node. It is not any more: this plugin owns
- * the static export (`public/`, built by `npm run build:web`) and mounts it on
+ * the static export (`public/`, built by `bun run build:web`) and mounts it on
  * the node's own port. Switch the plugin off and the node is a pure broadcast
  * API with no HTML attached; switch it on and the console is back, same
  * origin, same process, no second server and nothing to proxy.
@@ -79,7 +79,7 @@ function placeholder({ version, port, stations }) {
   <p>Livy ${version} is broadcasting on port ${port} with ${stations} station${stations === 1 ? '' : 's'}.
      The web console ships as a plugin and its static build is missing, so there is nothing to show here yet.</p>
   <pre>cd server
-npm run build:web</pre>
+bun run build:web</pre>
   <p>This page refreshes every five seconds and the node picks the build up on its own — no restart.</p>
   <ul>
     <li>The API is unaffected: <a href="/api/v1/info">/api/v1/info</a>, <a href="/health">/health</a></li>
@@ -125,7 +125,7 @@ export default function setup(ctx) {
   if (built()) {
     ctx.log.info(`console mounted at ${handle.mount}`, { files: build.files, kb: build.kb })
   } else {
-    ctx.log.warn(`no console build yet — serving the "run npm run build:web" page at ${handle.mount}`)
+    ctx.log.warn(`no console build yet — serving the "run bun run build:web" page at ${handle.mount}`)
   }
 
   // Watch for the build appearing (or being deleted) and follow it live.
@@ -143,9 +143,9 @@ export default function setup(ctx) {
       mount: handle.mount,
       built: handle.serving(),
       build,
-      pages: ['/', '/station/', '/owner/'],
+      pages: ['/', '/listen/', '/station/', '/owner/'],
       builtWith: 'next export',
-      ...(handle.serving() ? {} : { hint: 'run `npm run build:web` in server/ — the node picks it up within a few seconds' }),
+      ...(handle.serving() ? {} : { hint: 'run `bun run build:web` in server/ — the node picks it up within a few seconds' }),
       note: 'switch this plugin off to run the node headless (API + MP3 only)'
     })
   )

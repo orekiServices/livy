@@ -450,3 +450,83 @@ test('every filter in the schema can be built and run without throwing', () => {
   assert.ok(Number.isFinite(samplePeak([L, R])), 'the output is finite')
   assert.ok(samplePeak([L, R]) < 50, 'and not a runaway')
 })
+
+/* ------------------------------------------------------------------ *
+ * DSP quality improvements (and the native MetroFX path)
+ * ------------------------------------------------------------------ */
+
+test('the moving delay head interpolates with Catmull-Rom, not a staircase', async () => {
+  const { FractionalDelay } = await import('../src/core/filters/dsp/delay.js')
+  const size = 256
+  const delay = new FractionalDelay(size)
+  const frequency = 5000
+  const omega = (2 * Math.PI * frequency) / SR
+  const pushed = []
+  for (let i = 0; i < 200; i += 1) {
+    const value = Math.sin(omega * i)
+    pushed.push(value)
+    delay.push(value)
+  }
+
+  let cubic = 0
+  let linear = 0
+  for (const fraction of [0.25, 0.5, 0.75]) {
+    const whole = 8
+    const ideal = Math.sin(omega * (pushed.length - whole - fraction))
+    const value = delay.read(whole + fraction)
+    // The linear interpolator this replaced, computed from the same samples.
+    const a = pushed[pushed.length - whole - 1]
+    const b = pushed[pushed.length - whole]
+    const reference = b + (a - b) * fraction
+    cubic += (value - ideal) ** 2
+    linear += (reference - ideal) ** 2
+  }
+  assert.ok(Math.sqrt(cubic / 3) < Math.sqrt(linear / 3) * 0.6, 'cubic beats linear where a moving head spends most of its time')
+  assert.ok(Math.sqrt(cubic / 3) < 0.01, 'and stays close to the ideal delay')
+})
+
+test('compressor gain is input drive, not a dead knob', () => {
+  const make = (amplitude) => {
+    const n = Math.round(SR * 0.5)
+    const out = new Float32Array(n)
+    for (let i = 0; i < n; i += 1) out[i] = Math.sin((2 * Math.PI * 200 * i) / SR) * amplitude
+    return out
+  }
+  const run = (gain) => {
+    const chain = new FilterChain(
+      { compressor: { threshold: 0.5, ratio: 8, attack: 0, release: 0.1, gain, makeupGain: 1 } },
+      { sampleRate: SR }
+    )
+    const left = make(0.4)
+    const right = Float32Array.from(left)
+    chain.process(left, right, left.length)
+    return samplePeak([left])
+  }
+  const unity = run(1)
+  const driven = run(2)
+  assert.ok(driven > unity, `driving the input pushes it into the knee (${unity} → ${driven})`)
+  assert.ok(driven <= 1, 'and the output is still bounded')
+})
+
+test('oversampled distortion puts less energy where aliases land', () => {
+  // A 6 kHz tone shaped hard generates a 5th harmonic at 30 kHz, which folds
+  // to 14.1 kHz at a 44.1 kHz stream rate. The oversampled path filters it
+  // before decimation; a naive shaper cannot.
+  const input = tone(6000, 0.25, 0.6).left
+  const filter = makeFilter('distortion', { tanScale: 4 }, { sampleRate: SR })
+  const shaped = Float32Array.from(input)
+  const shapedR = Float32Array.from(input)
+  filter.process(shaped, shapedR, shaped.length)
+
+  const naive = Float32Array.from(input)
+  for (let i = 0; i < naive.length; i += 1) {
+    naive[i] = Math.tanh(naive[i] * 4) / Math.tanh(1.1)
+  }
+
+  const alias = 44_100 - 30_000
+  const oversampledAlias = energyAt(shaped, alias)
+  const naiveAlias = energyAt(naive, alias)
+  assert.ok(naiveAlias > 0.001, `the naive shaper aliases (${naiveAlias})`)
+  assert.ok(oversampledAlias < naiveAlias * 0.7, `oversampling suppresses the fold (${oversampledAlias} vs ${naiveAlias})`)
+  assert.ok(samplePeak([shaped]) <= 1, 'still bounded')
+})

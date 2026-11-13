@@ -1,5 +1,6 @@
 import { BaseFilter } from './BaseFilter.js'
 import { clamp, SAMPLE_RATE } from './constants.js'
+import { fx } from '../../util/fx.js'
 
 /**
  * Compressor — a soft-knee downward compressor with makeup gain.
@@ -18,6 +19,13 @@ import { clamp, SAMPLE_RATE } from './constants.js'
  * A soft knee of 6 dB is fixed rather than exposed: it is the difference
  * between a compressor and a limiter, and a station that wants a limiter sets
  * the ratio high and the attack fast.
+ *
+ * `gain` is input drive, applied *before* the detector, and `makeupGain` is
+ * output gain. The distinction matters: driving the input makes the compressor
+ * work harder (and is how a quiet source is pushed into the knee), while
+ * makeup only restores what the detector took away. The old implementation
+ * computed both and then ignored `gain`, so a payload with `gain: 2` sounded
+ * exactly like `gain: 1`.
  */
 const KNEE_DB = 6
 
@@ -44,11 +52,13 @@ export class CompressorFilter extends BaseFilter {
   #gain
   #envelope = 0
   #gainPerSample = 1
+  #native = null
   #sampleRate
 
   constructor(config = {}, { sampleRate = SAMPLE_RATE } = {}) {
     super()
     this.#sampleRate = sampleRate
+    this.#native = fx?.Compressor ? new fx.Compressor() : null
     this.update(config)
   }
 
@@ -69,6 +79,7 @@ export class CompressorFilter extends BaseFilter {
     this.#releaseCoefficient = Math.exp(-1 / (releaseSeconds * this.#sampleRate))
     // One sample at a time, so the gain ramp is smooth across block edges.
     this.#gainPerSample = 1
+    this.#native?.setParams(this.#threshold, this.#ratio, attackSeconds, releaseSeconds, this.#gain, this.#makeup, this.#sampleRate)
     return this
   }
 
@@ -91,12 +102,19 @@ export class CompressorFilter extends BaseFilter {
 
   process(left, right, length) {
     if (!this.active()) return
+    if (this.#native) {
+      this.#native.process(left, right, length)
+      return
+    }
     const attack = this.#attackCoefficient
     const release = this.#releaseCoefficient
-    const makeup = this.#makeup * (this.#gain === 1 ? 1 : 1)
+    const drive = this.#gain
+    const makeup = this.#makeup
 
     for (let i = 0; i < length; i += 1) {
-      const peak = Math.max(Math.abs(left[i]), Math.abs(right[i]))
+      const drivenLeft = left[i] * drive
+      const drivenRight = right[i] * drive
+      const peak = Math.max(Math.abs(drivenLeft), Math.abs(drivenRight))
       // Peak follower: fast up, slow down, never negative.
       const coefficient = peak > this.#envelope ? attack : release
       this.#envelope = peak + coefficient * (this.#envelope - peak)
@@ -111,14 +129,15 @@ export class CompressorFilter extends BaseFilter {
       this.#gainPerSample = smoothed
 
       const gain = smoothed * makeup
-      left[i] = clamp(left[i] * gain, -1, 1)
-      right[i] = clamp(right[i] * gain, -1, 1)
+      left[i] = clamp(drivenLeft * gain, -1, 1)
+      right[i] = clamp(drivenRight * gain, -1, 1)
     }
   }
 
   reset() {
     this.#envelope = 0
     this.#gainPerSample = 1
+    this.#native?.reset()
   }
 }
 

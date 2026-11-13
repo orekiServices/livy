@@ -21,6 +21,10 @@ import createLogger, { configureLogging, banner } from './util/logger.js'
 import Memory from './core/memory.js'
 import SmartQueue from './core/smartQueue.js'
 import { engineInfo } from './util/metro.js'
+import { hostInfo } from './util/platform.js'
+import { fxEngine, fxInfo } from './util/fx.js'
+import { AutoTrainer, configureModels } from './core/models/index.js'
+import { prepareOwnerAuth } from './server/owner/password.js'
 
 const log = createLogger('livy')
 const VERSION = createRequire(import.meta.url)('../package.json').version
@@ -31,8 +35,15 @@ export async function createRadioServer(overrides = {}) {
   const config = deepMerge(loadConfig(), overrides)
   configureLogging(config.logging)
 
-  // One key unlocks the owner console. Generated once on a fresh install.
+  // One credential unlocks the owner console. A password may come from the
+  // environment or from a previous first-run setup; otherwise a key is
+  // generated once and printed. Never both by accident.
+  const auth = prepareOwnerAuth(config)
+  if (auth.problem) log.warn(`the owner credential from the environment was ignored: ${auth.problem}`)
+  if (auth.fromEnv) log.info('owner credential loaded from the environment')
+  if (auth.configured && !auth.persisted) log.warn('the owner credential is valid for this process only (data folder is not writable)')
   const owner = ensureOwnerKey(config)
+  if (!owner.key && !auth.configured) log.warn('no owner credential configured — the console is open to anyone who can reach it')
   if (owner.created) log.info(`owner key generated: ${owner.key}  (saved next to the database — keep it)`)
 
   // Persistence: SQLite, migrated to the current schema on open.
@@ -56,6 +67,10 @@ export async function createRadioServer(overrides = {}) {
           return null
         })
 
+  // The learned automix policy: settings are read from config and the store,
+  // then the background trainer is created once there is a manager to watch.
+  configureModels({ config, store })
+
   // Speech: station idents, owner announcements, the DJ.
   const tts =
     config.tts?.enabled === false
@@ -70,6 +85,10 @@ export async function createRadioServer(overrides = {}) {
   const smartQueue = new SmartQueue({ sources, memory, store, options: config.smartQueue ?? {} })
 
   const manager = new StationManager({ defaults: config.stationDefaults, sources, store, tts, memory, smartQueue })
+
+  // Trains while stations play: a cheap poll for new seams, a fast multi-run
+  // in the event-loop gaps, and the winner swapped in at the next seam.
+  const autoTrainer = new AutoTrainer({ manager, store, config })
 
   // Plugins extend the node before any station goes on air, so a plugin can
   // contribute a source or a transition that a station is configured to use.
@@ -119,7 +138,7 @@ export async function createRadioServer(overrides = {}) {
     }
   }
 
-  const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION })
+  const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, autoTrainer, version: VERSION })
   const server = http.createServer(handler)
   // A listener holds its socket open for as long as the browser or the player
   // does — that is the point of an internet radio. On Bun, though, HTTP/1.1
@@ -149,7 +168,11 @@ export async function createRadioServer(overrides = {}) {
     store: store ? `${store.driver} · schema v${store.schemaVersion}` : 'disabled',
     plugins: plugins ? `${plugins.list().filter((p) => p.status === 'ready').length}/${plugins.list().length} active` : 'off',
     // Which relay engine is in play: native libmetro, or the JS fallback.
-    engine: engineInfo().describe
+    engine: engineInfo().describe,
+    // MetroFX native filter kernels, or the JavaScript reference path.
+    fx: fxEngine === 'native' ? fxInfo().describe : 'javascript (MetroFX not built for this host)',
+    // `android` on a Termux node: smaller models, node:sqlite, no GPU probe.
+    device: hostInfo().mobile ? `${hostInfo().profile}${hostInfo().termux ? ' (Termux)' : ''} · ${hostInfo().cpus} cores · ${hostInfo().memoryMb} MB` : null
   })
   if (manager.size === 0 && !platform) log.info(`first run: open http://${config.server.host}:${port}/ and create your first station`)
 
@@ -166,11 +189,13 @@ export async function createRadioServer(overrides = {}) {
         .catch((error) => log.warn(`station ${station.id} did not start: ${error.message}`, { station: station.id }))
     )
   Promise.allSettled(boot).then(() => log.info('all stations on air'))
+  if (!platform) autoTrainer.start()
 
   const close = async () => {
     // Write everything down before the lights go out — this is what makes
     // the next boot pick up mid-song.
     for (const station of manager.stations.values()) memory.save(station, { force: true })
+    autoTrainer.stop()
     gateway.close()
     await plugins?.close()
     manager.stopAll()
@@ -195,7 +220,7 @@ export async function createRadioServer(overrides = {}) {
     })
   }
 
-  return { config, manager, sources, store, tts, plugins, memory, smartQueue, server, gateway, close, port, version: VERSION }
+  return { config, manager, sources, store, tts, plugins, memory, smartQueue, autoTrainer, server, gateway, close, port, version: VERSION }
 }
 
 /**
@@ -229,6 +254,8 @@ export function createApp(overrides = {}) {
   appPromise ??= (async () => {
     const config = deepMerge(loadConfig(), overrides)
     configureLogging(config.logging)
+    const auth = prepareOwnerAuth(config)
+    if (auth.problem) log.warn(`the owner credential from the environment was ignored: ${auth.problem}`)
     const owner = ensureOwnerKey(config)
 
     const store =
@@ -250,6 +277,10 @@ export function createApp(overrides = {}) {
     const memory = new Memory({ store, ...(config.memory ?? {}) })
     const smartQueue = new SmartQueue({ sources, memory, store, options: config.smartQueue ?? {} })
     const manager = new StationManager({ defaults: config.stationDefaults, sources, store, tts, memory, smartQueue })
+
+  // Trains while stations play: a cheap poll for new seams, a fast multi-run
+  // in the event-loop gaps, and the winner swapped in at the next seam.
+  const autoTrainer = new AutoTrainer({ manager, store, config })
 
     const plugins =
       config.plugins?.enabled === false
@@ -273,7 +304,7 @@ export function createApp(overrides = {}) {
       }
     }
 
-    const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION })
+    const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, autoTrainer, version: VERSION })
 
     log.info(`serverless app ready · ${manager.size} station(s) · store ${store ? store.driver : 'off'} · writable ${paths.writable}`)
     if (owner.created) log.warn('owner key generated for this instance only — set OWNER_KEY in the environment')

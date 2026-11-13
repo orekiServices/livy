@@ -105,10 +105,10 @@ export async function socketUrl() {
   return `${origin.replace(/^http/, 'ws')}/ws`
 }
 
-/** Owner-key helpers — the key lives in this tab only, never in a URL. */
+/** Owner credential helpers — the secret lives in this tab only, never in a URL. */
 const KEY_STORE = 'livy-owner-key'
 const KEY_STORE_LEGACY = 'nodecast-owner-key'
-// A key entered in the console before the rename is still the right key, so
+// A key (or password) entered before the rename is still the right secret, so
 // read it through and migrate it forward rather than asking for it again.
 export const ownerKey = () => {
   if (typeof window === 'undefined') return null

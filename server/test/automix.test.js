@@ -14,6 +14,7 @@ import {
   EFFECTS,
   EFFECT_TRAITS,
   chooseEffect,
+  smartCrossfadeMs,
   smoothEdges,
   DEFAULT_AUTOMIX,
   registerEffect,
@@ -343,4 +344,55 @@ test('every seam is joinable: no click where the render meets the programme', ()
   // The unsmoothed version, for comparison: this is the click we avoid.
   const raw = new Float32Array(16).fill(0.95)
   assert.ok(Math.abs(raw[0] - 0) > 0.5, 'an unramped block starts with a full-scale step')
+})
+
+/* ------------------------------------------------------------------ *
+ * Seam decisions added for the Android release
+ * ------------------------------------------------------------------ */
+
+test('a vocal clash shortens the blend, and says why', () => {
+  const base = { matched: true, tempoDelta: 1, correlation: 0.2, energy: 0.4, bpm: 120 }
+  const clean = smartCrossfadeMs(base, { crossfadeMs: 6000 })
+  const oneVocal = smartCrossfadeMs({ ...base, vocal: { outgoing: true, incoming: false } }, { crossfadeMs: 6000 })
+  const clash = smartCrossfadeMs({ ...base, vocal: { outgoing: true, incoming: true } }, { crossfadeMs: 6000 })
+
+  assert.ok(clash.ms < oneVocal.ms, `clash ${clash.ms} < one vocal ${oneVocal.ms}`)
+  assert.ok(oneVocal.ms < clean.ms, `one vocal ${oneVocal.ms} < instrumental ${clean.ms}`)
+  assert.match(clash.why, /vocals would clash/)
+  assert.match(oneVocal.why, /vocal at the seam/)
+  // A fixed crossfade ignores the probe: the owner asked for exactly that.
+  assert.equal(smartCrossfadeMs({ ...base, vocal: { outgoing: true, incoming: true } }, { smart: false, crossfadeMs: 6000 }).ms, 6000)
+})
+
+test('roll and drop are refused when the tempos do not actually meet', () => {
+  const seam = { beat: true, matched: false, tempoDelta: 18, fadeMs: 8000, energy: 0.9, correlation: 0 }
+  for (let run = 0; run < 40; run += 1) {
+    const picked = chooseEffect(seam, ['roll', 'drop'])
+    assert.notEqual(picked, 'roll', `run ${run} rolled on a 18 BPM gap`)
+    assert.notEqual(picked, 'drop', `run ${run} dropped on a 18 BPM gap`)
+  }
+  // A *folded* match with a wide raw gap is fine: the grid already met.
+  for (let run = 0; run < 20; run += 1) {
+    assert.equal(chooseEffect({ ...seam, matched: true, tempoDelta: 6, fadeMs: 3200 }, ['bass-swap']), 'bass-swap')
+  }
+})
+
+test('two vocals prefer a masking transition over a bass-swap', () => {
+  const seam = {
+    beat: true,
+    matched: true,
+    tempoDelta: 1,
+    fadeMs: 6000,
+    energy: 0.5,
+    correlation: 0.3,
+    vocalOut: 1,
+    vocalIn: 1
+  }
+  let filter = 0
+  for (let run = 0; run < 60; run += 1) {
+    const picked = chooseEffect(seam, ['bass-swap', 'filter'])
+    assert.ok(picked === 'filter' || picked === 'bass-swap')
+    if (picked === 'filter') filter += 1
+  }
+  assert.ok(filter > 45, `filter masks the clash (${filter}/60)`)
 })

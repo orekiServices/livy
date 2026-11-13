@@ -50,12 +50,20 @@ export class DelayLine {
 }
 
 /**
- * Delay line with linear interpolation.
+ * Delay line with Catmull-Rom interpolation.
  *
  * A fractional read is the difference between a vibrato and a ring modulator:
  * at 5 Hz and 3 ms of swing the read head lands between samples on almost
  * every frame, and `Math.floor` would hold it still until the next whole
  * sample, so the pitch would jump in 44.1 kHz steps instead of gliding.
+ *
+ * The first implementation interpolated linearly, which is fine for a slow
+ * chorus but audibly dulls the top end once the delay is modulated: a linear
+ * interpolator is a one-zero low-pass, so the moving read head acts like a
+ * sweeping filter and the vibrato loses its shimmer. Catmull-Rom uses the two
+ * neighbours on each side, costs three extra multiplies, and keeps the
+ * modulation transparent. State and delay convention are unchanged, so this
+ * is a drop-in replacement for every filter that reads a moving head.
  */
 export class FractionalDelay {
   constructor(maxSamples) {
@@ -71,19 +79,31 @@ export class FractionalDelay {
   }
 
   /**
-   * Read `delay` samples back, interpolating between the two neighbours.
+   * Read `delay` samples back, interpolating between the four neighbours.
    *
    * Same convention as `DelayLine.read`: 1 is the last pushed sample. A
-   * fractional delay below 1 is clamped rather than extrapolated — the
-   * alternative is reading a sample that has not been written.
+   * fractional delay below 2 is clamped rather than extrapolated — the
+   * alternative is reading a sample that has not been written, and the two
+   * filters that ask for delay 1 do not move their read head.
    */
   read(delay) {
-    const clamped = Math.max(1, Math.min(this.size - 3, delay))
+    const size = this.size
+    const clamped = Math.max(2, Math.min(size - 4, delay))
     const whole = Math.floor(clamped)
-    const fraction = clamped - whole
-    const a = this.buffer[(this.write - whole + this.size * 2) % this.size]
-    const b = this.buffer[(this.write - whole - 1 + this.size * 2) % this.size]
-    return a + (b - a) * fraction
+    const t = clamped - whole
+    const at = (offset) => this.buffer[(this.write - whole + offset + size * 2) % size]
+    // p1 and p2 straddle the fractional position; p0/p3 are the outer points.
+    const p0 = at(1)
+    const p1 = at(0)
+    const p2 = at(-1)
+    const p3 = at(-2)
+    // Catmull-Rom, expanded: y(t) = 0.5·(2p1 + (−p0+p2)t
+    //   + (2p0−5p1+4p2−p3)t² + (−p0+3p1−3p2+p3)t³)
+    const c0 = p1
+    const c1 = 0.5 * (p2 - p0)
+    const c2 = p0 - 2.5 * p1 + 2 * p2 - 0.5 * p3
+    const c3 = 0.5 * (p3 - p0) + 1.5 * (p1 - p2)
+    return ((c3 * t + c2) * t + c1) * t + c0
   }
 
   clear() {

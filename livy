@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# One command: install, build the console, start the node.
+set -euo pipefail
+cd "$(dirname "$0")"
+# Termux has no glibc Bun build; the Node path is the supported one there.
+if [ -n "${TERMUX_VERSION:-}" ] || [ "$(uname -o 2>/dev/null || true)" = "Android" ]; then
+  exec "$PWD/livy-termux" "$@"
+fi
+if ! command -v bun >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1; then
+    exec "$PWD/livy-termux" "$@"
+  fi
+  echo "bun is required — curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+(cd server && bun install)
+bun run build:web
+exec bun run start

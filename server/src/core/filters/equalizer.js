@@ -1,5 +1,6 @@
 import { AnimatableFilter } from './AnimatableFilter.js'
 import { Biquad } from './dsp/biquad.js'
+import { fx } from '../../util/fx.js'
 import { clamp, EQ_BANDS, EQ_GAIN, SAMPLE_RATE } from './constants.js'
 
 /**
@@ -34,6 +35,7 @@ export class EqualizerFilter extends AnimatableFilter {
 
   #gains = new Float32Array(EQ_BANDS.length).fill(EQ_GAIN.neutral)
   #bands = []
+  #native = null
   #sampleRate
   #single
   #key
@@ -53,6 +55,9 @@ export class EqualizerFilter extends AnimatableFilter {
       left: new Biquad(),
       right: new Biquad()
     }))
+    // One native section per band: it holds both channels, so the block loop
+    // crosses FFI once per band instead of once per channel.
+    this.#native = fx?.Biquad ? EQ_BANDS.map(() => new fx.Biquad()) : null
     this.update(config)
   }
 
@@ -81,10 +86,12 @@ export class EqualizerFilter extends AnimatableFilter {
       if (this.#gains[index] === EQ_GAIN.neutral) {
         band.left.reset()
         band.right.reset()
+        this.#native?.[index]?.reset()
         continue
       }
       band.left.peaking(band.frequency, gainToDb(this.#gains[index]), this.#sampleRate)
       band.right.copyCoefficients(band.left)
+      this.#native?.[index]?.setPeaking(band.frequency, gainToDb(this.#gains[index]), this.#sampleRate, 1.41)
     }
     return this
   }
@@ -99,6 +106,11 @@ export class EqualizerFilter extends AnimatableFilter {
     if (!this.active()) return
     for (const band of this.#bands) {
       if (Math.abs(this.#gains[band.channel] - EQ_GAIN.neutral) < 1e-3) continue
+      const native = this.#native?.[band.channel]
+      if (native) {
+        native.process(left, right, length)
+        continue
+      }
       for (let i = 0; i < length; i += 1) {
         left[i] = band.left.run(left[i])
         right[i] = band.right.run(right[i])
@@ -111,6 +123,7 @@ export class EqualizerFilter extends AnimatableFilter {
       band.left.reset()
       band.right.reset()
     }
+    for (const native of this.#native ?? []) native.reset()
   }
 }
 

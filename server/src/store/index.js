@@ -19,6 +19,8 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import createLogger from '../util/logger.js'
 import { migrate, LATEST_VERSION } from './migrations.js'
+import { adoptLegacyFile, disabled, openDatabase, openMemoryDatabase } from './driver.js'
+import { modelRepo } from './models.js'
 
 const log = createLogger('store')
 
@@ -29,203 +31,6 @@ const parseJson = (value, fallback = {}) => {
     return JSON.parse(value)
   } catch {
     return fallback
-  }
-}
-
-/**
- * A switch is on when it is set to `1`, under either this name or the one the
- * node used before the rename. Upgrades must not silently change behaviour
- * because an environment file was written for Nodecast.
- */
-const disabled = (...names) => names.some((name) => process.env[name] === '1')
-
-/* ------------------------------------------------------------------ *
- * Driver
- * ------------------------------------------------------------------ */
-
-/**
- * Thin uniform wrapper over whichever SQLite binding is available.
- *
- * Three, in order of preference:
- *
- *   1. **MetroDB** — our own Rust addon (`native/metrodb/`). SQLite is compiled
- *      into it, so there is no node-gyp, no Python and no compiler needed
- *      at install time, which is exactly the step that fails on a Pi or in
- *      a slim container.
- *   2. **bun:sqlite** — built into Bun, when that is what is running.
- *   3. **better-sqlite3** — the classic, if it happens to be installed.
- *
- * All three are synchronous and behave identically for what the store does,
- * so nothing above this function knows which one answered.
- */
-async function openDatabase(file) {
-  const pragmas = (exec) => {
-    exec('PRAGMA journal_mode = WAL;')
-    exec('PRAGMA synchronous = NORMAL;')
-    exec('PRAGMA foreign_keys = ON;')
-    exec('PRAGMA busy_timeout = 4000;')
-  }
-
-  // 1. MetroDB, unless it was switched off or has no binary for this host.
-  if (!disabled('LIVY_DISABLE_METRODB', 'NODECAST_DISABLE_METRODB')) {
-    try {
-      const { createRequire } = await import('node:module')
-      const require = createRequire(import.meta.url)
-      let MetroDb
-      try {
-        MetroDb = require('../../../native/metrodb/index.js')
-      } catch {
-        MetroDb = require('metrodb')
-      }
-
-      if (MetroDb?.available) {
-        const db = new MetroDb(file)
-        pragmas((sql) => db.exec(sql))
-        return {
-          driver: `metrodb (rust, sqlite ${MetroDb.sqliteVersion()})`,
-          raw: db,
-          exec: (sql) => db.exec(sql),
-          run: (sql, params = []) => db.prepare(sql).run(params),
-          get: (sql, params = []) => db.prepare(sql).get(params),
-          all: (sql, params = []) => db.prepare(sql).all(params),
-          transaction: (fn) => db.transaction(fn)(),
-          backup: (target) => db.backup(target),
-          close: () => db.close()
-        }
-      }
-    } catch (error) {
-      log.debug(`metrodb unavailable (${error.message}); trying another driver`)
-    }
-  }
-
-  if (typeof globalThis.Bun !== 'undefined') {
-    const { Database } = await import('bun:sqlite')
-    const db = new Database(file, { create: true })
-    pragmas((sql) => db.exec(sql))
-    return {
-      driver: 'bun:sqlite',
-      raw: db,
-      exec: (sql) => db.exec(sql),
-      run: (sql, params = []) => db.prepare(sql).run(...params),
-      get: (sql, params = []) => db.prepare(sql).get(...params),
-      all: (sql, params = []) => db.prepare(sql).all(...params),
-      transaction: (fn) => db.transaction(fn)(),
-      close: () => db.close()
-    }
-  }
-
-  let Database
-  try {
-    ;({ default: Database } = await import('better-sqlite3'))
-  } catch (error) {
-    throw new Error(
-      `SQLite is required but no binding is available (${error.message}). ` +
-        'Build the bundled one with `cd native/metrodb && cargo build --release && node scripts/link-local.js`, ' +
-        'or `npm install better-sqlite3`, or run Livy on Bun, ' +
-        'or start with `store.enabled: false` to run without persistence.'
-    )
-  }
-
-  const db = new Database(file)
-  pragmas((sql) => db.exec(sql))
-  return {
-    driver: 'better-sqlite3',
-    raw: db,
-    exec: (sql) => db.exec(sql),
-    run: (sql, params = []) => db.prepare(sql).run(...params),
-    get: (sql, params = []) => db.prepare(sql).get(...params),
-    all: (sql, params = []) => db.prepare(sql).all(...params),
-    transaction: (fn) => db.transaction(fn)(),
-    close: () => db.close()
-  }
-}
-
-/**
- * Older installs kept their database under another name — `radio.db` from the
- * pre-SQLite era, `nodecast.db` from before this node was called Livy. If the
- * target file is not there yet and one of those is, take it over — name, WAL
- * and all — so an upgrade is still just "start the new version".
- *
- * The name is a display detail; the *data* is the product, and losing a
- * station list to a rebrand would be absurd.
- */
-const LEGACY_DATABASES = ['nodecast.db', 'radio.db']
-
-function adoptLegacyFile(file) {
-  if (fs.existsSync(file)) return false
-  const dir = path.dirname(file)
-  const legacy = LEGACY_DATABASES.map((name) => path.join(dir, name)).find(
-    (candidate) => candidate !== file && fs.existsSync(candidate)
-  )
-  if (!legacy) return false
-  for (const suffix of ['', '-wal', '-shm']) {
-    if (fs.existsSync(legacy + suffix)) fs.renameSync(legacy + suffix, file + suffix)
-  }
-  log.info(`adopted the existing database ${path.basename(legacy)} → ${path.basename(file)}`)
-  return true
-}
-
-/**
- * A SQLite database that lives in this process only.
- *
- * MetroDB and better-sqlite3 both accept `:memory:` — SQLite has had an
- * in-memory pager forever — so the *same* SQL runs, the same migrations
- * apply, and the full test suite exercises one code path. What it does not
- * give you is persistence, which is exactly what a serverless function cannot
- * have and should not pretend to.
- *
- * The driver name carries the warning: it shows up in `/api/v1/info` and in
- * the boot banner, so an operator who expected a database sees
- * `memory (ephemeral)` rather than silently losing every station at the next
- * cold start.
- */
-async function openMemoryDatabase() {
-  const make = (raw, driver) => {
-    raw.exec('PRAGMA foreign_keys = ON;')
-    return {
-      driver,
-      raw,
-      exec: (sql) => raw.exec(sql),
-      run: (sql, params = []) => raw.prepare(sql).run(...params),
-      get: (sql, params = []) => raw.prepare(sql).get(...params),
-      all: (sql, params = []) => raw.prepare(sql).all(...params),
-      transaction: (fn) => raw.transaction(fn)(),
-      close: () => raw.close()
-    }
-  }
-
-  if (!disabled('LIVY_DISABLE_METRODB', 'NODECAST_DISABLE_METRODB')) {
-    try {
-      const { createRequire } = await import('node:module')
-      const require = createRequire(import.meta.url)
-      let MetroDb
-      try {
-        MetroDb = require('../../../native/metrodb/index.js')
-      } catch {
-        MetroDb = require('metrodb')
-      }
-      if (MetroDb?.available) {
-        const raw = new MetroDb(':memory:')
-        return make(
-          {
-            exec: (sql) => raw.exec(sql),
-            prepare: (sql) => raw.prepare(sql),
-            transaction: (fn) => raw.transaction(fn),
-            close: () => raw.close()
-          },
-          `memory (ephemeral, sqlite ${MetroDb.sqliteVersion()})`
-        )
-      }
-    } catch {
-      /* fall through */
-    }
-  }
-
-  try {
-    const { default: Database } = await import('better-sqlite3')
-    return make(new Database(':memory:'), 'memory (ephemeral, better-sqlite3)')
-  } catch (error) {
-    throw new Error(`an in-memory SQLite driver is required (${error.message})`)
   }
 }
 
@@ -704,7 +509,10 @@ export class Store {
       skipVotes: count('skip_votes'),
       plays: count('plays'),
       bans: count('bans'),
-      plugins: count('plugins')
+      plugins: count('plugins'),
+      models: count('dj_models'),
+      seams: count('dj_seams'),
+      trainingRuns: count('dj_training_runs')
     }
   }
 
@@ -754,5 +562,7 @@ export class Store {
     this.db.close?.()
   }
 }
+
+Object.assign(Store.prototype, modelRepo)
 
 export default Store

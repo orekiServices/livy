@@ -91,7 +91,11 @@ export const DEFAULT_CONFIG = {
   owner: {
     key: '',
     name: 'owner',
-    autoKey: true
+    autoKey: true,
+    // Hashed at boot; prefer OWNER_PASSWORD over putting a secret in config.
+    password: '',
+    // Set by ensureOwnerKey(): 'explicit', 'legacy', 'generated' or ''.
+    keySource: ''
   },
   // SQLite: stations, requests, one-vote-per-listener, plays, bans, plugins.
   // Upgrades are migrations against this one file (see src/store/migrations.js).
@@ -118,6 +122,16 @@ export const DEFAULT_CONFIG = {
   memory: { enabled: true, saveEveryMs: 5000 },
   // What plays when the rotation runs dry (core/smartQueue.js).
   smartQueue: { enabled: true, minQueue: 3, batch: 5, lookback: 60, perArtist: 1 },
+  // The learned automix policy. On by default, trained while stations play:
+  // a fast small multi-train every `everySeams` new seams, best candidate
+  // activated only if it beats the incumbent on a held-out split.
+  // Model and training defaults live in `core/models/settings.js`: a Termux
+  // node lowers them before a config file is applied. Keep `hf` here so the
+  // environment overrides below have a container even when config.json is
+  // silent.
+  models: {
+    hf: {}
+  },
   stationDefaults: {
     bufferAheadMs: 15_000,
     burstMs: 4000,
@@ -189,6 +203,7 @@ function fromEnv(config) {
   if (env.AUDIUS_APP_NAME) out.sources.audiusAppName = env.AUDIUS_APP_NAME
   if (env.SONGLINK_API_KEY) out.sources.songlinkKey = env.SONGLINK_API_KEY
   if (env.OWNER_KEY) out.owner.key = env.OWNER_KEY
+  if (env.OWNER_PASSWORD) out.owner.password = env.OWNER_PASSWORD
   if (env.STORE_FILE) out.store.file = env.STORE_FILE
   if (env.LOG_FILE) out.logging.file = { ...out.logging.file, enabled: true, path: env.LOG_FILE }
   // DEBUG=sources,automix — turn on just those categories
@@ -223,6 +238,18 @@ function fromEnv(config) {
   if (env.DJ === '0' || env.DJ === 'off') out.stationDefaults.automix.dj.enabled = false
   if (env.DJ_NAME) out.stationDefaults.automix.dj.name = env.DJ_NAME
   if (env.DJ_EVERY) out.stationDefaults.automix.dj.every = Number(env.DJ_EVERY)
+  // Models: on unless switched off; HF storage when a repo is configured.
+  if (env.LIVY_MODELS === '0' || env.LIVY_MODELS === 'off') out.models.enabled = false
+  if (env.LIVY_AUTO_TRAIN === '0' || env.LIVY_AUTO_TRAIN === 'off') out.models.autoTrain = false
+  if (env.LIVY_FAST_TRAIN === '0' || env.LIVY_FAST_TRAIN === 'off') out.models.fast = false
+  if (env.LIVY_TRAIN_CANDIDATES) out.models.candidates = Math.max(1, Math.min(8, Number(env.LIVY_TRAIN_CANDIDATES) || 2))
+  if (env.LIVY_AUTO_TRAIN_EVERY) out.models.everySeams = Math.max(10, Number(env.LIVY_AUTO_TRAIN_EVERY) || 60)
+  if (env.LIVY_HF_MODELS === '1') out.models.hf.enabled = true
+  if (env.LIVY_HF_REPO) {
+    out.models.hf.repo = env.LIVY_HF_REPO
+    out.models.hf.enabled = env.LIVY_HF_MODELS === '0' ? false : true
+  }
+  if (env.HF_TOKEN) out.models.hf.token = env.HF_TOKEN
   return out
 }
 
@@ -241,12 +268,35 @@ export function loadConfig(file = process.env.RADIO_CONFIG ?? path.join(root, 'c
 /**
  * First run: mint an owner key, save it next to the database and hand it back
  * so it can be printed once. Never logged again afterwards.
+ *
+ * A password (from the environment or a previous first-run setup) is a
+ * complete credential: in that case no key is minted, so the log cannot offer
+ * a second way in. An explicit `owner.key`/`OWNER_KEY` still wins and remains
+ * valid alongside a password.
+ *
  * @returns {{key: string, created: boolean}}
  */
 export function ensureOwnerKey(config) {
-  if (config.owner?.key) return { key: config.owner.key, created: false }
-  if (config.server?.password) return { key: config.server.password, created: false }
-  if (config.owner?.autoKey === false) return { key: '', created: false }
+  config.owner ??= {}
+  if (config.owner.key) {
+    config.owner.keySource = 'explicit'
+    return { key: config.owner.key, created: false }
+  }
+  if (config.server?.password) {
+    config.owner.keySource = 'legacy'
+    return { key: config.server.password, created: false }
+  }
+  // A password is a complete credential on its own. Do not mint a key beside
+  // it: a generated key is ignored while a password exists, and printing one
+  // would only invite someone to try a credential that no longer works.
+  if (config.owner.passwordHash) {
+    config.owner.keySource = ''
+    return { key: '', created: false }
+  }
+  if (config.owner.autoKey === false) {
+    config.owner.keySource = ''
+    return { key: '', created: false }
+  }
 
   const file = path.join(path.dirname(config.store?.file ?? path.join(root, 'data', 'radio.db')), 'owner.key')
   try {
@@ -254,6 +304,7 @@ export function ensureOwnerKey(config) {
       const existing = fs.readFileSync(file, 'utf8').trim()
       if (existing) {
         config.owner.key = existing
+        config.owner.keySource = 'generated'
         return { key: existing, created: false }
       }
     }
@@ -261,9 +312,11 @@ export function ensureOwnerKey(config) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, `${key}\n`, { mode: 0o600 })
     config.owner.key = key
+    config.owner.keySource = 'generated'
     return { key, created: true }
   } catch {
     // Read-only install: run open, the operator can set OWNER_KEY themselves.
+    config.owner.keySource = ''
     return { key: '', created: false }
   }
 }

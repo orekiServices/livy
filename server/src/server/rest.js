@@ -27,7 +27,10 @@ import { createHash } from 'node:crypto'
 import { buildIcyMetadataBlock } from '../util/icyClient.js'
 import { resolveStaticFile, sendFile } from '../util/files.js'
 import { paths } from '../config.js'
-import { createOwnerRouter, isOwner, ownerKey } from './owner.js'
+import { hostInfo } from '../util/platform.js'
+import { fxInfo } from '../util/fx.js'
+import { createOwnerRouter, isOwner, isProtected } from './owner.js'
+import { canClaimPassword, passwordInfo, passwordProblem, setPassword } from './owner/password.js'
 import { StreamErrorVoice, failStream } from './streamErrors.js'
 import { LANGUAGES } from '../tts/index.js'
 import Lyrics from '../core/lyrics.js'
@@ -60,7 +63,7 @@ const publicMessage = (error) => {
   return message
 }
 
-export function createRequestHandler({ manager, config, sources, store = null, tts = null, plugins = null }) {
+export function createRequestHandler({ manager, config, sources, store = null, tts = null, plugins = null, autoTrainer = null }) {
   // A config assembled by hand (tests, embedders) may not carry every key.
   // A missing one must never turn into `Invalid value "undefined" for header`.
   const cors = config.server?.cors ?? '*'
@@ -79,14 +82,37 @@ export function createRequestHandler({ manager, config, sources, store = null, t
 
   const fail = (res, status, message) => send(res, status, { error: true, status, message })
 
+  /**
+   * A browser request from another site must not be able to claim a fresh
+   * node. The first-run endpoint is deliberately unauthenticated, so it is
+   * the one place where a cross-origin form/fetch would be dangerous. Native
+   * clients send no Origin at all and are allowed; a browser must be same-site.
+   */
+  const sameOrigin = (req) => {
+    // Browsers say how the request was made. `same-site` covers a dev console
+    // on :3000 and a node on :2333, or a sibling subdomain; `cross-site` is
+    // exactly the case this guard exists for.
+    const fetchSite = String(req.headers['sec-fetch-site'] ?? '')
+    if (fetchSite === 'cross-site') return false
+    if (fetchSite === 'same-origin' || fetchSite === 'same-site') return true
+
+    const origin = req.headers.origin
+    if (!origin) return true // curl, a native client, an old browser
+    try {
+      const from = new URL(origin)
+      const host = new URL(`http://${req.headers.host}`)
+      // Same host, any port, for browsers that do not send Sec-Fetch-Site.
+      return from.host === host.host || from.hostname === host.hostname
+    } catch {
+      return false
+    }
+  }
+
   const authorized = (req, url) => {
-    // One credential rules them all. When a key exists it is *required* —
-    // presenting none used to fall through to the empty legacy password and
-    // quietly open protected routes. `ownerKey()` already falls back to
-    // `server.password`, so a node configured the old way still works.
-    const key = ownerKey(config)
-    if (key) return isOwner(req, config, url)
-    return true // open mode: no key, no password — a laptop, not the internet
+    // One credential rules them all: an explicit owner key, a password, or a
+    // generated key that a password has not superseded. No credential on an
+    // unclaimed node is open mode — a laptop, not the internet.
+    return isOwner(req, config, url)
   }
 
   /** Stable-ish identity for rate limiting: forwarded IP + chosen name. */
@@ -229,7 +255,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
   const streamErrors = new StreamErrorVoice({ tts, store, settings: config.streamErrors })
   // Words for what is on air. Fetched here, never by the listener's browser.
   const lyrics = new Lyrics({ store, ...(config.lyrics ?? {}) })
-  const ownerRoutes = createOwnerRouter({ manager, config, sources, store, tts, plugins, streamErrors })
+  const ownerRoutes = createOwnerRouter({ manager, config, sources, store, tts, plugins, streamErrors, autoTrainer })
 
   /* -------------------------------- router ------------------------------ */
 
@@ -275,8 +301,13 @@ export function createRequestHandler({ manager, config, sources, store = null, t
       if (seg[0] === 'api' && seg[1] === 'v1') {
         const [, , resource, id, action, param] = seg
 
-        // Everything an owner can do lives behind one key (see server/owner.js).
+        // Everything an owner can do lives behind one credential (see
+        // server/owner.js). The password form is same-site even in open mode,
+        // so a random page cannot set one on an unclaimed node.
         if (resource === 'owner') {
+          if (id === 'password' && method === 'POST' && !sameOrigin(req)) {
+            return fail(res, 403, 'Cross-origin credential changes are not allowed')
+          }
           return await ownerRoutes({ req, res, url, seg, method, send, fail, readJson })
         }
 
@@ -337,6 +368,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
         }
 
         if (resource === 'info') {
+          const modelInfo = await import('../core/models/index.js')
+            .then(({ models }) => models.info())
+            .catch(() => null)
           return send(res, 200, {
             name: 'livy',
             // Where this is running, and what that costs: a serverless
@@ -359,14 +393,22 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             // its (older, cached) UI losing track of it.
             legacyNames: ['nodecast'],
             version: VERSION,
+            // Termux/Android gets a smaller training budget; a client can
+            // show which one this node chose without guessing from a UA.
+            device: hostInfo(),
+            // Which filter kernels are loaded: MetroFX native, or JS.
+            fx: fxInfo(),
             uptime: Date.now() - startedAt,
             sources: sources.sources.map((s) => s.name),
             defaultSearch: sources.defaultSearch,
             transitions: [...EFFECTS],
             stations: manager.size,
             language: tts?.language ?? config.tts?.language ?? 'en',
+            // The learned mix, and the trainer watching for new seams.
+            models: modelInfo,
+            automixModel: autoTrainer?.state?.() ?? null,
             // First run: the console shows the setup flow instead of an empty grid.
-            setup: { needed: manager.size === 0, protected: Boolean(ownerKey(config)) }
+            setup: { needed: manager.size === 0, protected: isProtected(config) }
           })
         }
 
@@ -380,14 +422,42 @@ export function createRequestHandler({ manager, config, sources, store = null, t
           })
         }
 
+        // A first-run browser can create the owner password instead of
+        // transcribing the key from the server log. Allowed only on an
+        // unclaimed node, or by someone who already holds a credential.
+        if (resource === 'setup' && id === 'password' && method === 'POST') {
+          if (!sameOrigin(req)) return fail(res, 403, 'Cross-origin setup is not allowed')
+          const authenticated = isOwner(req, config, url)
+          if (passwordInfo(config).configured) return fail(res, 409, 'An owner password is already set')
+          if (!canClaimPassword(config, { stations: manager.size, authenticated })) {
+            return fail(res, 401, 'Owner key or password required')
+          }
+          const body = await readJson(req)
+          const problem = passwordProblem(body?.password)
+          if (problem) return fail(res, 400, problem)
+          const result = setPassword(config, body.password)
+          if (result.problem) return fail(res, 400, result.problem)
+          log.info(`owner credential created during first-run setup (${result.persisted ? 'saved' : 'this process only'})`)
+          return send(res, 201, { configured: true, persisted: result.persisted, ...passwordInfo(config) })
+        }
+
         // What a brand-new install needs to know, and nothing else: no paths,
         // no environment, no upstream URLs.
-        if (resource === 'setup' && method === 'GET') {
+        if (resource === 'setup' && !id && method === 'GET') {
+          const authenticated = isOwner(req, config, url)
+          const password = passwordInfo(config)
           return send(res, 200, {
             configured: manager.size > 0,
             stations: manager.size,
-            protected: Boolean(ownerKey(config)),
-            owner: isOwner(req, config, url) && Boolean(ownerKey(config)),
+            protected: isProtected(config),
+            owner: authenticated && isProtected(config),
+            password: {
+              ...password,
+              // `canSet` is the setup wizard's cue to ask for a new password
+              // rather than for the key printed in the log.
+              canSet: !password.configured && canClaimPassword(config, { stations: manager.size, authenticated }),
+              changeable: authenticated && !password.fromEnv
+            },
             sources: sources.sources.map((s) => ({ name: s.name, prefixes: s.prefixes ?? [] })),
             transitions: [...EFFECTS],
             // The filter surface the console and any NodeLink-shaped client
@@ -464,7 +534,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             if (method === 'POST') {
               if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
               const body = await readJson(req)
-              const station = manager.add(body)
+              // Created through the API is still an owned station: it must
+              // survive a restart, not just this process.
+              const station = manager.add({ ...body, _owned: true })
               if (body.autoStart !== false) {
                 station.load().then(() => station.start()).catch((e) => log.warn(e.message))
               }
@@ -516,6 +588,34 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             }
           }
 
+          /* ----- listener play-now: the web client's search → play ----- */
+          if (action === 'play' && method === 'POST') {
+            if (station.options.allowPlayNow === false) {
+              return fail(res, 403, 'This station does not let listeners pick songs')
+            }
+            const body = await readJson(req)
+            const who = body.requesterId ?? requesterId(req, body)
+            if (station.store?.isBanned?.(who)) return fail(res, 403, 'Your line has been restricted by the station owner')
+            try {
+              let track = body.track
+              if (!track && body.query) {
+                const resolved = await sources.resolve(body.query, { limit: 5 })
+                track = resolved.tracks.find((candidate) => candidate.streamable !== false)
+              }
+              if (!track) return fail(res, 400, 'Provide "track" or "query"')
+              if (typeof sources.rehydrate === 'function') track = await sources.rehydrate(track)
+              const queued = station.playNow(track, { by: body.by ?? 'listener' })
+              return send(res, 200, {
+                queued: publicTrack(queued),
+                station: station.id,
+                playingNext: true,
+                queueLength: station.queue.length
+              })
+            } catch (error) {
+              return fail(res, error.status ?? 400, error.message)
+            }
+          }
+
           if (action === 'requests' && param && seg[6] === 'vote' && method === 'POST') {
             const body = await readJson(req)
             try {
@@ -547,7 +647,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
 
             if (method === 'POST') {
               const body = await readJson(req)
-              let tracks = body.track ? [body.track] : body.tracks
+              let tracks = body.track
+                ? [typeof sources.rehydrate === 'function' ? await sources.rehydrate(body.track) : body.track]
+                : body.tracks
               if (!tracks) {
                 if (!body.query) return fail(res, 400, 'Provide "query", "track" or "tracks"')
                 const resolved = await sources.resolve(body.query, { limit: body.limit ?? 50 })

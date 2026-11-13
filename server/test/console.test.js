@@ -50,7 +50,7 @@ test('the console plugin mounts the build on the node it runs in', { skip: built
   const meta = await api(base, '/api/v1/x/console/')
   assert.equal(meta.mount, '/')
   assert.ok(meta.build.files > 0 && meta.build.kb > 0)
-  assert.deepEqual(meta.pages, ['/', '/station/', '/owner/'], 'the console knows which pages it ships')
+  assert.deepEqual(meta.pages, ['/', '/listen/', '/station/', '/owner/'], 'the console knows which pages it ships')
 })
 
 test('client-side routes survive a refresh, but a missing asset is still missing', { skip: built ? false : 'no console build' }, async (t) => {
@@ -133,7 +133,7 @@ test('a node with no console build still boots, and picks the build up live', as
   assert.equal(home.status, 503, 'honest status: the UI is not available yet')
   assert.match(home.headers.get('content-type'), /text\/html/)
   const html = await home.text()
-  assert.match(html, /npm run build:web/, 'the page says exactly what to run')
+  assert.match(html, /bun run build:web/, 'the page says exactly what to run')
   assert.ok(!html.includes(dir), 'and does not print a filesystem path at a stranger')
 
   assert.equal((await fetch(`${base}/_next/static/chunks/app.js`)).status, 404, 'assets still 404')

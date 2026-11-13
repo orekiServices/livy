@@ -429,7 +429,7 @@ export function resetLogging() {
  * The line every node should print once: who I am, what I run on, where my
  * data lives. Deliberately compact — one block, no ASCII art beyond a rule.
  */
-export function banner({ version, port, host, stations, store, plugins, engine, node = process.version, pid = process.pid } = {}) {
+export function banner({ version, port, host, stations, store, plugins, engine, fx, device, node = process.version, pid = process.pid } = {}) {
   // The banner is an info-level courtesy: a node asked to be quiet stays quiet
   // (and a test runner's stdout stays clean).
   if (state.level > LEVELS.info) return
@@ -443,7 +443,11 @@ export function banner({ version, port, host, stations, store, plugins, engine, 
     ['store', store ?? 'disabled'],
     ['plugins', plugins ?? 'none'],
     // Which relay engine is loaded — native libmetro, or the JS fallback.
-    ...(engine ? [['engine', engine]] : [])
+    ...(engine ? [['engine', engine]] : []),
+    ...(fx ? [['filters', fx]] : []),
+    // Only worth a row when it is not the default: a phone is a different
+    // training budget and a different store backend.
+    ...(device ? [['device', device]] : [])
   ]
   const out = [
     c(C.grey, rule),

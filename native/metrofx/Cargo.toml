@@ -1,0 +1,23 @@
+[package]
+name    = "metrofx"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "MetroFX — the filter and dynamics kernels behind Livy, as a native Node addon."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# N-API 8: one binary per platform works on every Node >= 16.
+napi        = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto           = true
+opt-level     = 3
+codegen-units = 1
+strip         = "symbols"

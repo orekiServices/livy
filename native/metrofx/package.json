@@ -1,0 +1,41 @@
+{
+  "name": "metrofx",
+  "version": "0.1.0",
+  "description": "MetroFX — biquad, compressor, reverb and oversampled distortion kernels for Livy, as a native Node addon (Rust + napi-rs).",
+  "main": "index.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "index.js",
+    "*.node",
+    "README.md"
+  ],
+  "napi": {
+    "name": "metrofx",
+    "triples": {
+      "defaults": false,
+      "additional": [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "armv7-unknown-linux-gnueabihf",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "build:local": "cargo build --release && node scripts/link-local.js",
+    "artifacts": "napi artifacts",
+    "prepublishOnly": "napi prepublish -t npm"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  }
+}

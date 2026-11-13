@@ -109,6 +109,7 @@ export class ArchiveSource {
         duration: seconds(file.length),
         artwork: `https://archive.org/services/img/${encodeURIComponent(identifier)}`,
         url: `https://archive.org/download/${encodeURIComponent(identifier)}/${encodeURIComponent(file.name)}`,
+        pageUrl: `https://archive.org/details/${encodeURIComponent(identifier)}`,
         bitrate,
         format: file.format,
         size: Number(file.size ?? 0),

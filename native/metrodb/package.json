@@ -1,0 +1,16 @@
+{
+  "name": "metrodb",
+  "version": "0.3.0",
+  "description": "MetroDB — embedded SQLite for Livy, in Rust, with a better-sqlite3-shaped JavaScript face.",
+  "main": "index.js",
+  "type": "commonjs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.js",
+    "*.node",
+    "README.md"
+  ]
+}

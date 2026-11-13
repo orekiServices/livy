@@ -633,3 +633,99 @@ test('a stream is audio/mpeg and accepts the 206 a seek produces', async () => {
   assert.equal(opened.mode, 'nhaccuatui')
   assert.equal(opened.bitrate, 128)
 })
+
+test('a streamless search row is completed from detail instead of disappearing', async () => {
+  const source = new NhacCuaTuiSource()
+  const row = nctSong({ key: 'needsDetail', streamURL: [] })
+
+  const tracks = await withNct(
+    (url) => {
+      if (url.includes('/song/detail/needsDetail')) return { code: 0, data: nctSong({ key: 'needsDetail' }) }
+      return { code: 0, data: { songs: [row] } }
+    },
+    () => source.search('a song', 5)
+  )
+
+  assert.equal(tracks.length, 1)
+  assert.equal(tracks[0].nctKey, 'needsDetail')
+  assert.equal(tracks[0].streamable, true, 'detail supplied the open stream')
+})
+
+test('a playlist row without a stream is resolved too', async () => {
+  const source = new NhacCuaTuiSource()
+
+  const result = await withNct(
+    (url) => {
+      if (url.includes('/playlist/detail/')) {
+        return { code: 0, data: { title: 'Mix', listSong: [nctSong({ key: 'k9', streamURL: [] })] } }
+      }
+      return { code: 0, data: nctSong({ key: 'k9' }) }
+    },
+    () => source.resolve('https://www.nhaccuatui.com/playlist/mix.k9.html')
+  )
+
+  assert.equal(result.type, 'playlist')
+  assert.equal(result.tracks.length, 1)
+  assert.equal(result.tracks[0].streamable, true)
+})
+
+test('an expired stream URL is refreshed once on the first 403', async () => {
+  const source = new NhacCuaTuiSource()
+  let opened = 0
+
+  const handle = await withNct(
+    (url) => {
+      if (url.includes('/api/v1/song/detail/')) return nctDetail(opened === 0 ? 'sig=dead' : 'sig=fresh')
+      opened += 1
+      if (opened === 1) {
+        return { __raw: { ok: false, status: 403, body: null, headers: new Map() } }
+      }
+      return {
+        __raw: {
+          ok: true,
+          status: 200,
+          body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([0xff, 0xfb])); controller.close() } }),
+          headers: new Map([['content-type', 'audio/mpeg']])
+        }
+      }
+    },
+    () => source.stream({ id: 'nct:k1', nctKey: 'k1', bitrate: 128 })
+  )
+
+  assert.equal(handle.mode, 'nhaccuatui')
+  assert.equal(opened, 2, 'the first stream was refused and retried with a fresh signature')
+})
+
+test('the short /l/ link also reaches song detail', async () => {
+  const source = new NhacCuaTuiSource()
+  await withNct({ code: 0, data: nctSong({ key: 'short1' }) }, async (calls) => {
+    const result = await source.resolve('https://www.nhaccuatui.com/l/short1')
+    assert.equal(result.tracks[0].nctKey, 'short1')
+    assert.match(calls[0].url, /song\/detail\/short1$/)
+  })
+})
+
+test('a public track can be rehydrated from its page link so the browser can play it', async () => {
+  const registry = new SourceRegistry({})
+  registry.register({
+    name: 'rehydrate-demo',
+    prefixes: ['https://example.com/'],
+    canResolve: (query) => String(query).startsWith('https://example.com/'),
+    async resolve(query) {
+      return {
+        type: 'track',
+        name: 'Song',
+        tracks: [{ source: 'rehydrate-demo', id: 'rehydrate-demo:1', title: 'Song', artist: 'A', url: query, streamable: true }]
+      }
+    },
+    getTrackUrl: (track) => track.url ?? null
+  })
+
+  // This is the shape search returns: id + link, no provider handle.
+  const publicShape = { source: 'rehydrate-demo', id: 'rehydrate-demo:1', title: 'Song', artist: 'A', link: 'https://example.com/song/1' }
+  assert.equal(await registry.trackUrl(publicShape), 'https://example.com/song/1')
+
+  const full = await registry.rehydrate(publicShape)
+  assert.equal(full.url, 'https://example.com/song/1', 'the handle is back')
+  assert.equal(full.title, 'Song', 'public metadata wins over the provider copy')
+})

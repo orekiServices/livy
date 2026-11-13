@@ -8,7 +8,7 @@ plugins/
   now-playing/          folder plugin
     plugin.json         metadata (name, version, main, enabled, settings)
     index.js
-  backspin.js           single-file plugin
+  my-effect.js          single-file plugin
 ```
 
 ## Shape
@@ -190,7 +190,7 @@ From the owner console (**Plugins** panel) or the API:
 ```bash
 curl -H "x-owner-key: $KEY" localhost:2333/api/v1/owner/plugins
 curl -X POST -H "x-owner-key: $KEY" localhost:2333/api/v1/owner/plugins/now-playing/disable
-curl -X POST -H "x-owner-key: $KEY" localhost:2333/api/v1/owner/plugins/backspin/reload
+curl -X POST -H "x-owner-key: $KEY" localhost:2333/api/v1/owner/plugins/now-playing/reload
 curl -X POST -H "x-owner-key: $KEY" localhost:2333/api/v1/owner/plugins/rescan     # pick up new folders
 curl -X PATCH -H "x-owner-key: $KEY" -H 'content-type: application/json' \
      -d '{"settings":{"webhook":"https://example.com/hook"}}' \
@@ -206,7 +206,6 @@ A plugin that ships with `"enabled": false` in its manifest stays off until some
 |---|---|
 | `console` | `registerStatic` — the whole Next.js console, mounted at `/`; `scope: global`, boots even with no build and mounts one the moment it appears |
 | `now-playing` | events, settings, a public route, writing a file for OBS / a website |
-| `backspin` | `registerEffect` — a real DJ backspin transition built on the mix context |
 | `hourly-ident` | `every()` + speaking on air; ships **disabled** |
 | `live-relay` | `ctx.relay()` — a live feed on air through MetroS, with reconnect, owner-gated routes and a scope-aware stop; ships **disabled** |
 | `vnnews` | a scheduled, multilingual, RSS-driven news slot: Vietnamese bulletins 17:00–19:00 Hanoi time (or every N songs) from VnExpress and friends, voiced in a worker thread over a ducked music bed; ships **disabled** |

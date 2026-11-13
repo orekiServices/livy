@@ -190,6 +190,59 @@ export const MIGRATIONS = [
         );
       `)
     }
+  },
+
+  {
+    id: 8,
+    name: 'dj-models',
+    up(db) {
+      // Multi-train needs more than a `.bin` on disk: every candidate, the run
+      // that produced it, and the seam log it learned from. All of it is in
+      // this one SQLite file — no second database server, no Postgres.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS dj_seams (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          station_id  TEXT,
+          effect      TEXT,
+          outcome     TEXT,
+          record      TEXT NOT NULL,
+          created_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_dj_seams_created ON dj_seams(created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS dj_models (
+          name        TEXT PRIMARY KEY,
+          digest      TEXT,
+          file        TEXT,
+          shape       TEXT,
+          parameters  INTEGER,
+          accuracy    REAL,
+          loss        REAL,
+          backend     TEXT,
+          station_id  TEXT,
+          active      INTEGER NOT NULL DEFAULT 0,
+          remote      TEXT,
+          meta        TEXT NOT NULL DEFAULT '{}',
+          created_at  INTEGER NOT NULL,
+          updated_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_dj_models_created ON dj_models(created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS dj_training_runs (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          station_id  TEXT,
+          mode        TEXT,
+          count       INTEGER NOT NULL DEFAULT 0,
+          backend     TEXT,
+          trained     INTEGER NOT NULL DEFAULT 0,
+          accuracy    REAL,
+          best        TEXT,
+          report      TEXT NOT NULL DEFAULT '{}',
+          created_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_dj_runs_created ON dj_training_runs(created_at DESC);
+      `)
+    }
   }
 ]
 
