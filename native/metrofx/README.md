@@ -38,7 +38,9 @@ comp.process(left, right)
 `server/src/util/fx.js` loads this addon when a binary exists and falls back to
 the JavaScript filter classes when it does not. There is no postinstall compile
 and no failure mode where a missing toolchain stops a node from booting. Set
-`LIVY_DISABLE_FX=1` to force the JavaScript path.
+`LIVY_DISABLE_FX=1` to force the JavaScript path; the suite passes both ways,
+and the native tests assert that the chain's output is sample-identical to the
+kernel's.
 
 ## Build
 

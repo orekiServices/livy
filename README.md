@@ -358,7 +358,7 @@ bun run test                # from the repo root
 bun run test:node           # node --test, for a Node-only host
 ```
 
-302 tests (301 on a host without a MetroFX binary). Sources are stubbed at the transport rather than at the module, so no
+302 tests (two native-kernel tests skip on a host without a MetroFX binary). Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
 air, the Android training budget, model presets, `node:sqlite`, and private Hugging Face
