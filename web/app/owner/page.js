@@ -99,7 +99,7 @@ function Vitals({ station, info, stream }) {
 }
 
 export default function StudioPage() {
-  const { stations, say, refreshSetup } = useRadio()
+  const { stations, say, refreshSetup, setup } = useRadio()
   const [authed, setAuthed] = useState(false)
   const [stationId, setStationId] = useState(null)
   const [view, setView] = useState('desk')
@@ -109,6 +109,12 @@ export default function StudioPage() {
   const [notice, setNotice] = useState(null)
 
   useEffect(() => setAuthed(Boolean(ownerKey())), [])
+
+  // An open node (no key, no password) needs no prompt. The setup payload is
+  // the only place that knows, so apply it once it arrives.
+  useEffect(() => {
+    if (setup && !setup.protected) setAuthed(true)
+  }, [setup])
 
   useEffect(() => {
     if (!stationId && stations.length) setStationId(stations[0].id)
@@ -146,12 +152,12 @@ export default function StudioPage() {
   if (!authed) {
     return (
       <>
-        <TopBar title="Control room" subtitle="owner key required" />
+        <TopBar title="Control room" subtitle={setup?.password?.configured ? 'owner password required' : 'owner key required'} />
         <main className="page">
           <KeyGate
             onUnlock={() => {
               setAuthed(true)
-              say('Owner key accepted')
+              say(setup?.password?.configured ? 'Owner password accepted' : 'Owner key accepted')
             }}
           />
         </main>

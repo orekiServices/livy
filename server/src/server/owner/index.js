@@ -1,13 +1,15 @@
 /**
  * Owner control plane — everything a station owner can do, behind one key.
  *
- * Auth: `x-owner-key: <key>`, `Authorization: Bearer <key>` or `?key=<key>`.
- * The key comes from config.owner.key / env OWNER_KEY (falls back to
- * server.password). A fresh install generates one on first boot and prints it
- * once; if none is set the node is in "open" mode — fine for a laptop, not
- * for the internet.
+ * Auth: `x-owner-key: <secret>`, `Authorization: Bearer <secret>` or
+ * `?key=<secret>`. The secret is an owner password (scrypt hash), an explicit
+ * OWNER_KEY / server.password, or — until a password exists — the key generated
+ * on first boot. If none is set the node is in "open" mode: fine for a laptop,
+ * not for the internet. `POST /password` changes the password from the console.
  *
  *   GET    /api/v1/owner                       overview (stations, bans, store…)
+ *   GET    /api/v1/owner/password              credential status
+ *   POST   /api/v1/owner/password              { password } set/change
  *   GET    /api/v1/owner/whoami                key check for the console
  *   POST   /api/v1/owner/stations              create a station (persisted)
  *   PATCH  /api/v1/owner/stations/:id          rename / re-genre / re-programme
@@ -22,6 +24,8 @@
  *   GET/POST/DELETE /api/v1/owner/stations/:id/dj-model    the learned policy
  *   POST   /api/v1/owner/stations/:id/dj-model/train       train it from history
  */
+import crypto from 'node:crypto'
+
 import createLogger, { tail, loggingState } from '../../util/logger.js'
 import { engineInfo } from '../../util/metro.js'
 import { hostInfo } from '../../util/platform.js'
@@ -35,6 +39,14 @@ import { modelRoutes, stationModels, trainForStation } from './models.js'
 import { pluginRoutes } from './plugins.js'
 import { systemRoutes } from './system.js'
 import { previewTransition } from '../../core/preview.js'
+import {
+  canClaimPassword,
+  hasPassword,
+  passwordInfo,
+  passwordProblem,
+  setPassword,
+  verifyPassword
+} from './password.js'
 
 const log = createLogger('owner')
 
@@ -42,13 +54,48 @@ export function ownerKey(config) {
   return config.owner?.key || config.server?.password || ''
 }
 
+/**
+ * Is the generated key still a credential?
+ *
+ * A password supersedes a key the node minted for itself, but not one the
+ * operator set on purpose. `OWNER_KEY` and the legacy `server.password` are
+ * explicit decisions, and keeping them valid is what makes a forgotten
+ * password recoverable without editing a hash file by hand.
+ */
+export function generatedKeyAllowed(config) {
+  if (!hasPassword(config)) return true
+  return config.owner?.keySource === 'explicit' || config.owner?.keySource === 'legacy'
+}
+
+/** Does this node require a credential at all? */
+export function isProtected(config) {
+  return Boolean(ownerKey(config) || hasPassword(config))
+}
+
+function sameSecret(a, b) {
+  const left = Buffer.from(String(a ?? ''))
+  const right = Buffer.from(String(b ?? ''))
+  return left.length === right.length && crypto.timingSafeEqual(left, right)
+}
+
+function presentedSecret(req, url) {
+  const header = String(req.headers['x-owner-key'] ?? '')
+  const auth = String(req.headers.authorization ?? '')
+  const query = String(url?.searchParams?.get('key') ?? '')
+  return header || (auth.startsWith('Bearer ') ? auth.slice(7) : auth) || query
+}
+
 export function isOwner(req, config, url) {
   const key = ownerKey(config)
-  if (!key) return true // open mode
-  const header = req.headers['x-owner-key'] ?? ''
-  const auth = req.headers.authorization ?? ''
-  const query = url?.searchParams?.get('key') ?? ''
-  return header === key || auth === key || auth === `Bearer ${key}` || query === key
+  const keyUsable = Boolean(key) && generatedKeyAllowed(config)
+  const passwordSet = hasPassword(config)
+  const supplied = presentedSecret(req, url)
+
+  // The key first: it is a constant-time string compare, not a scrypt run.
+  if (keyUsable && sameSecret(supplied, key)) return true
+  if (passwordSet && supplied && verifyPassword(supplied, config.owner.passwordHash)) return true
+  if (!keyUsable && !passwordSet) return true // open mode
+  return false
 }
 
 /**
@@ -93,7 +140,8 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
           beatmatch: config.stationDefaults?.automix?.beatmatch !== false,
           dj: config.stationDefaults?.automix?.dj?.enabled !== false
         },
-        protected: Boolean(ownerKey(config)),
+        protected: isProtected(config),
+        password: passwordInfo(config),
         stations: manager.list({ owner: true }),
         bans: store?.listBans() ?? [],
         store: store ? { driver: store.driver, ...store.stats() } : null,
@@ -113,6 +161,25 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
     }
 
     if (section === 'whoami') return send(res, 200, { owner: true, name: config.owner?.name ?? 'owner' })
+
+    /* ----------------------------- credentials -------------------------- */
+
+    if (section === 'password') {
+      if (method === 'GET') return send(res, 200, { ...passwordInfo(config), canClaim: canClaimPassword(config) })
+      if (method !== 'POST') return fail(res, 405, 'Use GET or POST')
+
+      if (config.owner?.passwordFromEnv) {
+        return fail(res, 409, 'Password is set from OWNER_PASSWORD; change the environment and restart')
+      }
+      const body = await readJson(req)
+      const problem = passwordProblem(body?.password)
+      if (problem) return fail(res, 400, problem)
+      const had = hasPassword(config)
+      const result = setPassword(config, body.password)
+      if (result.problem) return fail(res, 400, result.problem)
+      log.info(`owner password ${had ? 'updated' : 'set'} (${result.persisted ? 'saved' : 'this process only'})`)
+      return send(res, 200, { ...passwordInfo(config), persisted: result.persisted })
+    }
 
     /* ------------------------------- models ----------------------------- */
 

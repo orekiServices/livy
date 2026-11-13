@@ -24,6 +24,7 @@ import { engineInfo } from './util/metro.js'
 import { hostInfo } from './util/platform.js'
 import { fxEngine, fxInfo } from './util/fx.js'
 import { AutoTrainer, configureModels } from './core/models/index.js'
+import { prepareOwnerAuth } from './server/owner/password.js'
 
 const log = createLogger('livy')
 const VERSION = createRequire(import.meta.url)('../package.json').version
@@ -34,8 +35,15 @@ export async function createRadioServer(overrides = {}) {
   const config = deepMerge(loadConfig(), overrides)
   configureLogging(config.logging)
 
-  // One key unlocks the owner console. Generated once on a fresh install.
+  // One credential unlocks the owner console. A password may come from the
+  // environment or from a previous first-run setup; otherwise a key is
+  // generated once and printed. Never both by accident.
+  const auth = prepareOwnerAuth(config)
+  if (auth.problem) log.warn(`OWNER_PASSWORD ignored: ${auth.problem}`)
+  if (auth.fromEnv) log.info('owner password loaded from OWNER_PASSWORD')
+  if (auth.configured && !auth.persisted) log.warn('owner password is valid for this process only (data folder is not writable)')
   const owner = ensureOwnerKey(config)
+  if (!owner.key && !auth.configured) log.warn('no owner credential configured — the console is open to anyone who can reach it')
   if (owner.created) log.info(`owner key generated: ${owner.key}  (saved next to the database — keep it)`)
 
   // Persistence: SQLite, migrated to the current schema on open.
@@ -246,6 +254,8 @@ export function createApp(overrides = {}) {
   appPromise ??= (async () => {
     const config = deepMerge(loadConfig(), overrides)
     configureLogging(config.logging)
+    const auth = prepareOwnerAuth(config)
+    if (auth.problem) log.warn(`OWNER_PASSWORD ignored: ${auth.problem}`)
     const owner = ensureOwnerKey(config)
 
     const store =

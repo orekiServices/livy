@@ -44,11 +44,23 @@ installed; MetroFX, the optional native filter kernels, builds in CI and falls
 back to JavaScript on hosts that have no binary).
 
 A fresh install has **no stations**. Open the URL and the console walks you
-through the first one: owner key → name → sources → crossfade and beatmatching
-→ on air. The owner key is generated on first boot and printed once.
+through the first one: choose an owner password → name → sources → crossfade
+and beatmatching → on air. The password is hashed with scrypt next to the
+database; it is what you type to sign in later.
+
+A node that has no password still works the old way: it generates a key on
+first boot, prints it once, and that key is valid until a password is set. If
+you want the credential to come from the server instead, set
+`OWNER_PASSWORD`; an explicit `OWNER_KEY` is also honoured and remains a
+recovery key after a password exists. A fresh, unclaimed node can be claimed by
+whoever reaches it first, so set a password (or `OWNER_KEY`) before exposing one
+to the internet.
+
+The password is written as a scrypt hash to `owner.auth.json` (mode 0600) next
+to the database. Forgot it? Set `OWNER_PASSWORD` and restart, or remove that
+file while the node is stopped to fall back to the generated key.
 
 ```console
-INFO  livy         | owner key generated: X7G82Ma6kUqpx1DxNWO59Q  (saved next to the database — keep it)
 INFO  livy         | listening on http://0.0.0.0:2333  ·  0 station(s)
 ```
 
@@ -142,7 +154,7 @@ Everything a station needs is on one owner page, arranged like a control room:
 | **Desk cards** | now playing, next up, requests and bans, programme metadata, recent seams |
 | **Dock (10 views)** | stations · queue · requests · seams · models · automix · filters · plugins · ops · logs |
 
-Owner pages are gated by the owner key and are *action-first*: every row has the
+Owner pages are gated by the owner password (or an explicit owner key) and are *action-first*: every row has the
 verb you would want next to it (play/pause, ban, push, activate, delete), rather
 than a read-only table with a form somewhere else.
 
@@ -300,7 +312,9 @@ For a station that stays on air, run the node on a VM or container with
 | `LIVY_MODEL_DIR` | `$LIVY_DATA_DIR/models` | where trained models live |
 | `LIVY_HF_REPO` / `HF_TOKEN` | empty | private Hugging Face model storage |
 | `PORT` | `2333` | listen port |
-| `SERVER_PASSWORD` | empty | password for the stream/API surface |
+| `SERVER_PASSWORD` | empty | legacy password for the stream/API surface |
+| `OWNER_KEY` | empty | explicit owner credential; survives alongside a password |
+| `OWNER_PASSWORD` | empty | owner password, hashed at boot; set it in the environment instead of the console |
 
 ## What is in the box
 
@@ -358,7 +372,8 @@ bun run test                # from the repo root
 bun run test:node           # node --test, for a Node-only host
 ```
 
-302 tests (two native-kernel tests skip on a host without a MetroFX binary). Sources are stubbed at the transport rather than at the module, so no
+307 tests (two native-kernel tests skip on a host without a MetroFX binary).
+Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
 air, the Android training budget, model presets, `node:sqlite`, and private Hugging Face
@@ -394,6 +409,8 @@ forces the reference path; the test suite passes both ways.
 `GET /api/v1/search?q=…` · `POST /api/v1/stations/:id/request` ·
 `POST /api/v1/track-url` (a direct file for the browser) ·
 `POST /api/v1/stations/:id/play` (listener pick → on air) ·
+`POST /api/v1/setup/password` (first-run claim) ·
+`POST /api/v1/owner/password` (change, owner-gated) ·
 `GET /api/v1/events` (WebSocket) · `GET /stream/<id>.mp3` (ICY) ·
 `GET /health` · `/listen/` · `/owner/`
 

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { owner } from '../lib/api.js'
+import SecurityPanel from './SecurityPanel.js'
 
 const levelClass = (level) => `log-level ${String(level ?? '').toLowerCase()}`
 
@@ -118,6 +119,7 @@ export default function OpsPanel({ say }) {
         ))}
         {!logs?.lines?.length ? <div className="empty">No lines buffered.</div> : null}
       </div>
+      <SecurityPanel say={say} />
       {error ? <div className="error">{error}</div> : null}
     </div>
   )

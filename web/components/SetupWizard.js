@@ -6,11 +6,16 @@
  * Three fields and a button. Anything else — transitions, the DJ, plugins —
  * can be changed later from the studio, and defaults that work are better
  * than a form that asks twelve questions before you have heard anything.
+ *
+ * On a fresh node the first step is the owner password, not the key printed
+ * in the log: a browser visitor can claim the node before it has a station,
+ * and from then on the password is the credential. An explicit `OWNER_KEY`,
+ * or a node that already has stations, still falls back to the key prompt.
  */
 import { useEffect, useState } from 'react'
 
 import KeyGate from './KeyGate.js'
-import { api, owner, ownerKey } from '../lib/api.js'
+import { api, owner, ownerKey, setOwnerKey } from '../lib/api.js'
 
 /** One ready-made playlist line per source, so nobody has to read the docs. */
 const STARTERS = [
@@ -30,15 +35,44 @@ export default function SetupWizard({ onDone }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [needsKey, setNeedsKey] = useState(true)
+  const [passwordState, setPasswordState] = useState({ configured: false, canSet: false, minLength: 8 })
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [passwordError, setPasswordError] = useState(null)
 
   useEffect(() => {
-    api('/api/v1/setup')
+    api('/api/v1/setup', { key: ownerKey() })
       .then((payload) => {
+        setPasswordState(payload.password ?? { configured: false, canSet: false, minLength: 8 })
         setNeedsKey(Boolean(payload.protected))
-        setAuthed(!payload.protected || Boolean(ownerKey()))
+        setAuthed(Boolean(payload.owner) || !payload.protected)
       })
       .catch(() => {})
   }, [])
+
+  const claim = async () => {
+    setPasswordError(null)
+    if (password.length < (passwordState.minLength ?? 8)) {
+      setPasswordError(`Use at least ${passwordState.minLength ?? 8} characters.`)
+      return
+    }
+    if (password !== confirmation) {
+      setPasswordError('The two passwords do not match.')
+      return
+    }
+    setBusy(true)
+    try {
+      await api('/api/v1/setup/password', { method: 'POST', body: { password } })
+      setOwnerKey(password)
+      setPasswordState((current) => ({ ...current, configured: true, canSet: false }))
+      setNeedsKey(true)
+      setAuthed(true)
+    } catch (problem) {
+      setPasswordError(problem.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const create = async () => {
     setBusy(true)
@@ -61,6 +95,49 @@ export default function SetupWizard({ onDone }) {
     } finally {
       setBusy(false)
     }
+  }
+
+  if (passwordState.canSet && !passwordState.configured && !authed) {
+    return (
+      <div className="stack">
+        <div className="card">
+          <h3 style={{ margin: '0 0 6px' }}>Choose an owner password</h3>
+          <p className="dim" style={{ marginTop: 0 }}>
+            This is how you will sign in to this node. It replaces the setup key in the server log and is stored only as a
+            hash.
+          </p>
+          <label className="field" htmlFor="owner-password">
+            Password
+          </label>
+          <input
+            id="owner-password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+            autoFocus
+          />
+          <label className="field" htmlFor="owner-password-confirm" style={{ marginTop: 10 }}>
+            Confirm password
+          </label>
+          <input
+            id="owner-password-confirm"
+            type="password"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            onKeyDown={(event) => event.key === 'Enter' && claim()}
+            autoComplete="new-password"
+          />
+          <button className="btn primary block" style={{ marginTop: 12 }} onClick={claim} disabled={busy}>
+            {busy ? <span className="spin" /> : 'Save password'}
+          </button>
+          {passwordError ? <p className="error">{passwordError}</p> : null}
+        </div>
+        <p className="dim small">
+          Already have an owner key or password? <a href="/owner/">Open the control room</a>.
+        </p>
+      </div>
+    )
   }
 
   if (needsKey && !authed) return <KeyGate onUnlock={() => setAuthed(true)} />
