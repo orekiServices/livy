@@ -125,7 +125,13 @@ export function toTtml(lines = [], { durationMs = null, title = null, artist = n
 
     const next = lines.slice(i + 1).find((entry) => String(entry.text ?? '').trim())
     const end = Math.min(next?.at ?? line.at + 4000, durationMs ?? Number.MAX_SAFE_INTEGER, line.at + 12_000)
+    // The line keeps the whole slot to the next one — that is what keeps it
+    // lit on screen through the pause. The *words* inside it do not: LRC has
+    // no word timings, so tiling the slot proportionally smeared a three-word
+    // line across ten seconds when the singer simply stopped. Words get a
+    // sane share of the slot and the rest of it is silence.
     const span = Math.max(400, end - line.at)
+    const spoken = Math.min(span, Math.max(800, text.length * 45))
 
     const words = text.split(/\s+/).filter(Boolean)
     const weight = words.reduce((sum, word) => sum + word.length + 1, 0) || 1
@@ -133,7 +139,7 @@ export function toTtml(lines = [], { durationMs = null, title = null, artist = n
     parts.push(`      <p begin="${stamp(line.at)}" end="${stamp(line.at + span)}">`)
     let at = line.at
     for (const word of words) {
-      const share = ((word.length + 1) / weight) * span
+      const share = ((word.length + 1) / weight) * spoken
       parts.push(`        <span begin="${stamp(at)}" end="${stamp(at + share)}">${escape(word)}</span>`)
       at += share
     }

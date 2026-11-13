@@ -163,6 +163,33 @@ test('an LRC becomes lines, and lines become the TTML the player renders', () =>
   assert.match(escaped, />&lt;3</)
 })
 
+test('a long instrumental gap keeps the line lit without smearing its words', () => {
+  // LRC says when a line starts, never when its words end. Tiling the whole
+  // slot between two lines proportionally meant a three-word line sung in a
+  // second stayed "sung" for the ten seconds the singer rested — on a screen
+  // that is nothing but lyrics, that is a highlight crawling one word every
+  // three seconds.
+  const lines = parseLrc(['[00:02.00] one two three', '[00:12.00] four five six'].join('\n'))
+  const ttml = toTtml(lines, { durationMs: 20_000 })
+  const clock = (m) => Number(m.split(':')[0]) * 60 + Number(m.split(':')[1])
+
+  const paragraphs = [...ttml.matchAll(/<p begin="([\d:.]+)" end="([\d:.]+)">/g)].map((m) => [m[1], m[2]])
+  assert.deepEqual(paragraphs[0], ['00:02.000', '00:12.000'], 'the line still holds the whole slot, so it stays on screen')
+
+  const spans = [...ttml.matchAll(/<span begin="([\d:.]+)" end="([\d:.]+)">/g)].map((m) => [m[1], m[2]])
+  assert.ok(
+    clock(spans[2][1]) - clock('00:02.000') < 2000,
+    `the last word ends close to the line's start, not at the next line (got ${spans[2][1]})`
+  )
+
+  // With no gap to worry about, the words still fill the line — the cap is a
+  // ceiling, not a shrink.
+  const tight = toTtml(parseLrc(['[00:12.34] first line', '[00:15.00] second line'].join('\n')), { durationMs: 30_000 })
+  const tightSpans = [...tight.matchAll(/<span begin="([\d:.]+)" end="([\d:.]+)">([^<]*)<\/span>/g)]
+  assert.equal(tightSpans[0][3], 'first')
+  assert.equal(tightSpans[1][2], '00:13.140', 'a 2.66 s line is shared between its two words')
+})
+
 test('radio metadata is cleaned up before it is looked up', () => {
   assert.equal(cleanTitle('Get Lucky (Official Video)'), 'Get Lucky')
   assert.equal(cleanTitle('Song - Official Audio'), 'Song')

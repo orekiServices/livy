@@ -11,7 +11,7 @@
   "dependencies": {
     "@kawarp/react": "^1.3.0",
     "@lit/react": "^1.0.8",
-    "@uimaxbai/am-lyrics": "^1.7.4",
+    "@uimaxbai/am-lyrics": "^1.9.0",
     "next": "^16.3.6",
     "react": "19.1.1",
     "react-dom": "19.1.1",
