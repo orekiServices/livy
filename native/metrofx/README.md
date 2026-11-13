@@ -50,6 +50,8 @@ npm run build          # napi build --platform --release
 npm run build:local    # cargo build --release + host-named copy
 ```
 
+From the repository root, `npm run build:fx` does the first two.
+
 `scripts/build-linux-universal.sh` cross-builds the five Linux targets from one
 x86_64 machine with zig, pinned to glibc 2.17, and writes them next to
 `index.js` — where the loader looks. The checked-in Linux prebuilds were built

@@ -15,7 +15,8 @@
     "build:web": "cd server && bun run build:web",
     "build": "cd web && bun run build",
     "test": "cd server && bun test",
-    "build:listen": "cd client && bun run build"
+    "build:listen": "cd client && bun run build",
+    "build:fx": "cd native/metrofx && npm install && npm run build"
   },
   "engines": {
     "bun": ">=1.1.0",
