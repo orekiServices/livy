@@ -2,7 +2,7 @@
 /**
  * Build the web console and install it as a plugin of this node.
  *
- *   node scripts/build-console.js      (or: npm run build:web)
+ *   bun run build:web
  *
  * The Next app is exported to static files and copied into the console
  * **plugin** (server/plugins/console/public), which serves them on the node's
@@ -34,11 +34,11 @@ if (!fs.existsSync(webDir)) {
 
 if (!fs.existsSync(path.join(webDir, 'node_modules'))) {
   console.log('· installing console dependencies…')
-  run('npm', ['install'], webDir)
+  run('bun', ['install'], webDir)
 }
 
 console.log('· building the console…')
-run('npm', ['run', 'build'], webDir)
+run('bun', ['run', 'build'], webDir)
 
 if (!fs.existsSync(exportDir)) {
   console.error('✖ the build produced no out/ directory — is output:"export" still set in next.config.mjs?')

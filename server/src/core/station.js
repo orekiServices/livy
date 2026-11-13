@@ -388,7 +388,7 @@ export class Station extends EventEmitter {
   async #logSeam(record) {
     try {
       const { recordSeam } = await import('./models/trainer.js')
-      return recordSeam(record)
+      return recordSeam(record, { store: this.store })
     } catch (error) {
       this.log.debug(`seam log: ${error.message}`)
       return false

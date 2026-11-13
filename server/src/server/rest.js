@@ -60,7 +60,7 @@ const publicMessage = (error) => {
   return message
 }
 
-export function createRequestHandler({ manager, config, sources, store = null, tts = null, plugins = null }) {
+export function createRequestHandler({ manager, config, sources, store = null, tts = null, plugins = null, autoTrainer = null }) {
   // A config assembled by hand (tests, embedders) may not carry every key.
   // A missing one must never turn into `Invalid value "undefined" for header`.
   const cors = config.server?.cors ?? '*'
@@ -229,7 +229,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
   const streamErrors = new StreamErrorVoice({ tts, store, settings: config.streamErrors })
   // Words for what is on air. Fetched here, never by the listener's browser.
   const lyrics = new Lyrics({ store, ...(config.lyrics ?? {}) })
-  const ownerRoutes = createOwnerRouter({ manager, config, sources, store, tts, plugins, streamErrors })
+  const ownerRoutes = createOwnerRouter({ manager, config, sources, store, tts, plugins, streamErrors, autoTrainer })
 
   /* -------------------------------- router ------------------------------ */
 
@@ -337,6 +337,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
         }
 
         if (resource === 'info') {
+          const modelInfo = await import('../core/models/index.js')
+            .then(({ models }) => models.info())
+            .catch(() => null)
           return send(res, 200, {
             name: 'livy',
             // Where this is running, and what that costs: a serverless
@@ -365,6 +368,9 @@ export function createRequestHandler({ manager, config, sources, store = null, t
             transitions: [...EFFECTS],
             stations: manager.size,
             language: tts?.language ?? config.tts?.language ?? 'en',
+            // The learned mix, and the trainer watching for new seams.
+            models: modelInfo,
+            automixModel: autoTrainer?.state?.() ?? null,
             // First run: the console shows the setup flow instead of an empty grid.
             setup: { needed: manager.size === 0, protected: Boolean(ownerKey(config)) }
           })

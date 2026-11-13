@@ -118,6 +118,24 @@ export const DEFAULT_CONFIG = {
   memory: { enabled: true, saveEveryMs: 5000 },
   // What plays when the rotation runs dry (core/smartQueue.js).
   smartQueue: { enabled: true, minQueue: 3, batch: 5, lookback: 60, perArtist: 1 },
+  // The learned automix policy. On by default, trained while stations play:
+  // a fast small multi-train every `everySeams` new seams, best candidate
+  // activated only if it beats the incumbent on a held-out split.
+  models: {
+    enabled: true,
+    autoTrain: true,
+    fast: true,
+    candidates: 2,
+    minSeams: 40,
+    everySeams: 60,
+    pollMs: 60_000,
+    intervalMs: 30 * 60_000,
+    epochs: 0,
+    activate: true,
+    // Private Hugging Face repo for storage. Off until a repo and token are
+    // set; when on, the repo is created private and a public one is refused.
+    hf: { enabled: false, repo: '', revision: 'main', private: true, token: '' }
+  },
   stationDefaults: {
     bufferAheadMs: 15_000,
     burstMs: 4000,
@@ -223,6 +241,18 @@ function fromEnv(config) {
   if (env.DJ === '0' || env.DJ === 'off') out.stationDefaults.automix.dj.enabled = false
   if (env.DJ_NAME) out.stationDefaults.automix.dj.name = env.DJ_NAME
   if (env.DJ_EVERY) out.stationDefaults.automix.dj.every = Number(env.DJ_EVERY)
+  // Models: on unless switched off; HF storage when a repo is configured.
+  if (env.LIVY_MODELS === '0' || env.LIVY_MODELS === 'off') out.models.enabled = false
+  if (env.LIVY_AUTO_TRAIN === '0' || env.LIVY_AUTO_TRAIN === 'off') out.models.autoTrain = false
+  if (env.LIVY_FAST_TRAIN === '0' || env.LIVY_FAST_TRAIN === 'off') out.models.fast = false
+  if (env.LIVY_TRAIN_CANDIDATES) out.models.candidates = Math.max(1, Math.min(8, Number(env.LIVY_TRAIN_CANDIDATES) || 2))
+  if (env.LIVY_AUTO_TRAIN_EVERY) out.models.everySeams = Math.max(10, Number(env.LIVY_AUTO_TRAIN_EVERY) || 60)
+  if (env.LIVY_HF_MODELS === '1') out.models.hf.enabled = true
+  if (env.LIVY_HF_REPO) {
+    out.models.hf.repo = env.LIVY_HF_REPO
+    out.models.hf.enabled = env.LIVY_HF_MODELS === '0' ? false : true
+  }
+  if (env.HF_TOKEN) out.models.hf.token = env.HF_TOKEN
   return out
 }
 

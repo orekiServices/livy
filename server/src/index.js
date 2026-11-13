@@ -21,6 +21,7 @@ import createLogger, { configureLogging, banner } from './util/logger.js'
 import Memory from './core/memory.js'
 import SmartQueue from './core/smartQueue.js'
 import { engineInfo } from './util/metro.js'
+import { AutoTrainer, configureModels } from './core/models/index.js'
 
 const log = createLogger('livy')
 const VERSION = createRequire(import.meta.url)('../package.json').version
@@ -56,6 +57,10 @@ export async function createRadioServer(overrides = {}) {
           return null
         })
 
+  // The learned automix policy: settings are read from config and the store,
+  // then the background trainer is created once there is a manager to watch.
+  configureModels({ config, store })
+
   // Speech: station idents, owner announcements, the DJ.
   const tts =
     config.tts?.enabled === false
@@ -70,6 +75,10 @@ export async function createRadioServer(overrides = {}) {
   const smartQueue = new SmartQueue({ sources, memory, store, options: config.smartQueue ?? {} })
 
   const manager = new StationManager({ defaults: config.stationDefaults, sources, store, tts, memory, smartQueue })
+
+  // Trains while stations play: a cheap poll for new seams, a fast multi-run
+  // in the event-loop gaps, and the winner swapped in at the next seam.
+  const autoTrainer = new AutoTrainer({ manager, store, config })
 
   // Plugins extend the node before any station goes on air, so a plugin can
   // contribute a source or a transition that a station is configured to use.
@@ -119,7 +128,7 @@ export async function createRadioServer(overrides = {}) {
     }
   }
 
-  const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION })
+  const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, autoTrainer, version: VERSION })
   const server = http.createServer(handler)
   // A listener holds its socket open for as long as the browser or the player
   // does — that is the point of an internet radio. On Bun, though, HTTP/1.1
@@ -166,11 +175,13 @@ export async function createRadioServer(overrides = {}) {
         .catch((error) => log.warn(`station ${station.id} did not start: ${error.message}`, { station: station.id }))
     )
   Promise.allSettled(boot).then(() => log.info('all stations on air'))
+  if (!platform) autoTrainer.start()
 
   const close = async () => {
     // Write everything down before the lights go out — this is what makes
     // the next boot pick up mid-song.
     for (const station of manager.stations.values()) memory.save(station, { force: true })
+    autoTrainer.stop()
     gateway.close()
     await plugins?.close()
     manager.stopAll()
@@ -195,7 +206,7 @@ export async function createRadioServer(overrides = {}) {
     })
   }
 
-  return { config, manager, sources, store, tts, plugins, memory, smartQueue, server, gateway, close, port, version: VERSION }
+  return { config, manager, sources, store, tts, plugins, memory, smartQueue, autoTrainer, server, gateway, close, port, version: VERSION }
 }
 
 /**
@@ -251,6 +262,10 @@ export function createApp(overrides = {}) {
     const smartQueue = new SmartQueue({ sources, memory, store, options: config.smartQueue ?? {} })
     const manager = new StationManager({ defaults: config.stationDefaults, sources, store, tts, memory, smartQueue })
 
+  // Trains while stations play: a cheap poll for new seams, a fast multi-run
+  // in the event-loop gaps, and the winner swapped in at the next seam.
+  const autoTrainer = new AutoTrainer({ manager, store, config })
+
     const plugins =
       config.plugins?.enabled === false
         ? null
@@ -273,7 +288,7 @@ export function createApp(overrides = {}) {
       }
     }
 
-    const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION })
+    const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, autoTrainer, version: VERSION })
 
     log.info(`serverless app ready · ${manager.size} station(s) · store ${store ? store.driver : 'off'} · writable ${paths.writable}`)
     if (owner.created) log.warn('owner key generated for this instance only — set OWNER_KEY in the environment')
