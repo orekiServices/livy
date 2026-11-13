@@ -17,7 +17,7 @@ import { AutoTrainer } from '../src/core/models/auto.js'
 import { models } from '../src/core/models/host.js'
 import { buildDataset, seamCount, trainModels, recordSeam } from '../src/core/models/trainer/index.js'
 import { ensureRepo, hubStatus, uploadFile } from '../src/core/models/storage/hf.js'
-import { queueMethods } from '../src/core/station/queue.js'
+import { Station } from '../src/core/station.js'
 import { tmpdir } from './helpers.js'
 
 const seams = (count = 240) => {
@@ -131,15 +131,10 @@ test('auto-train runs while the station is on air, off the seam table', async ()
 test('a rendered seam becomes a training row through the station path', async () => {
   const store = await Store.open(':memory:', { memory: true })
   const file = path.join(tmpdir('dj-seam-log-'), 'dj-seams.jsonl')
-  const station = {
-    ...queueMethods,
-    store,
-    options: { seamLogFile: file },
-    _lastSeam: null,
-    log: { warn() {}, debug() {} }
-  }
-
-  const noted = station.noteSeam({
+  // A real Station, so this covers the `automix` event wiring as well as the
+  // logger: the engine's report is what the listener hears.
+  const station = new Station({ id: 'seam-log', name: 'Seam log', seamLogFile: file }, {}, { store })
+  station.emit('automix', {
     at: Date.now(),
     effect: 'bass-swap',
     decision: { source: 'heuristic', baseline: 'crossfade' },
@@ -152,6 +147,7 @@ test('a rendered seam becomes a training row through the station path', async ()
     from: 'A',
     to: 'B'
   })
+  const noted = station._lastSeam
   assert.equal(noted.effect, 'bass-swap')
   assert.equal(noted.phraseAligned, true)
   assert.equal(station._lastSeam, noted, 'the station remembers the seam for a skip')

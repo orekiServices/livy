@@ -239,8 +239,9 @@ export const queueMethods = {
   _logSeam(record) {
     try {
       // Both destinations are written by the dataset: the MetroDB row the
-      // trainer polls and the JSONL tail for a node without a database. An
-      // explicit file is only used by tests; a station keeps the default.
+      // trainer polls and the JSONL tail for a node without a database. The
+      // optional `seamLogFile` override is for embedded nodes and tests; the
+      // default stays in the data directory.
       return recordSeam(record, {
         store: this.store,
         file: this.options?.seamLogFile ?? undefined
