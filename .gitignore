@@ -16,6 +16,11 @@ server/media/tts/fallback-tone.mp3
 server/models/*.bin
 *.log
 
+# A virtualenv for the optional PyTorch trainer (server/python/README.md).
+.venv/
+venv/
+__pycache__/
+
 # Test scratch
 coverage/
 .tmp/

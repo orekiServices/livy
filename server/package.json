@@ -22,7 +22,9 @@
     "db:migrate": "bun scripts/db.js migrate",
     "bench:metro": "bun scripts/metro-bench.js",
     "build:metro": "cd ../native/libmetro && cargo build --release && bun scripts/link-local.js",
-    "build:db": "cd ../native/metrodb && cargo build --release && bun scripts/link-local.js"
+    "build:db": "cd ../native/metrodb && cargo build --release && bun scripts/link-local.js",
+    "train:setup": "python3 -m venv .venv && .venv/bin/pip install -r python/requirements.txt",
+    "train:probe": ".venv/bin/python python/train.py --probe"
   },
   "engines": {
     "bun": ">=1.1.0"

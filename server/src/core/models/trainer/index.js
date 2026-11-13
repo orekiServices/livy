@@ -15,11 +15,13 @@ import { modelSettings } from '../settings.js'
 import { recordModel } from '../registry.js'
 import { buildDataset, accuracy, loss, readSeams, split, LOG_FILE } from './dataset.js'
 import { gpuAvailable, trainOnGpu } from './gpu.js'
+import { planTorch, trainWithTorch, torchStatus, trainBackend } from './torch.js'
 import { trainingProfile } from '../device.js'
 import { trainRL } from '../rl.ts'
 
 export { readSeams, recordSeam, buildDataset, split, accuracy, loss, LOG_FILE, seamCount } from './dataset.js'
 export { gpuAvailable, trainOnGpu } from './gpu.js'
+export { planTorch, torchStatus, trainBackend } from './torch.js'
 
 const log = createLogger('dj-trainer')
 
@@ -47,14 +49,28 @@ function warmStart(network) {
   }
 }
 
-async function trainCandidate({ train, test, shape, epochs, learningRate, gpu, seed, warm, profile = trainingProfile() }) {
+async function trainCandidate({
+  train,
+  test,
+  shape,
+  epochs,
+  learningRate,
+  gpu,
+  seed,
+  warm,
+  profile = trainingProfile(),
+  // A candidate trained elsewhere (PyTorch, see `./torch.js`): the weights are
+  // already learned, so this only measures them. A random network of the same
+  // shape answers for "before", which is what the report means by baseline.
+  pretrained = null
+}) {
   const started = Date.now()
-  const network = new Network([FEATURES.length, ...shape, ACTIONS.length], { seed })
-  const warmed = warm ? warmStart(network) : false
-  const accuracyBefore = accuracy(network, test)
+  const network = pretrained?.network ?? new Network([FEATURES.length, ...shape, ACTIONS.length], { seed })
+  const warmed = pretrained ? false : warm ? warmStart(network) : false
+  const accuracyBefore = accuracy(pretrained ? new Network([FEATURES.length, ...shape, ACTIONS.length], { seed }) : network, test)
 
-  let backend = 'cpu'
-  const wantsGpu = gpu === true || (gpu === 'auto' && (await gpuAvailable()))
+  let backend = pretrained?.backend ?? 'cpu'
+  const wantsGpu = !pretrained && (gpu === true || (gpu === 'auto' && (await gpuAvailable())))
   if (wantsGpu) {
     try {
       const done = await trainOnGpu(network, train, { epochs, learningRate })
@@ -87,6 +103,7 @@ async function trainCandidate({ train, test, shape, epochs, learningRate, gpu, s
     accuracyAfter: Number(accuracy(network, test).toFixed(3)),
     loss: Number(loss(network, test).toFixed(5)),
     parameters: network.parameterCount,
+    torch: pretrained?.meta ?? null,
     ms: Date.now() - started
   }
 }
@@ -119,7 +136,10 @@ export async function trainModels({
   warm = false,
   station = null,
   profile = null,
-  preset = null
+  preset = null,
+  // 'auto' uses PyTorch when the host has it, 'js' never does, 'torch' asks
+  // for it and still falls back rather than failing the run.
+  backend = null
 } = {}) {
   const started = Date.now()
   // A per-run `preset` wins over the saved setting, which wins over `auto`.
@@ -163,9 +183,48 @@ export async function trainModels({
   const baseline = accuracy(baselineNetwork, test)
   const incumbent = models.active?.network ? accuracy(models.active.network, test) : null
 
+  // PyTorch first, when the host has it: every candidate in one round trip to
+  // the interpreter, which is the difference between a sweep costing seconds
+  // and costing the station's CPU for a minute. The JavaScript trainer still
+  // measures every candidate and is the fallback for each one that fails.
+  const preference = backend ?? trainBackend()
+  const parameters = candidatesShapes.reduce((total, hidden) => {
+    const widths = [FEATURES.length, ...hidden, ACTIONS.length]
+    return total + widths.slice(1).reduce((sum, width, index) => sum + width * widths[index], 0)
+  }, 0)
+  let torchRun = null
+  if (preference !== 'js' && budget.gpu !== false) {
+    // Ask the workload before the interpreter: a small hosted node should not
+    // start Python at all to be told JavaScript is the faster answer.
+    const plan = planTorch({ backend: preference, rows: pairs.length, parameters })
+    if (plan.use) {
+      const status = await torchStatus()
+      if (!status.available && preference !== 'torch') {
+        torchRun = { available: false, reason: status.reason }
+      } else {
+        torchRun = await trainWithTorch({
+          train,
+          jobs: candidatesShapes.map((shape, index) => ({ shape, seed: 0x5eed + index * 7919 })),
+          epochs: runs,
+          learningRate
+        })
+      }
+    } else {
+      torchRun = { available: false, reason: plan.reason, planned: false }
+    }
+    if (torchRun.available) {
+      log.info(
+        `trained ${torchRun.results.length} candidate(s) with PyTorch ${torchRun.torch} on ${torchRun.device} in ${torchRun.ms} ms`
+      )
+    } else if (preference === 'torch') {
+      log.warn(`PyTorch was asked for but is unavailable (${torchRun.reason}); training in JavaScript`)
+    }
+  }
+
   const candidates = []
   for (let index = 0; index < candidatesShapes.length; index += 1) {
     try {
+      const fromTorch = torchRun?.available ? torchRun.results[index] : null
       const candidate = await trainCandidate({
         train,
         test,
@@ -177,7 +236,14 @@ export async function trainModels({
         gpu: budget.gpu ? (candidatesShapes.length > 1 ? (gpu === true ? false : gpu) : gpu) : 'off',
         seed: 0x5eed + index * 7919,
         warm,
-        profile: budget
+        profile: budget,
+        pretrained: fromTorch
+          ? {
+              network: fromTorch.network,
+              backend: 'torch',
+              meta: { device: torchRun.device, torch: torchRun.torch, steps: fromTorch.steps, ms: fromTorch.ms, batch: torchRun.batch }
+            }
+          : null
       })
       candidates.push({ index, ...candidate })
     } catch (error) {
@@ -265,6 +331,13 @@ export async function trainModels({
     incumbentAccuracy: incumbent == null ? null : Number(incumbent.toFixed(3)),
     loss: best.loss,
     improved,
+    // What the interpreter did, if it was asked. `null` means the JavaScript
+    // trainer was used for every candidate.
+    torch: torchRun
+      ? torchRun.available
+        ? { available: true, used: true, device: torchRun.device, version: torchRun.torch, interpreter: torchRun.interpreter, batch: torchRun.batch, ms: torchRun.ms }
+        : { available: false, used: false, reason: torchRun.reason, planned: torchRun.planned !== false }
+      : { available: false, used: false, reason: preference === 'js' ? 'the JavaScript trainer was asked for' : 'not attempted' },
     rl: rlReport,
     activated: Boolean(activate && improved),
     model: improved && activate ? { file: savedBest?.file ?? null, name: savedBest?.name ?? null, digest: savedBest?.digest ?? null, activated: true } : null,
