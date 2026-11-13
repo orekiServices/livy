@@ -55,7 +55,10 @@ export async function boot(overrides = {}) {
     logging: { level: process.env.TEST_LOGS ?? 'error', color: false, buffer: 100, file: { enabled: false } },
     web: { enabled: false, dir: path.join(dir, 'no-web') },
     plugins: { enabled: false, dir: path.join(dir, 'no-plugins') },
-    store: { enabled: false },
+    // Even with the store off, credentials live beside its path; keep that
+    // inside the test's temp directory so a developer's real owner.auth.json
+    // can never leak into a test run.
+    store: { enabled: false, file: path.join(dir, 'livy.db') },
     tts: { enabled: false },
     relay: { metaint: 4000 },
     ...overrides,
