@@ -47,13 +47,19 @@ export const fxAvailable = Boolean(native)
 /** `'native' | 'javascript'` — what the filters are actually using. */
 export const fxEngine = native ? 'native' : 'javascript'
 
+/** The binary names the loader looked for, and why any of them failed. */
+export const fxTried = native?.triedNames ?? []
+export const fxLoadErrors = native?.loadErrors ?? []
+
 /** A small object for `/api/v1/info` and the boot log. */
 export function fxInfo() {
   return {
     available: Boolean(native),
     engine: fxEngine,
     version: native?.version?.() ?? null,
-    describe: native?.describe?.() ?? null
+    describe: native?.describe?.() ?? null,
+    tried: fxTried,
+    errors: fxLoadErrors
   }
 }
 
