@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm install --prefix server",
+  "buildCommand": "",
+  "outputDirectory": null,
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "{server/src/**,server/plugins/**,native/**}"
+    }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [{ "key": "cache-control", "value": "no-store" }]
+    }
+  ]
+}

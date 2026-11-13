@@ -38,6 +38,20 @@ import { createHash } from 'node:crypto'
 import { MetroFramer, decodeMp3 as metroDecode, encodeMp3 as metroEncode, analyseBeat, stretchAudio } from '../util/metro.js'
 import createLogger from '../util/logger.js'
 import { djLine } from './dj.js'
+// `models` imports EFFECTS from this module, so it is pulled in lazily at the
+// call sites below. The cycle would otherwise resolve with one side holding an
+// uninitialised binding, which ESM turns into a `ReferenceError` at boot.
+let djModels = null
+const loadModels = async () => {
+  if (djModels !== null) return djModels
+  try {
+    const module = await import('./models/index.js')
+    djModels = module.models ?? null
+  } catch {
+    djModels = null
+  }
+  return djModels
+}
 import {
   DB,
   TO_DB,
@@ -57,7 +71,18 @@ import {
   echoTail,
   brake,
   noiseSource,
-  resample
+  resample,
+  tempoCandidates,
+  selectTempoPair,
+  beatGrid,
+  snapCue,
+  beatAlignOffset,
+  tempoRelease,
+  vocalActivity,
+  phraseBoundary,
+  bandSplit,
+  phraseBlend,
+  vocalAwareCurves
 } from './dsp.js'
 
 const log = createLogger('automix')
@@ -107,6 +132,17 @@ export const DEFAULT_AUTOMIX = {
   beatAlign: true, // land the incoming song on a beat
   beatmatch: true, // time-stretch the outgoing song to the incoming tempo
   maxStretchPercent: 12, // never stretch further than this to match
+  // Seam analysis, after automix-engine: choose a tempo *pair* rather than two
+  // independent tempos, snap cues to the beat grid, and release the tempo back
+  // to native over a fixed window instead of switching at the seam.
+  analysePair: true,
+  // The learned DJ policy, when one is in models/. `false` pins the heuristic,
+  // which is what a station owner who wants predictable sets will choose.
+  model: true,
+  cueTolerance: 0.6, // a cue further than this fraction of a beat is not snapped
+  tempoReleaseMs: 4000, // how long the incoming track takes to return to native tempo
+  vocalAware: true, // wait for the outgoing vocal line, duck when both sing
+  phraseBlend: true, // snap the blend length to whole 4-beat phrases
   crossoverHz: 200, // bass-swap crossover
   trimSilence: true,
   dj: {
@@ -216,6 +252,15 @@ export function unregisterEffect(name) {
   const id = String(name ?? '').toLowerCase()
   if (BUILT_IN_EFFECTS.has(id)) return false
   delete EFFECT_RENDERERS[id]
+
+  // `splice`, not `filter` + reassign: `EFFECTS` is exported and held by
+  // reference (the model's action vector used to be `[...EFFECTS]`, and a
+  // console holds the array it fetched). Mutating it in place keeps every
+  // holder current, and is why removal has to be the same operation.
+  //
+  // The order is stable for the same reason: removing an entry must not
+  // reorder the ones that remain, or anything that indexed into this array
+  // starts pointing at a different transition.
   const at = EFFECTS.indexOf(id)
   if (at !== -1) EFFECTS.splice(at, 1)
   return true
@@ -653,6 +698,52 @@ export const EFFECT_TRAITS = {
  * @param {string}  [seam.previous]  what the last seam used
  * @param {string[]} [pool]          allowed effects (empty = all)
  */
+/**
+ * The model's opinion, folded into the heuristic's.
+ *
+ * Three rules keep a learned policy from being a liability on a live station:
+ *
+ *   • **The pool still excludes.** An owner who has switched off the drop does
+ *     not get a drop because a model likes one; the model is a *ranker* over
+ *     what the heuristic already allows, never an override of the pool.
+ *   • **The margin has to be real.** A model that is 0.01 ahead of the
+ *     runner-up has not decided anything, and the heuristic's own choice (which
+ *     knows about `previous`, so it also varies the set) is better than a coin.
+ *   • **It can only disagree within the allowed set.** With no model, a
+ *     failing model, or a thin margin, `chooseEffect` answers exactly as before.
+ *
+ * Returns `{ effect, source, margin, model }` so the caller can report which
+ * brain made the call — a transition the owner did not expect should be
+ * explicable from the log.
+ *
+ * @param {object} seam
+ * @param {string[]} [pool]
+ * @param {object|null} [model] a `models.score()` result, already computed
+ */
+export function chooseEffectWithModel(seam = {}, pool = [], model = null) {
+  const baseline = chooseEffect(seam, pool)
+  if (!model || !model.best) return { effect: baseline, source: 'heuristic', margin: 0, baseline }
+
+  const allowed = new Set(pool.length ? pool : EFFECTS)
+  const ranked = model.order.filter((name) => allowed.has(name))
+  if (ranked.length === 0) return { effect: baseline, source: 'heuristic', margin: 0, baseline }
+
+  // A transition the heuristic would refuse on this seam (no beat to roll on,
+  // a fade too short for a spindown) is not a candidate, however much the
+  // model likes it: the renderers assume those preconditions.
+  const traits = EFFECT_TRAITS[ranked[0]]
+  const usable = !traits?.needsBeat || seam.beat
+  const matched = !traits?.needsMatch || (seam.matched && (seam.tempoDelta ?? 99) < 3)
+  const long = !traits || (seam.fadeMs ?? 6000) >= traits.length
+  if (!usable || !matched || !long) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+
+  // `margin` is the model's own separation between first and second choice.
+  // Below it, the model has no opinion worth acting on.
+  if (model.margin < 0.05) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+  if (ranked[0] === baseline) return { effect: baseline, source: 'model', margin: model.margin, baseline, agreed: true }
+  return { effect: ranked[0], source: 'model', margin: model.margin, baseline, model: model.model }
+}
+
 export function chooseEffect(seam = {}, pool = []) {
   const {
     beat = false,
@@ -770,6 +861,7 @@ export class Automix {
   #collecting = false
   #lastTrack = null
   #lastEffect = null
+  #lastModel = null
   #breaks = 0
   #transitions = 0
 
@@ -811,6 +903,10 @@ export class Automix {
       beatAlign,
       beatmatch,
       maxStretchPercent,
+      analysePair: this.options.analysePair !== false,
+      model: this.options.model !== false,
+      vocalAware: this.options.vocalAware !== false,
+      tempoReleaseMs: this.options.tempoReleaseMs ?? 4000,
       dj: { ...this.options.dj },
       transitions: this.#transitions,
       breaks: this.#breaks,
@@ -980,6 +1076,84 @@ export class Automix {
     }
   }
 
+  /**
+   * Joint tempo analysis — automix-engine's `select_tempo_pair`.
+   *
+   * The scalar estimator is fast and right most of the time. The cases it gets
+   * wrong are exactly the ones that sound wrong: a shuffled groove whose
+   * eighth notes are stronger than its quarters, or a track analysed at double
+   * time because the hats are loud. Both show up as a *low confidence* on one
+   * side, or as a pair that disagrees by far more than the two candidates'
+   * second choices do.
+   *
+   * So: run it when either side is unsure, and only pay for the pair search
+   * over a short window (8 s is enough for the autocorrelation to find the
+   * beat; the whole track is not needed and would be slow). Returns the same
+   * shape as `estimateBeat`, plus the choice it made, or null when the scalar
+   * answer stands.
+   */
+  async #analysePair(windowA, windowB, sampleRate, beatA, beatB) {
+    if (this.options.analysePair === false) return null
+    if (!beatA || !beatB) return null
+    if (!(beatA.bpm > 0) || !(beatB.bpm > 0)) return null
+
+    // Two reasons to look harder, and they are the two ways the scalar
+    // estimator is known to fail:
+    //
+    //   • it was not sure; or
+    //   • the two answers are within 8 % of a power-of-two ratio. That is the
+    //     octave ambiguity — 128 and 64 describe the same groove, and *both*
+    //     are highly confident, so confidence alone can never catch it. A
+    //     half-time estimate here is not a curiosity: it makes the beatmatch
+    //     stretch by 100 %, which is rejected by `maxStretchPercent` and the
+    //     two songs go out unmixed.
+    const ratio = beatA.bpm / beatB.bpm
+    const nearest = 2 ** Math.round(Math.log2(ratio))
+    const octaveAmbiguous = Math.abs(ratio - nearest) / nearest < 0.08
+    const unsure = beatA.confidence <= 0.35 || beatB.confidence <= 0.35
+    if (!unsure && !octaveAmbiguous) return null
+
+    // Four seconds, not eight. The autocorrelation only has to find lags of
+    // 0.34–0.86 s (70–175 BPM), so it needs a few periods, not a phrase; at
+    // four seconds each window still holds 5–11 beats of every tempo in range
+    // and the candidate lists are identical to the eight-second ones on the
+    // fixtures. Halving it halves the only stage that runs two analyses at
+    // once, which is most of what is left of the seam's cost.
+    const limit = Math.round(4 * sampleRate)
+    const a = windowA.length > limit ? windowA.subarray(0, limit) : windowA
+    const b = windowB.length > limit ? windowB.subarray(0, limit) : windowB
+    const [candidatesA, candidatesB] = await Promise.all([
+      Promise.resolve().then(() => tempoCandidates(a, sampleRate)),
+      Promise.resolve().then(() => tempoCandidates(b, sampleRate))
+    ])
+    const pair = selectTempoPair(candidatesA, candidatesB)
+    if (!pair) return null
+
+    // A beat grid over the analysed window, phase-locked to the pair's tempo.
+    const gridFor = (window, bpm, estimate) => {
+      const period = (60 * sampleRate) / bpm
+      const beats = beatGrid(window.length, sampleRate, bpm, estimate?.phaseSamples ?? 0)
+      return {
+        bpm,
+        periodSamples: period,
+        phaseSamples: estimate?.phaseSamples ?? 0,
+        beats,
+        confidence: Math.max(estimate?.confidence ?? 0, pair.compatibility < 0.01 ? 0.55 : 0.4),
+        candidates: candidatesA.length,
+        source: 'pair'
+      }
+    }
+
+    return {
+      beatA: gridFor(a, pair.bpmA, beatA),
+      beatB: gridFor(b, pair.bpmB, beatB),
+      bpmA: pair.bpmA,
+      bpmB: pair.bpmB,
+      compatibility: Number(pair.compatibility.toFixed(4)),
+      score: Number(pair.score.toFixed(3))
+    }
+  }
+
   async #mix(tail, head) {
     const rawA = await decodeMp3(Buffer.concat(tail.frames.map((f) => f.data)))
     if (!rawA) return null
@@ -1015,13 +1189,26 @@ export class Automix {
     if (loudA != null && loudB != null) matchDb = clamp(loudA - loudB, -this.options.maxGainDb, this.options.maxGainDb)
     const matchGain = DB(matchDb)
 
-    /* 4. beat grid + beatmatch --------------------------------------------- */
+    /* 4. tempo pair, beat grid + beatmatch -------------------------------- */
     // Both tempos at once, off the event loop when libmetro is there: this
     // is the stage that used to cost most of a second on a long crossfade,
     // and the pacer has to keep releasing frames while it runs.
-    const [beatA, beatB] = this.options.beatAlign
-      ? await Promise.all([analyseBeat(monoA.subarray(aStart, aEnd), sampleRate), analyseBeat(monoB.subarray(bStart), sampleRate)])
-      : [null, null]
+    //
+    // automix-engine's first real insight: the pair is what matters. Two
+    // independent estimates plus a fold picks the wrong octave often enough
+    // to hear; scoring every candidate pair for agreement (and for sitting
+    // near 100 BPM, where real songs live) is the fix. The scalar estimator
+    // stays as the default so the native path keeps its speed, and the pair
+    // search only runs when both songs were unconfident or disagree badly.
+    let beatA = null
+    let beatB = null
+    let pairChoice = null
+    if (this.options.beatAlign) {
+      ;[beatA, beatB] = await Promise.all([analyseBeat(monoA.subarray(aStart, aEnd), sampleRate), analyseBeat(monoB.subarray(bStart), sampleRate)])
+      pairChoice = await this.#analysePair(monoA.subarray(aStart, aEnd), monoB.subarray(bStart), sampleRate, beatA, beatB)
+      if (pairChoice?.beatA) beatA = pairChoice.beatA
+      if (pairChoice?.beatB) beatB = pairChoice.beatB
+    }
     const confident = Boolean(beatA && beatB && beatA.confidence > 0.25 && beatB.confidence > 0.25)
 
     // The grid the *rendered* seam runs on. Without beatmatching that is the
@@ -1030,6 +1217,7 @@ export class Automix {
     let beatAt = (n) => (confident ? beatA.phaseSamples + n * beatA.periodSamples : 0)
     let tempoScale = 1
     let beatmatch = null
+    let release = null
 
     if (confident && this.options.beatmatch !== false) {
       // 174 BPM against 87 BPM is the same groove at half time: fold first.
@@ -1055,6 +1243,19 @@ export class Automix {
           stretchPercent: Number(((ratio - 1) * 100).toFixed(2)),
           rampMs: ms(ramp)
         }
+
+        // Tempo *release*: automix-engine returns the incoming song to its own
+        // tempo over a fixed wall-clock window rather than leaving it stretched
+        // for the rest of the track. This node renders only the seam, so the
+        // release is reported for the rest of the song: the incoming material
+        // after the seam is aired untouched, which is the same listener-side
+        // result (it returns to native speed), just achieved by not processing
+        // it. The map is still built, because the report is how the console
+        // shows what will happen and how long it takes.
+        release = tempoRelease(b.length, sampleRate, {
+          fromRate: folded.bpm / beatB.bpm,
+          releaseSeconds: Math.max(0.5, Number(this.options.tempoReleaseMs ?? 4000) / 1000)
+        })
       }
     }
 
@@ -1064,9 +1265,9 @@ export class Automix {
     if (confident && beatPeriod > 0) {
       let n = 0
       while (beatAt(n) < 0 && n < 64) n += 1
-      const offset = beatAt(n) - beatB.phaseSamples
-      alignShift = (((-offset % beatPeriod) + beatPeriod) % beatPeriod)
-      if (alignShift > b.length / 4) alignShift = 0
+      alignShift = beatAlignOffset(beatPeriod, beatAt(n), beatB.phaseSamples, b.length, {
+        maxFraction: this.options.cueTolerance ?? 0.6
+      })
       if (alignShift > 0) b = sliceChannels(b, alignShift, b.length)
     }
 
@@ -1100,21 +1301,65 @@ export class Automix {
     // measured in the rendered timeline — the stretch moved it.
     const endingFrom = Math.max(0, Math.round((aEnd - cuesA.overlay) * tempoScale))
     if (endingFrom > sec(400)) fade = Math.min(fade, Math.max(sec(1000), endingFrom))
+
+    let phrase = null
     if (confident && beatPeriod > 0) {
       // Whole beats only, and a whole phrase (4 beats) when one fits inside
       // the audio we are actually holding. Rounding up and then clamping
       // would silently put the blend back off the grid, so round down.
       const available = Math.min(fade, a.length, b.length)
-      let beats = Math.max(1, Math.floor(available / beatPeriod))
+      if (this.options.phraseBlend !== false) {
+        // automix-engine maps a fixed count of beats (32) and lets the clock
+        // follow the music; a radio seam is the same idea in the other
+        // direction — the *length* is a whole number of phrases and the
+        // milliseconds follow. A phrase is what a listener hears as "one
+        // thing", so an eight-beat blend at 80 BPM and at 140 BPM are both
+        // musically the same move.
+        phrase = phraseBlend({ bpm: beatmatch ? beatmatch.toBpm : beatA.bpm, availableSamples: available, sampleRate, minBeats: 8, maxBeats: 64 })
+        if (phrase) fade = Math.min(phrase.samples, Math.max(sec(400), phrase.samples))
+      }
+      let beats = Math.max(1, Math.floor(Math.min(fade, available) / beatPeriod))
       if (beats >= 4) beats -= beats % 4
       fade = Math.round(beats * beatPeriod)
+      if (phrase) phrase = { ...phrase, beats, samples: fade, phrases: beats / 4 }
     }
     if (fade < sec(400)) return null
 
     /* 6. the mix ----------------------------------------------------------- */
     // Curve: correlation decides unless the owner pinned one.
     const exponent = this.options.curve === 'equal-power' ? 2 : this.options.curve === 'equal-gain' ? 1 : exponentFor(r)
-    const gainFor = (t) => fadeGains(t, exponent)
+
+    // Vocal-aware shaping (automix-engine's "do not fade a lyric mid-line").
+    // Without stems the honest proxy is the band-energy gate in
+    // `vocalActivity`: is anything singing on the outgoing seam, and if so,
+    // where does the line end? The answer changes the *shape* of the faders,
+    // never the length of the blend, so a misdetection costs a slightly
+    // different curve rather than a wrong transition.
+    let vocal = null
+    let shape = null
+    if (this.options.vocalAware !== false && confident) {
+      const outMono = monoOf(a)
+      const inMono = monoOf(b)
+      const outActive = vocalActivity(outMono.subarray(0, Math.min(outMono.length, fade)), sampleRate)
+      const inActive = vocalActivity(inMono.subarray(0, Math.min(inMono.length, Math.max(fade, sec(2000)))), sampleRate)
+      const boundary = outActive.active
+        ? phraseBoundary(outMono, sampleRate, 0, { beats: beatGrid(outMono.length, sampleRate, (beatmatch?.toBpm ?? beatA.bpm) || 120), maxWaitMs: Math.min(1600, ms(fade) * 0.4) })
+        : null
+      shape = vocalAwareCurves({
+        outgoingActive: outActive.active,
+        incomingActive: inActive.active,
+        phraseEnd: boundary?.waited ? clamp(boundary.sample / Math.max(1, fade), 0.25, 0.9) : 0.6,
+        exponent
+      })
+      vocal = {
+        outgoing: outActive.active,
+        incoming: inActive.active,
+        shape: shape.shape,
+        phraseEndMs: boundary?.waited ? ms(boundary.sample) : null,
+        why: boundary?.reason ?? (outActive.active ? 'line continues' : 'no vocal at the seam')
+      }
+    }
+    const gainFor = shape ? (t) => [shape.aGain(t), shape.bGain(t)] : (t) => fadeGains(t, exponent)
 
     // Voice first: it can make the rendered segment longer than the blend.
     let voice = null
@@ -1157,22 +1402,37 @@ export class Automix {
     // Which transition? Either the one the owner named, or — the default —
     // one chosen for this particular seam (see chooseEffect).
     const wanted = this.options.effect ?? AUTO_EFFECT
-    const effect =
-      wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted]
-        ? chooseEffect(
-            {
-              beat: confident,
-              matched: Boolean(beatmatch),
-              tempoDelta: Math.abs((beatA?.bpm ?? 0) - (beatB?.bpm ?? 0)),
-              correlation: r,
-              fadeMs: ms(fade),
-              energy: entryEnergy,
-              talkover: Boolean(voice),
-              previous: this.options.varyEffects === false ? null : this.#lastEffect
-            },
-            this.options.effectPool ?? []
-          )
-        : wanted
+    const seamDescription = {
+      beat: confident,
+      matched: Boolean(beatmatch),
+      tempoDelta: Math.abs((beatA?.bpm ?? 0) - (beatB?.bpm ?? 0)),
+      correlation: r,
+      fadeMs: ms(fade),
+      energy: entryEnergy,
+      talkover: Boolean(voice),
+      previous: this.options.varyEffects === false ? null : this.#lastEffect,
+      // The model's richer view of the same seam: tempos on both sides, the
+      // loudness gap, vocal activity, and the time of day.
+      bpmOut: beatA?.bpm ?? 0,
+      bpmIn: beatB?.bpm ?? 0,
+      loudnessGap: matchDb,
+      vocalOut: vocal?.outgoing ? 1 : 0,
+      vocalIn: vocal?.incoming ? 1 : 0,
+      phraseAligned: Boolean(phrase)
+    }
+    let choice = { effect: chooseEffect(seamDescription, this.options.effectPool ?? []), source: 'heuristic' }
+    if (wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted]) {
+      // The DJ model, when one is loaded and the owner has not turned it off.
+      // A model is an *opinion*, not a requirement: `score()` returns null for
+      // every failure mode, and the heuristic then answers as it always did.
+      if (this.options.model !== false) {
+        const host = await loadModels()
+        const scored = host ? host.score(seamDescription) : null
+        if (scored) choice = chooseEffectWithModel(seamDescription, this.options.effectPool ?? [], scored)
+      }
+      this.#lastModel = choice.model ?? null
+    }
+    const effect = wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted] ? choice.effect : wanted
     this.#lastEffect = effect
 
     EFFECT_RENDERERS[effect]({
@@ -1236,6 +1496,15 @@ export class Automix {
         effect,
         // Was this one chosen for the seam, or named by the owner?
         chosen: (this.options.effect ?? AUTO_EFFECT) === AUTO_EFFECT,
+        // Which brain chose it, and what the other one would have picked. An
+        // owner looking at a surprising transition can see the disagreement
+        // rather than having to infer it.
+        decision: {
+          source: (this.options.effect ?? AUTO_EFFECT) === AUTO_EFFECT ? choice.source : 'owner',
+          baseline: (this.options.effect ?? AUTO_EFFECT) === AUTO_EFFECT ? choice.baseline : null,
+          margin: choice.margin ?? null,
+          model: choice.model ?? null
+        },
         entryEnergy: Number(entryEnergy.toFixed(2)),
         curve: exponent >= 1.95 ? 'equal-power' : exponent <= 1.05 ? 'equal-gain' : `blend(${exponent.toFixed(2)})`,
         correlation: Number(r.toFixed(3)),
@@ -1258,8 +1527,17 @@ export class Automix {
           stretchPercent: beatmatch?.stretchPercent ?? 0,
           shiftMs: ms(alignShift),
           beatsInBlend: beatPeriod ? Math.round(fade / beatPeriod) : 0,
-          confidence: beatA ? Number(beatA.confidence.toFixed(2)) : null
+          confidence: beatA ? Number(beatA.confidence.toFixed(2)) : null,
+          // Joint tempo analysis: the pair chosen, and how well it agrees.
+          pair: pairChoice
+            ? { bpmA: pairChoice.bpmA, bpmB: pairChoice.bpmB, compatibility: pairChoice.compatibility, source: 'pair' }
+            : { source: 'scalar' },
+          // Phrase-aligned blend length (automix-engine's 32-beat map, here).
+          phrase: phrase ? { beats: phrase.beats, phrases: phrase.phrases, beatMs: ms(phrase.beatSamples) } : null,
+          // Tempo release: how long the incoming song takes to reach native speed.
+          releaseMs: release ? ms(release.releaseSamples) : null
         },
+        vocal,
         peakDb: Number(TO_DB(Math.min(peak, ceiling)).toFixed(1)),
         dj: dj ? { kind: dj.kind, text: dj.text } : null
       }

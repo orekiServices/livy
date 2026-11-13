@@ -6,13 +6,21 @@
  * at 128 kbps). That makes it both our quality upgrade path and a strong
  * fallback when another provider refuses to stream a track.
  *
- * Queries:  ia:<terms> | iasearch:<terms> | https://archive.org/details/<id>
+ * Queries:  ia:<terms> | iasearch:<terms> | archive:<terms> |
+ *           https://archive.org/details/<id>
+ *
+ * Two filters matter for a radio rotation:
+ *   • collections that are audio but never music (old-time radio, audiobooks,
+ *     podcasts, news) are excluded from search;
+ *   • only real `.mp3` originals are queued — an item's derivative files
+ *     (spectrograms, ZIPs, 64 kbps "alternate" copies) are ignored, and the
+ *     highest-bitrate MP3 of each song wins.
  */
 import { Readable } from 'node:stream'
 import createLogger from '../util/logger.js'
 
 const log = createLogger('src:archive')
-const UA = 'radio-node/2.1 (+https://archive.org; mp3 radio)'
+const UA = 'Livy/1 (+https://github.com/orekiServices/livy; mp3 radio)'
 const SEARCH = 'https://archive.org/advancedsearch.php'
 
 const seconds = (value) => {
@@ -24,6 +32,14 @@ const seconds = (value) => {
   return parts.reduce((acc, part) => acc * 60 + part, 0) * 1000
 }
 
+/** Bitrate as a number; "VBR" derivatives are ~192 by convention. */
+function bitrateOf(file) {
+  const fromField = parseFloat(String(file.bitrate ?? '').replace(/[^\d.]/g, ''))
+  if (Number.isFinite(fromField) && fromField > 0) return Math.round(fromField)
+  if (/vbr/i.test(file.format ?? '')) return 192
+  return 128
+}
+
 export class ArchiveSource {
   name = 'archive'
   prefixes = ['ia:', 'iasearch:', 'archive:']
@@ -31,8 +47,13 @@ export class ArchiveSource {
   hiRes = true
 
   #metaCache = new Map()
+
   /** Ignore mega-compilations; a radio rotation wants songs, not 6-hour reels. */
-  maxTrackMs = 30 * 60_000
+  maxTrackMs
+
+  constructor({ maxTrackMs = 30 * 60_000 } = {}) {
+    this.maxTrackMs = maxTrackMs
+  }
 
   canResolve(query) {
     const q = String(query).trim().toLowerCase()
@@ -40,7 +61,7 @@ export class ArchiveSource {
   }
 
   async #json(url) {
-    const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'application/json' } })
+    const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(15_000) })
     if (!res.ok) throw new Error(`archive.org ${res.status}`)
     return res.json()
   }
@@ -69,9 +90,9 @@ export class ArchiveSource {
       if (!file.name || !/\.mp3$/i.test(file.name)) continue
       if (!/mp3/i.test(file.format ?? '') || /zip|torrent/i.test(file.format ?? '')) continue
       const lengthMs = seconds(file.length)
-      if (lengthMs > 0 && lengthMs > (this.maxTrackMs ?? 30 * 60_000)) continue // skip 6-hour compilations
+      if (lengthMs > 0 && lengthMs > this.maxTrackMs) continue // skip 6-hour compilations
       const key = (file.original ?? file.name).replace(/\.[^.]+$/, '')
-      const bitrate = Number(file.bitrate ?? 0) || (/VBR/i.test(file.format) ? 192 : 128)
+      const bitrate = bitrateOf(file)
       const previous = best.get(key)
       if (!previous || bitrate > previous.bitrate) best.set(key, { file, bitrate })
     }
@@ -135,9 +156,13 @@ export class ArchiveSource {
   }
 
   async stream(track) {
-    const res = await fetch(track.url, { headers: { 'user-agent': UA } })
+    const res = await fetch(track.url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20_000) })
     if (!res.ok || !res.body) throw new Error(`archive.org download ${res.status}`)
     return { stream: Readable.fromWeb(res.body), contentType: 'audio/mpeg', mode: 'archive', bitrate: track.bitrate }
+  }
+
+  getTrackUrl(track) {
+    return track.url ?? null
   }
 }
 

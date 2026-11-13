@@ -14,17 +14,32 @@
   },
   "sources": {
     "defaultSearch": "soundcloud",
+    "soundcloudClientId": "",
+    "audiusAppName": "livy",
+    "songlinkKey": "",
     "hiRes": true,
     "hiResMinKbps": 192,
+    "hiResMinScore": 0.62,
     "fallbackOrder": [
       "archive",
-      "soundcloud",
       "audius",
+      "soundcloud",
+      "nhaccuatui",
       "bandcamp",
       "ccmixter",
       "radiobrowser"
     ],
-    "liveFallback": true
+    "liveFallback": true,
+    "noSearch": [
+      "tts",
+      "http",
+      "mirror",
+      "songlink",
+      "radiobrowser",
+      "somafm",
+      "radioparadise"
+    ],
+    "maxTrackMs": 1800000
   },
   "owner": {
     "name": "owner",

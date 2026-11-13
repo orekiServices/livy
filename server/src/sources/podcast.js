@@ -81,7 +81,14 @@ export class PodcastSource {
       if (!enclosure) continue
       const url = /url="([^"]+)"/i.exec(enclosure)?.[1]
       const type = /type="([^"]+)"/i.exec(enclosure)?.[1] ?? ''
-      if (!url || !(type.includes('mpeg') || /\.mp3(\?|$)/i.test(url))) continue
+      // Accept an MP3 enclosure, or one with no (or a generic audio) type —
+      // plenty of feeds leave the type off and the extension is the truth.
+      // Anything MetroS can decode is fair game; the station transcodes it.
+      const decodable = /\.(mp3|m4a|m4b|aac|ogg|oga|opus)(\?|$)/i.test(url ?? '')
+      // A declared audio type is trustworthy; an empty one falls back to the
+      // extension. Images and documents are never queued.
+      const audioish = /\baudio\b|mpeg|octet-stream/i.test(type)
+      if (!url || (type && !audioish) || (!type && !decodable)) continue
 
       tracks.push({
         source: 'podcast',
@@ -96,6 +103,9 @@ export class PodcastSource {
         url,
         pageUrl: tag(chunk, 'link') ?? feedUrl,
         bitrate: 128,
+        // Only MP3 airs byte for byte; an AAC/M4A episode is decoded by
+        // MetroS on the way to the pacer.
+        transcode: !/\.mp3(\?|$)/i.test(url),
         streamable: true
       })
       if (tracks.length >= limit) break
@@ -138,6 +148,10 @@ export class PodcastSource {
   async stream(track, options = {}) {
     if (!this.http) throw new Error('podcast needs the http source to stream')
     return this.http.stream({ ...track, source: 'http' }, options)
+  }
+
+  getTrackUrl(track) {
+    return track.url ?? null
   }
 }
 

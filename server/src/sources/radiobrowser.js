@@ -10,7 +10,7 @@
 import createLogger from '../util/logger.js'
 
 const log = createLogger('src:radio')
-const UA = 'radio-node/2.1'
+const UA = 'Livy/1 (+https://github.com/orekiServices/livy; mp3 radio)'
 const MIRRORS = [
   'https://de1.api.radio-browser.info',
   'https://nl1.api.radio-browser.info',
@@ -76,11 +76,26 @@ export class RadioBrowserSource {
       order: 'clickcount',
       reverse: 'true'
     })
-    if (term) params.set('name', term)
 
-    let stations = await this.#json(`/json/stations/search?${params}`)
-    if (term && stations.length === 0) {
-      stations = await this.#json(`/json/stations/bytagexact/${encodeURIComponent(term)}?${params}`)
+    let stations = []
+    const wanted = String(term ?? '').trim()
+    if (wanted) {
+      // Name matches first; if that finds nothing, treat the term as a tag,
+      // then as a country. A single "jazz" should find stations whichever of
+      // the three the community filed it under.
+      params.set('name', wanted)
+      stations = await this.#json(`/json/stations/search?${params}`)
+      if (stations.length === 0) {
+        params.delete('name')
+        stations = await this.#json(`/json/stations/bytagexact/${encodeURIComponent(wanted)}?${params}`)
+      }
+      if (stations.length === 0) {
+        // Last attempt: a free-text search, which the directory ranks itself.
+        params.set('tag', wanted)
+        stations = await this.#json(`/json/stations/search?${params}`)
+      }
+    } else {
+      stations = await this.#json(`/json/stations/search?${params}`)
     }
 
     const tracks = stations
@@ -102,6 +117,14 @@ export class RadioBrowserSource {
   async stream(track, options) {
     // A Radio Browser entry is just an Icecast URL: reuse the HTTP/ICY source.
     return this.http.stream(track, options)
+  }
+
+  /**
+   * Live relays are not directly playable by a browser, but a station's
+   * `.pls`/`.m3u` URL is — and it is the URL the directory itself hands out.
+   */
+  getTrackUrl(track) {
+    return /\.(pls|m3u)(\?|$)/i.test(track.url ?? '') ? track.url : null
   }
 }
 

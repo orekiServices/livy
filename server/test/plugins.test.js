@@ -27,7 +27,7 @@ const fakeManager = () => {
 }
 
 async function host(files, { store = null } = {}) {
-  const dir = tmpdir('nodecast-plugins-')
+  const dir = tmpdir('livy-plugins-')
   for (const [name, body] of Object.entries(files)) {
     const full = path.join(dir, name)
     fs.mkdirSync(path.dirname(full), { recursive: true })
@@ -155,7 +155,7 @@ test('events and intervals are delivered, then cleaned up on unload', async () =
 })
 
 test('enable/disable is remembered in SQLite, and reload re-reads the file', async () => {
-  const store = await Store.open(path.join(tmpdir('nodecast-plugin-db-'), 'nodecast.db'))
+  const store = await Store.open(path.join(tmpdir('livy-plugin-db-'), 'livy.db'))
   const { host: h, dir } = await host(
     {
       'toggle.js': `export const manifest = { name: 'Toggle', version: '1.0.0' }
@@ -194,7 +194,7 @@ test('enable/disable is remembered in SQLite, and reload re-reads the file', asy
 })
 
 test('settings come from the manifest, the database and saveSettings()', async () => {
-  const store = await Store.open(path.join(tmpdir('nodecast-plugin-settings-'), 'nodecast.db'))
+  const store = await Store.open(path.join(tmpdir('livy-plugin-settings-'), 'livy.db'))
   const { host: h } = await host(
     {
       'configurable/plugin.json': JSON.stringify({ name: 'Configurable', version: '1.0.0', settings: { greeting: 'hello', times: 1 } }),
@@ -216,11 +216,11 @@ test('settings come from the manifest, the database and saveSettings()', async (
   store.close()
 })
 
-test('the plugins shipped with Nodecast load in a real node and serve their routes', async () => {
-  const dir = tmpdir('nodecast-real-')
+test('the plugins shipped with Livy load in a real node and serve their routes', async () => {
+  const dir = tmpdir('livy-real-')
   const instance = await boot({
     _dir: dir,
-    store: { enabled: true, file: path.join(dir, 'nodecast.db') },
+    store: { enabled: true, file: path.join(dir, 'livy.db') },
     plugins: { enabled: true, dir: path.resolve('plugins') }
   })
   const base = `http://127.0.0.1:${instance.port}`

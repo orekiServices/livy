@@ -25,7 +25,8 @@ import { MetroFramer, MetroTranscoder, engineInfo, sniff } from '../util/metro.j
 import { worthResuming } from './memory.js'
 import { hlsSegments, isHlsUrl } from '../util/hls.js'
 import createLogger from '../util/logger.js'
-import Automix, { DEFAULT_AUTOMIX } from './automix.js'
+import Automix, { DEFAULT_AUTOMIX, decodeMp3, encodeMp3 } from './automix.js'
+import { FilterChain } from './filters/index.js'
 
 const DEFAULTS = {
   bufferAheadMs: 15_000, // how far the reader runs ahead of real time
@@ -142,6 +143,19 @@ export class Station extends EventEmitter {
       { sources, station: this, log: createLogger(`automix:${this.id}`) }
     )
 
+    // Every rendered seam is a training sample for the DJ model: note it now,
+    // and let `skip()` or the next transition close the label. This is the
+    // whole feedback loop — no extra instrumentation, no separate analytics,
+    // and it works for a station nobody is watching.
+    this.on('automix', (report) => this.noteSeam(report))
+
+    // Station filters (the NodeLink surface): one chain per station, applied to
+    // everything the station airs. Compiled once per change, then run per block
+    // — see core/filters.js. Empty means "do not decode anything at all",
+    // which is why an unfiltered station costs exactly what it did before.
+    this.filters = new FilterChain(config.filters ?? {}, { sampleRate: 44_100 })
+    this.#filterCache = { track: null, held: [], heldMs: 0, bitrate: 128 }
+
     // Rehydrate the request line after a restart.
     try {
       const pending = this.store?.pendingRequests(this.id) ?? []
@@ -160,6 +174,7 @@ export class Station extends EventEmitter {
   }
 
   #frames
+  #filterCache = { track: null, held: [], heldMs: 0, bitrate: 128 }
   #bufferedMs
   #burst
   #burstMs
@@ -288,6 +303,12 @@ export class Station extends EventEmitter {
     const playingId = this.current?.track?.id ?? this.#frames[0]?.track?.id
     if (!playingId) return false
 
+    // A skip is the only listener signal a radio stream gets, and it is the
+    // label the DJ model learns from. It is only attributable to the
+    // transition if it happened close to one; `recordSkip()` decides that, and
+    // a skip in the middle of a song teaches the model nothing about seams.
+    this.#recordSkip(playingId)
+
     // Drop everything still buffered for the current track: the pacer then
     // plays the next track's frames on its very next tick.
     this.#frames = this.#frames.filter((f) => f.track?.id !== playingId)
@@ -300,6 +321,78 @@ export class Station extends EventEmitter {
       this.#readerAbort?.abort()
     }
     return true
+  }
+
+  /* --------------------------- DJ seam log ---------------------------- */
+
+  #lastSeam = null
+
+  /**
+   * Remember the last transition so that a skip can be attributed to it.
+   *
+   * Called from the automix's `automix` event. The listener's reaction is what
+   * the DJ model is trained on, so the record has to survive until the next
+   * transition or until the attribution window has passed — whichever
+   * comes first.
+   */
+  noteSeam(report = {}) {
+    if (!report?.effect) return null
+    const at = Number(report.at) || Date.now()
+    this.#lastSeam = {
+      at,
+      effect: report.effect,
+      source: report.decision?.source ?? 'heuristic',
+      baseline: report.decision?.baseline ?? report.effect,
+      model: report.decision?.model ?? null,
+      // Everything the feature builder needs, copied now: the report object is
+      // not guaranteed to exist later, and reading a mutated one would log a
+      // seam that never happened.
+      bpmOut: report.beat?.bpm ?? 0,
+      bpmIn: report.beat?.incomingBpm ?? 0,
+      matched: Boolean(report.beat?.matched),
+      correlation: report.correlation ?? 0,
+      loudnessGap: report.loudness?.appliedDb ?? 0,
+      energy: report.entryEnergy ?? 0.5,
+      energyIn: report.entryEnergy ?? 0.5,
+      vocalOut: report.vocal?.outgoing ? 1 : 0,
+      vocalIn: report.vocal?.incoming ? 1 : 0,
+      fadeMs: report.blendMs ?? 6000,
+      phraseAligned: Boolean(report.beat?.phrase),
+      talkover: Boolean(report.dj),
+      hour: new Date(at).getHours(),
+      from: report.from ?? null,
+      to: report.to ?? null
+    }
+    return this.#lastSeam
+  }
+
+  /**
+   * Close the loop on the last transition.
+   *
+   * `outcome` is `completed` (the track played out) or `skipped` (somebody
+   * pressed the button). The log line is what the trainer reads.
+   */
+  #recordSkip(playingId) {
+    const seam = this.#lastSeam
+    if (!seam) return false
+    const since = Date.now() - seam.at
+    // A skip further than a couple of minutes from the seam says nothing about
+    // it — the listener skipped the *song*.
+    if (since > 180_000) {
+      this.#lastSeam = null
+      return false
+    }
+    return this.#logSeam({ ...seam, outcome: 'skipped', skippedAfterMs: since, skippedTrack: playingId })
+  }
+
+  async #logSeam(record) {
+    try {
+      const { recordSeam } = await import('./models/trainer.js')
+      return recordSeam(record)
+    } catch (error) {
+      this.log.debug(`seam log: ${error.message}`)
+      return false
+    }
   }
 
   /* ------------------------------ requests ---------------------------- */
@@ -650,6 +743,15 @@ export class Station extends EventEmitter {
         }
 
         await this.#readTrack(track)
+        // The reader's last block left one encoded frame in hand. It belongs
+        // on air before the next track's first frame, not spliced behind it.
+        await this.#flushFilterFrames()
+        // The track played out, so the transition into it was a keeper: this
+        // is the positive label the trainer learns from.
+        if (this.#lastSeam && !this.#skipRequested) {
+          this.#logSeam({ ...this.#lastSeam, outcome: 'completed', completedAfterMs: Date.now() - this.#lastSeam.at })
+          this.#lastSeam = null
+        }
       }
     } finally {
       this.#readerBusy = false
@@ -667,6 +769,19 @@ export class Station extends EventEmitter {
    */
   async #air(batch) {
     let ready = batch
+
+    // Filters first: they are what the listener hears, and the automix's seam
+    // renderer produces already-encoded MP3 — filtering after it would mean
+    // decoding audio that was just encoded. Unfiltered, this is one property
+    // read per batch.
+    if (this.filters && !this.filters.empty) {
+      try {
+        ready = await this.#filterThrough(ready)
+      } catch (error) {
+        this.log.warn(`filters bypassed: ${error.message}`)
+      }
+    }
+
     if (this.automix?.enabled) {
       try {
         ready = await this.automix.push(batch)
@@ -679,6 +794,137 @@ export class Station extends EventEmitter {
       this.#frames.push(frame)
       this.#bufferedMs += frame.ms
     }
+  }
+
+  /**
+   * Drive one batch through the air path exactly as the reader does.
+   *
+   * Public because the filter chain is the one stage whose correctness is a
+   * question about *audio*, and a test that re-implements decode → chain →
+   * encode would pass even if `#air` stopped calling it. Named with the double
+   * underscore so it reads as the test seam it is, not as API.
+   */
+  async __airForTest(batch) {
+    if (this.filters && !this.filters.empty) return this.#filterThrough(batch)
+    return batch
+  }
+
+  /* ------------------------------ filters ----------------------------- */
+
+  /**
+   * Run a batch of reader frames through the station's filter chain.
+   *
+   * The block is decoded, filtered and re-encoded at the same bitrate it
+   * arrived at. Three details make this shippable on a live node:
+   *
+   *   • **Batch granularity.** A reader batch is 8–10 frames (200–260 ms), so
+   *     that is the block: one decode and one encode per batch, not per frame.
+   *     At 128 kbps that is a few milliseconds of work per quarter second.
+   *   • **A one-batch hold.** A block seldom ends on a frame boundary, and the
+   *     encoder emits whole frames. The remainder is carried into the next
+   *     block, so the output is contiguous and the timing does not drift; a
+   *     small `flushFilters()` at the end of a track releases it.
+   *   • **Announcements are filtered too.** A jingle with the station's reverb
+   *     on it is the point of having the reverb; bypassing idents would leave
+   *     one piece of the hour dry.
+   *
+   * Returns frames tagged with the source track so the pacer's metadata,
+   * history and lyrics stay attached to the right song.
+   */
+  async #filterThrough(batch) {
+    if (!batch.length) return batch
+    const track = batch[0].track
+
+    // A new track (or a different one mid-batch) starts a clean block: the old
+    // remainder would otherwise splice onto the head of the next song.
+    if (track?.id !== this.#filterCache.track?.id) {
+      this.#filterCache.track = track
+      this.#filterCache.held = []
+      this.#filterCache.heldMs = 0
+      this.filters.reset()
+    }
+
+    const held = this.#filterCache.held
+    const bitrate = clampBitrate(track?.streamBitrate ?? this.#filterCache.bitrate ?? 128)
+    this.#filterCache.bitrate = bitrate
+
+    const frames = [...held, ...batch.map((frame) => frame.data)]
+    const pcm = await decodeMp3(Buffer.concat(frames))
+    if (!pcm) return batch
+
+    const out = this.filters.process(pcm.left, pcm.right, Math.min(pcm.left.length, pcm.right.length))
+    const mp3 = await encodeMp3({ left: out.left, right: out.right, sampleRate: pcm.sampleRate, bitrate })
+    const parsed = new MetroFramer().push(mp3)
+    if (parsed.frames.length === 0) return batch
+
+    // The encoder emits whole frames and the block it was given did not
+    // necessarily end on a frame boundary, so the last one may carry audio the
+    // next block also contains. Hold it and prepend it there: the splice is
+    // then continuous, and the duration handed to the pacer is the duration
+    // that actually went out.
+    const frameMs = parsed.durationMs / parsed.frames.length
+    const keep = parsed.frames.length > 2 ? 1 : 0
+    const emit = keep ? parsed.frames.slice(0, -keep) : parsed.frames
+    this.#filterCache.held = keep ? parsed.frames.slice(-keep) : []
+    this.#filterCache.heldMs = frameMs * this.#filterCache.held.length
+
+    return emit.map((data) => ({ data, ms: frameMs, track }))
+  }
+
+  /** Push `flushFilters()` output onto the air, if there is any. */
+  async #flushFilterFrames() {
+    const frames = await this.flushFilters().catch(() => [])
+    for (const frame of frames) {
+      this.#frames.push(frame)
+      this.#bufferedMs += frame.ms
+    }
+    return frames
+  }
+
+  /**
+   * Release the filter's held frame.
+   *
+   * One frame of audio is always in hand; it belongs on air before the track
+   * ends, or the last 26 ms of every song disappears. `reset` clears the
+   * chain's biquad memory (a new track must not inherit the old one's tail).
+   */
+  async flushFilters() {
+    if (!this.filters || this.filters.empty) return []
+    const held = this.#filterCache.held ?? []
+    if (!held.length) return []
+    const track = this.#filterCache.track
+    const frameMs = this.#filterCache.heldMs / held.length
+    this.#filterCache.held = []
+    this.#filterCache.heldMs = 0
+    return held.map((data) => ({ data, ms: frameMs, track }))
+  }
+
+  /**
+   * Owner control: replace the station's filter chain while it is on air.
+   *
+   * The chain is *updated* rather than rebuilt. A rebuild would flush the
+   * delay lines and cut a reverb tail in half every time an owner moved a
+   * fader; `update()` keeps the state of every filter that stays engaged and
+   * only resets the ones that switch off.
+   */
+  setFilters(payload = {}) {
+    const next = this.filters ? this.filters.update(payload) : new FilterChain(payload, { sampleRate: 44_100 })
+    const previous = this.filters
+    this.filters = next
+    // The held frame was encoded by the previous chain, but it is still the
+    // audio of the track that is playing: keep it, and keep the track so the
+    // next block is not mistaken for a new song.
+    const info = next.compiled
+    this.options.filters = payload
+    // A filter that could not be built is a request to fail loudly, not to
+    // pretend the station has a chorus. The previous chain keeps running.
+    if (info.unknown.length && payload?.strict !== false && Object.keys(payload ?? {}).length && info.active.length === 0) {
+      this.filters = previous
+      throw new Error(`unknown filter(s): ${info.unknown.join(', ')}`)
+    }
+    this.emit('filters', { active: info.active, unknown: info.unknown, clamped: info.clamped, configured: true })
+    this.log.info(info.active.length ? `filters: ${info.active.join(', ')}` : 'filters cleared')
+    return { active: info.active, skipped: info.skipped, unknown: info.unknown, clamped: info.clamped }
   }
 
   /** Release audio the automix is holding back (end of programme, errors). */
@@ -1131,7 +1377,7 @@ export class Station extends EventEmitter {
         yield* hlsSegments(input, { signal })
         return
       }
-      const res = await fetch(input, { signal, headers: { 'user-agent': 'Nodecast/3', accept: '*/*' } })
+      const res = await fetch(input, { signal, headers: { 'user-agent': 'Livy/3', accept: '*/*' } })
       if (!res.ok || !res.body) throw new Error(`upstream answered ${res.status}`)
       // A playlist served without the .m3u8 extension is still a playlist.
       const type = res.headers.get('content-type') ?? ''
@@ -1351,3 +1597,10 @@ export class Station extends EventEmitter {
 }
 
 export default Station
+
+/** Bitrates a re-encode may use: the frame's own rate, inside the MP3 range. */
+function clampBitrate(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return 128
+  return Math.max(96, Math.min(320, Math.round(number)))
+}

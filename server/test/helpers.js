@@ -22,7 +22,7 @@ export { resetLogging }
 const created = new Set()
 
 /** Temp directory removed when the process exits. */
-export function tmpdir(prefix = 'nodecast-test-') {
+export function tmpdir(prefix = 'livy-test-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
   created.add(dir)
   return dir

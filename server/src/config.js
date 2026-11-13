@@ -1,5 +1,5 @@
 /**
- * Nodecast configuration: defaults → config.json → environment.
+ * Livy configuration: defaults → config.json → environment.
  *
  * A fresh install ships with **no stations**. The node comes up empty, prints
  * a one-time owner key, and the web console walks you through creating the
@@ -11,6 +11,34 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/**
+ * Are we running inside a Vercel Function?
+ *
+ * Vercel sets `VERCEL=1` for every deployment. The important consequence is
+ * not the platform, it is the filesystem: the deployment bundle is read-only
+ * and `/tmp` is the only writable directory, and even `/tmp` is not shared
+ * between invocations. Anything that wants to survive a request has to be a
+ * KV/blob/database, so everything that writes here is either redirected to
+ * `/tmp` (and accepted as lost) or kept in the request itself.
+ *
+ * Exported because the serverless entry point, the store and the TTS cache
+ * all need to make the same decision from the same answer.
+ */
+export function isServerless(env = process.env) {
+  return Boolean(env.VERCEL) || env.LIVY_SERVERLESS === '1'
+}
+
+/**
+ * The same answer, captured at load.
+ *
+ * Kept for the places that only need to name the platform in a log line. The
+ * decisions that matter — where to write, whether to boot a socket — call
+ * `isServerless()` when they make them, because under Bun a variable assigned
+ * to `process.env` *after* start-up can be invisible to the whole process, and
+ * a test (or a deployment wrapper) that sets `VERCEL` late must still be seen.
+ */
+export const serverless = isServerless()
 
 export const DEFAULT_CONFIG = {
   server: {
@@ -30,7 +58,7 @@ export const DEFAULT_CONFIG = {
       // http: true, sources: true, automix: true, station: true,
       // store: true, plugins: true, gateway: true, tts: true
     },
-    file: { enabled: false, path: path.join(root, 'data', 'nodecast.log'), maxMb: 8, keep: 3 }
+    file: { enabled: false, path: path.join(root, 'data', 'livy.log'), maxMb: 8, keep: 3 }
   },
   // Anything in plugins/ extends the node: sources, transitions, endpoints.
   plugins: {
@@ -46,11 +74,20 @@ export const DEFAULT_CONFIG = {
   sources: {
     defaultSearch: 'soundcloud',
     soundcloudClientId: '', // auto-scraped when empty
-    mediaDir: path.join(root, 'media')
+    // How a source identifies itself upstream. Distinct nodes can be told
+    // apart in provider dashboards instead of all claiming to be one app.
+    audiusAppName: 'livy',
+    // Optional: Odesli rate-limits anonymous callers rather than refusing
+    // them, so a key is a convenience, not a requirement.
+    songlinkKey: '',
+    mediaDir: path.join(root, 'media'),
+    // …plus the hi-res and fallback policy keys documented in
+    // config.example.json (hiRes, hiResMinKbps, hiResMinScore,
+    // fallbackOrder, liveFallback, noSearch, searchWeights).
   },
   relay: { metaint: 16_000 },
   // Owner role: one key unlocks everything (station CRUD, automix, bans…).
-  // Left empty, Nodecast generates one on first boot and prints it once.
+  // Left empty, Livy generates one on first boot and prints it once.
   owner: {
     key: '',
     name: 'owner',
@@ -60,7 +97,7 @@ export const DEFAULT_CONFIG = {
   // Upgrades are migrations against this one file (see src/store/migrations.js).
   store: {
     enabled: true,
-    file: path.join(root, 'data', 'nodecast.db'),
+    file: path.join(root, 'data', 'livy.db'),
     migrate: true
   },
   tts: {
@@ -101,13 +138,32 @@ export const DEFAULT_CONFIG = {
       beatAlign: true, // land the incoming song on a beat of the outgoing one
       beatmatch: true, // time-stretch the seam so the two tempos actually match
       maxStretchPercent: 12, // refuse to beatmatch further apart than this
+      // Joint tempo analysis, after automix-engine's select_tempo_pair: the
+      // pair is scored, not each song separately, which is what stops the
+      // half-time octave error that leaves two 128 BPM records unmixed.
+      analysePair: true,
+      // Release the matched tempo back to the incoming song's own tempo over
+      // this window, instead of leaving it stretched for the rest of the track.
+      tempoReleaseMs: 4000,
+      // Do not fade a vocal line mid-phrase, and duck the bed when two voices
+      // would overlap. Needs no stems: it uses a band-energy gate.
+      vocalAware: true,
+      // Snap blends to whole four-beat phrases rather than milliseconds.
+      phraseBlend: true,
       trimSilence: true, // cue past silence at the head/tail of a file
       targetLufs: -16, // BS.1770 seam loudness match
       maxGainDb: 6,
       ceilingDb: -1, // peak ceiling for the rendered seam
       crossoverHz: 200, // bass-swap crossover
       dj: { enabled: true, name: 'Ava', every: 3, duckDb: -9, leadInMs: 700, tailMs: 900, bedHighpassHz: 180 }
-    }
+    },
+    // Station filters — the NodeLink-shaped chain (see core/filters.js).
+    // Empty by default: an unfiltered station decodes and encodes nothing it
+    // did not already, so this feature costs exactly zero until it is used.
+    //
+    //   "filters": { "equalizer": { "bands": [{ "band": 2, "gain": 1.4 }] },
+    //                "reverb": { "mix": 0.18 } }
+    filters: {}
   },
   stations: []
 }
@@ -130,6 +186,8 @@ function fromEnv(config) {
   if (env.SERVER_PASSWORD) out.server.password = env.SERVER_PASSWORD
   if (env.LOG_LEVEL) out.logging.level = env.LOG_LEVEL
   if (env.SOUNDCLOUD_CLIENT_ID) out.sources.soundcloudClientId = env.SOUNDCLOUD_CLIENT_ID
+  if (env.AUDIUS_APP_NAME) out.sources.audiusAppName = env.AUDIUS_APP_NAME
+  if (env.SONGLINK_API_KEY) out.sources.songlinkKey = env.SONGLINK_API_KEY
   if (env.OWNER_KEY) out.owner.key = env.OWNER_KEY
   if (env.STORE_FILE) out.store.file = env.STORE_FILE
   if (env.LOG_FILE) out.logging.file = { ...out.logging.file, enabled: true, path: env.LOG_FILE }
@@ -149,6 +207,19 @@ function fromEnv(config) {
   if (env.AUTOMIX === '0' || env.AUTOMIX === 'off') out.stationDefaults.automix.enabled = false
   if (env.AUTOMIX_CROSSFADE_MS) out.stationDefaults.automix.crossfadeMs = Number(env.AUTOMIX_CROSSFADE_MS)
   if (env.AUTOMIX_EFFECT) out.stationDefaults.automix.effect = env.AUTOMIX_EFFECT
+  if (env.AUTOMIX_TEMPO_RELEASE_MS) out.stationDefaults.automix.tempoReleaseMs = Number(env.AUTOMIX_TEMPO_RELEASE_MS)
+  if (env.AUTOMIX_PAIR === '0' || env.AUTOMIX_PAIR === 'off') out.stationDefaults.automix.analysePair = false
+  if (env.AUTOMIX_VOCAL === '0' || env.AUTOMIX_VOCAL === 'off') out.stationDefaults.automix.vocalAware = false
+  // A filter chain as JSON, so a container can ship a station's sound in its
+  // environment without writing config.json.
+  if (env.FILTERS) {
+    try {
+      out.stationDefaults.filters = JSON.parse(env.FILTERS)
+    } catch {
+      // A malformed FILTERS must not stop the node from booting.
+    }
+  }
+  if (env.LIVY_DATA_DIR) out.store = { ...(out.store ?? {}), file: `${env.LIVY_DATA_DIR}/data/livy.db` }
   if (env.DJ === '0' || env.DJ === 'off') out.stationDefaults.automix.dj.enabled = false
   if (env.DJ_NAME) out.stationDefaults.automix.dj.name = env.DJ_NAME
   if (env.DJ_EVERY) out.stationDefaults.automix.dj.every = Number(env.DJ_EVERY)
@@ -197,12 +268,33 @@ export function ensureOwnerKey(config) {
   }
 }
 
+/**
+ * Where this process may write.
+ *
+ * On a normal node that is `server/`. In a Vercel Function `server/` is part of
+ * a read-only bundle, so every writable path moves to `/tmp` — and the owner
+ * has to know that `/tmp` does not outlive the instance, which is what
+ * `writable: 'ephemeral'` says. `LIVY_DATA_DIR` overrides both, for a
+ * container with a mounted volume.
+ */
+function writableRoot() {
+  return process.env.LIVY_DATA_DIR || (isServerless() ? path.join('/tmp', 'livy') : root)
+}
+
 export const paths = {
   root,
   public: path.join(root, 'public'),
   plugins: path.join(root, 'plugins'),
   media: path.join(root, 'media'),
-  tts: path.join(root, 'media', 'tts'),
-  data: path.join(root, 'data')
+  get tts() {
+    return path.join(writableRoot(), 'media', 'tts')
+  },
+  get data() {
+    return path.join(writableRoot(), 'data')
+  },
+  // 'disk' survives a restart, 'ephemeral' does not, 'memory' is not written.
+  get writable() {
+    return process.env.LIVY_DATA_DIR ? 'disk' : isServerless() ? 'ephemeral' : 'disk'
+  }
 }
 export default loadConfig

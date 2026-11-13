@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { SourceRegistry, similarity } from '../src/sources/index.js'
+import { SourceRegistry, similarity, fingerprintOf } from '../src/sources/index.js'
 import YtMusicSource from '../src/sources/ytmusic.js'
 import { quietLogs, tmpdir, makeMedia } from './helpers.js'
 
@@ -66,6 +66,15 @@ test('similarity recognises the same recording and rejects a different one', () 
   assert.ok(similarity(track, { artist: 'Kavi', title: 'Blue Hour - Remastered' }) > 0.6)
   assert.ok(similarity(track, { artist: 'Mira', title: 'Golden Gate' }) < 0.2)
   assert.equal(similarity({ title: '' }, { title: 'Anything' }), 0)
+
+  // Stripping decoration must not eat titles that *are* decoration words.
+  assert.equal(
+    fingerprintOf({ artist: 'Taylor Swift', title: 'Clean' }),
+    'taylor swift clean',
+    '"Clean" is a title, not a release tag'
+  )
+  assert.match(fingerprintOf({ artist: 'Tom Petty', title: 'Free Fallin\'' }), /free fallin/, '"Free" is a title too')
+  assert.equal(fingerprintOf({ artist: 'Kavi', title: 'Song - Official Audio' }), 'kavi song', 'a trailing tag still goes')
 })
 
 test('the local source reads a real folder and streams real bytes', async () => {

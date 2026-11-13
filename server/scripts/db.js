@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Database control — the SQLite file every Nodecast node keeps its state in.
+ * Database control — the SQLite file every Livy node keeps its state in.
  *
  *   node scripts/db.js info                 schema version, tables, row counts
  *   node scripts/db.js migrate              apply pending migrations (safe to repeat)

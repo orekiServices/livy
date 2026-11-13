@@ -6,7 +6,9 @@
  * and no CORS. In development (`npm run dev` on :3000) it probes the usual
  * ports once, or takes `?node=http://host:2333`.
  */
-const REMEMBERED = 'nodecast-node'
+const REMEMBERED = 'livy-node'
+/** Older consoles stored the same thing under the pre-rename key. */
+const REMEMBERED_LEGACY = 'nodecast-node'
 const DEV_PORTS = [2333, 8000, 8080, 3001, 4000]
 
 let base = null
@@ -22,7 +24,10 @@ async function isNode(origin) {
   try {
     const res = await fetch(`${origin}/api/v1/info`, { signal: withTimeout(1500), cache: 'no-store' })
     if (!res.ok) return false
-    return (await res.json())?.name === 'nodecast'
+    const info = await res.json()
+    // `name` is 'livy'; nodes upgraded from before the rename also answer
+    // with a legacy name, and both are this radio.
+    return info?.name === 'livy' || (Array.isArray(info?.legacyNames) && info.legacyNames.includes('nodecast'))
   } catch {
     return false
   }
@@ -35,7 +40,7 @@ export async function nodeBase() {
 
   probing = (async () => {
     const asked = new URLSearchParams(window.location.search).get('node')
-    const saved = window.localStorage.getItem(REMEMBERED)
+    const saved = window.localStorage.getItem(REMEMBERED) ?? window.localStorage.getItem(REMEMBERED_LEGACY)
     const candidates = [
       ...(asked ? [asked.replace(/\/$/, '')] : []),
       '',
@@ -47,7 +52,10 @@ export async function nodeBase() {
       if (await isNode(candidate)) {
         base = candidate
         if (candidate) window.localStorage.setItem(REMEMBERED, candidate)
-        else window.localStorage.removeItem(REMEMBERED)
+        else {
+          window.localStorage.removeItem(REMEMBERED)
+          window.localStorage.removeItem(REMEMBERED_LEGACY)
+        }
         return candidate
       }
     }
@@ -62,6 +70,7 @@ export function forgetNode() {
   base = null
   probing = null
   window.localStorage.removeItem(REMEMBERED)
+  window.localStorage.removeItem(REMEMBERED_LEGACY)
 }
 
 /** Every request in the app goes through here. */
@@ -97,9 +106,23 @@ export async function socketUrl() {
 }
 
 /** Owner-key helpers — the key lives in this tab only, never in a URL. */
-const KEY_STORE = 'nodecast-owner-key'
-export const ownerKey = () => (typeof window === 'undefined' ? null : window.sessionStorage.getItem(KEY_STORE))
-export const setOwnerKey = (key) => window.sessionStorage.setItem(KEY_STORE, key)
-export const clearOwnerKey = () => window.sessionStorage.removeItem(KEY_STORE)
+const KEY_STORE = 'livy-owner-key'
+const KEY_STORE_LEGACY = 'nodecast-owner-key'
+// A key entered in the console before the rename is still the right key, so
+// read it through and migrate it forward rather than asking for it again.
+export const ownerKey = () => {
+  if (typeof window === 'undefined') return null
+  const key = window.sessionStorage.getItem(KEY_STORE) ?? window.sessionStorage.getItem(KEY_STORE_LEGACY)
+  if (key && !window.sessionStorage.getItem(KEY_STORE)) window.sessionStorage.setItem(KEY_STORE, key)
+  return key
+}
+export const setOwnerKey = (key) => {
+  window.sessionStorage.setItem(KEY_STORE, key)
+  window.sessionStorage.removeItem(KEY_STORE_LEGACY)
+}
+export const clearOwnerKey = () => {
+  window.sessionStorage.removeItem(KEY_STORE)
+  window.sessionStorage.removeItem(KEY_STORE_LEGACY)
+}
 
 export const owner = (path, options = {}) => api(`/api/v1/owner${path}`, { ...options, key: options.key ?? ownerKey() })

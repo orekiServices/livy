@@ -1,5 +1,5 @@
 /**
- * Nodecast logger.
+ * Livy logger.
  *
  * Dependency-free, but it does the things a radio node actually needs:
  *
@@ -115,7 +115,7 @@ export function setLogColor(enabled) {
  *   "timestamps": true,
  *   "buffer": 400,
  *   "debug": { "sources": true, "automix": true, "http": false },
- *   "file": { "enabled": true, "path": "data/nodecast.log", "maxMb": 8, "keep": 3 }
+ *   "file": { "enabled": true, "path": "data/livy.log", "maxMb": 8, "keep": 3 }
  * }
  * ```
  *
@@ -355,7 +355,7 @@ function emit(level, scope, args, bound) {
  * Public API
  * --------------------------------------------------------------------- */
 
-export function createLogger(scope = 'nodecast', bound = {}) {
+export function createLogger(scope = 'livy', bound = {}) {
   const at = (level) => (...args) => emit(level, scope, args, bound)
 
   return {
@@ -436,7 +436,7 @@ export function banner({ version, port, host, stations, store, plugins, engine, 
   const c = (code, text) => (state.color ? `${code}${text}${C.reset}` : text)
   const rule = '─'.repeat(58)
   const rows = [
-    ['version', `nodecast ${version}`],
+    ['version', `livy ${version}`],
     ['runtime', `${typeof globalThis.Bun !== 'undefined' ? `bun ${globalThis.Bun.version}` : `node ${node}`} · pid ${pid} · ${process.platform}/${process.arch}`],
     ['listening', `http://${host}:${port}`],
     ['stations', String(stations)],
@@ -447,7 +447,7 @@ export function banner({ version, port, host, stations, store, plugins, engine, 
   ]
   const out = [
     c(C.grey, rule),
-    `${c(C.bold + C.magenta, '  Nodecast')} ${c(C.grey, '· NodeJS + ICEcast · multi-station MP3 radio')}`,
+    `${c(C.bold + C.magenta, '  Livy')} ${c(C.grey, '· NodeJS + ICEcast · multi-station MP3 radio')}`,
     c(C.grey, rule),
     ...rows.map(([k, v]) => `  ${c(C.grey, k.padEnd(10))} ${v}`),
     c(C.grey, rule)

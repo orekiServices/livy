@@ -54,7 +54,10 @@ export class LocalSource {
 
   #track(file) {
     const base = path.basename(file, path.extname(file))
-    const [artist, title] = base.includes(' - ') ? base.split(/\s+-\s+/) : [null, base]
+    // "Artist - Title" is the convention; "01 Artist - Title" and
+    // "01. Artist - Title" are what rips actually look like.
+    const stripped = base.replace(/^\d{1,3}[\.\-_ ]\s*/, '')
+    const [artist, title] = stripped.includes(' - ') ? stripped.split(/\s+-\s+/) : [null, stripped]
     const stat = fs.statSync(file)
     const format = path.extname(file).slice(1).toLowerCase()
     return {
@@ -63,7 +66,7 @@ export class LocalSource {
       // Anything that is not MP3 goes through MetroS on the way out.
       transcode: !NATIVE.test(file),
       id: `local:${createHash('sha1').update(file).digest('hex').slice(0, 16)}`,
-      title: title ?? base,
+      title: title ?? stripped,
       artist: artist ?? 'Local library',
       duration: 0, // measured while streaming
       artwork: null,
@@ -86,12 +89,18 @@ export class LocalSource {
   }
 
   async stream(track) {
+    if (!fs.existsSync(track.url)) throw new Error(`Local file vanished: ${path.basename(track.url)}`)
     return {
       stream: createReadStream(track.url),
       contentType: track.transcode ? `audio/${track.format ?? 'octet-stream'}` : 'audio/mpeg',
       transcode: Boolean(track.transcode),
       mode: 'local'
     }
+  }
+
+  /** Only files this copy of the node can actually serve. */
+  getTrackUrl(track) {
+    return fs.existsSync(track.url) ? track.url : null
   }
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Nodecast — Node.js + Icecast-style multi-station MP3 radio, in one process.
+ * Livy — Node.js + Icecast-style multi-station MP3 radio, in one process.
  *
  * Boot order: config → logging → owner key → SQLite (migrated) → speech →
  * sources → stations → plugins → HTTP + WebSocket + the web console, all on
@@ -9,7 +9,7 @@
 import http from 'node:http'
 import { createRequire } from 'node:module'
 
-import { loadConfig, ensureOwnerKey, paths, deepMerge } from './config.js'
+import { loadConfig, ensureOwnerKey, paths, deepMerge, isServerless } from './config.js'
 import SourceRegistry from './sources/index.js'
 import StationManager from './core/stationManager.js'
 import PluginHost from './core/plugins.js'
@@ -22,7 +22,7 @@ import Memory from './core/memory.js'
 import SmartQueue from './core/smartQueue.js'
 import { engineInfo } from './util/metro.js'
 
-const log = createLogger('nodecast')
+const log = createLogger('livy')
 const VERSION = createRequire(import.meta.url)('../package.json').version
 
 export async function createRadioServer(overrides = {}) {
@@ -36,10 +36,25 @@ export async function createRadioServer(overrides = {}) {
   if (owner.created) log.info(`owner key generated: ${owner.key}  (saved next to the database — keep it)`)
 
   // Persistence: SQLite, migrated to the current schema on open.
+  //
+  // In a serverless function there is nowhere durable to put the file, and a
+  // store that silently forgets every request is worse than no store: the
+  // in-memory driver below says so out loud in `/api/v1/info` instead. Set
+  // LIVY_STORE=lazy to attempt a real file anyway (a mounted volume), or
+  // LIVY_DATA_DIR to give it somewhere to live.
+  const platform = isServerless()
   const store =
     config.store?.enabled === false
       ? null
-      : await Store.open(config.store?.file ?? `${paths.data}/nodecast.db`, { migrate: config.store?.migrate !== false })
+      : await Store.open(config.store?.file ?? `${paths.data}/livy.db`, {
+          migrate: config.store?.migrate !== false,
+          // Nothing durable exists on a serverless host unless the operator
+          // mounted one; `Store.open` then falls back to a memory driver.
+          memory: platform && !process.env.LIVY_DATA_DIR
+        }).catch((error) => {
+          log.warn(`store unavailable (${error.message}); running without persistence`)
+          return null
+        })
 
   // Speech: station idents, owner announcements, the DJ.
   const tts =
@@ -65,7 +80,7 @@ export async function createRadioServer(overrides = {}) {
   if (plugins) await plugins.loadAll()
 
   // config.json stations first, then anything the owner created at runtime.
-  // A fresh install has neither: Nodecast comes up empty and the web console
+  // A fresh install has neither: Livy comes up empty and the web console
   // walks the owner through creating the first station.
   const owned = store?.listStations() ?? []
   const stationConfigs = [...(config.stations ?? []), ...owned.filter((s) => !(config.stations ?? []).some((c) => c.id === s.id))]
@@ -104,17 +119,29 @@ export async function createRadioServer(overrides = {}) {
     }
   }
 
-  const server = http.createServer(createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION }))
-  server.keepAliveTimeout = 0
+  const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION })
+  const server = http.createServer(handler)
+  // A listener holds its socket open for as long as the browser or the player
+  // does — that is the point of an internet radio. On Bun, though, HTTP/1.1
+  // keep-alive is honoured more aggressively than on Node, and a socket that
+  // is never reaped keeps `close()` from completing. One hour is far longer
+  // than any player needs between requests and short enough to be reaped.
+  server.keepAliveTimeout = 3_600_000
   server.headersTimeout = 30_000
   server.requestTimeout = 0
 
+  // A serverless function has no socket of its own to upgrade, and no
+  // long-lived connection to keep: the platform owns both. `createApp()` is
+  // the entry point there, and it never gets here.
   const gateway = new Gateway({ server, manager, config })
 
-  await new Promise((resolve) => server.listen(config.server.port, config.server.host, resolve))
-  const { port } = server.address()
+  let port = null
+  if (!platform) {
+    await new Promise((resolve) => server.listen(config.server.port, config.server.host, resolve))
+    port = server.address().port
+  }
 
-  banner({
+  if (!platform) banner({
     version: VERSION,
     host: config.server.host,
     port,
@@ -124,7 +151,7 @@ export async function createRadioServer(overrides = {}) {
     // Which relay engine is in play: native libmetro, or the JS fallback.
     engine: engineInfo().describe
   })
-  if (manager.size === 0) log.info(`first run: open http://${config.server.host}:${port}/ and create your first station`)
+  if (manager.size === 0 && !platform) log.info(`first run: open http://${config.server.host}:${port}/ and create your first station`)
 
   // Warm up stations in parallel (resolve playlists, then go on air).
   const boot = [...manager.stations.values()]
@@ -148,10 +175,134 @@ export async function createRadioServer(overrides = {}) {
     await plugins?.close()
     manager.stopAll()
     store?.close()
-    await new Promise((resolve) => server.close(resolve))
+
+    // `keepAliveTimeout = 0` is deliberate on a long-running node: a player
+    // holds one connection for hours. It also means `server.close()` will
+    // never call back while any keep-alive socket is still open — on Node the
+    // process exits and nobody notices, under Bun (or a test runner that
+    // waits) shutdown hangs forever. Drop the idle sockets first.
+    await new Promise((resolve) => {
+      const done = () => resolve()
+      server.close(done)
+      // Sockets that are mid-request get `closeAllConnections` once the
+      // response is flushed; idle ones are dropped immediately.
+      server.closeIdleConnections?.()
+      const timer = setTimeout(() => {
+        server.closeAllConnections?.()
+        resolve()
+      }, 1000)
+      timer.unref?.()
+    })
   }
 
   return { config, manager, sources, store, tts, plugins, memory, smartQueue, server, gateway, close, port, version: VERSION }
+}
+
+/**
+ * A boot-once, handle-once entry point for a serverless platform.
+ *
+ * A Vercel Function is not a server: it receives one request, runs it to
+ * completion, and may be frozen or destroyed afterwards. Three things follow,
+ * and they are the whole difference from `createRadioServer`:
+ *
+ *   1. **No `listen`.** The platform hands us `(req, res)`; there is no socket
+ *      of our own to bind.
+ *   2. **No WebSocket gateway.** An upgrade in a function is meaningless —
+ *      there is no long-lived connection — so the REST surface is what exists.
+ *      `/api/v1/events` therefore answers 501 with an explanation instead of
+ *      hanging.
+ *   3. **No audio pacer.** A station's pacer is a `setTimeout` loop that
+ *      expects to run forever. In a function it never gets the chance, so
+ *      continuous ICY streaming is *not* available on Vercel (that is a
+ *      platform limit, not a bug: no long-lived TCP). What is available is
+ *      everything that fits in a request: the console, search, resolution,
+ *      metadata, queue management, and the automix/filter *rendering*, which
+ *      is CPU work with a beginning and an end.
+ *
+ * The instance is cached in module scope, because a warm function reuses it
+ * and a cold one rebuilds it. That is the same lifecycle Vercel documents for
+ * database clients.
+ */
+let appPromise = null
+
+export function createApp(overrides = {}) {
+  appPromise ??= (async () => {
+    const config = deepMerge(loadConfig(), overrides)
+    configureLogging(config.logging)
+    const owner = ensureOwnerKey(config)
+
+    const store =
+      config.store?.enabled === false
+        ? null
+        : await Store.open(config.store?.file ?? `${paths.data}/livy.db`, {
+            migrate: config.store?.migrate !== false,
+            memory: !process.env.LIVY_DATA_DIR
+          }).catch((error) => {
+            log.warn(`store unavailable (${error.message}); continuing without persistence`)
+            return null
+          })
+
+    const tts =
+      config.tts?.enabled === false
+        ? null
+        : new TtsEngine({ cacheDir: config.tts?.cacheDir ?? paths.tts, provider: config.tts?.provider, language: config.tts?.language })
+    const sources = new SourceRegistry(config.sources ?? {}, { tts })
+    const memory = new Memory({ store, ...(config.memory ?? {}) })
+    const smartQueue = new SmartQueue({ sources, memory, store, options: config.smartQueue ?? {} })
+    const manager = new StationManager({ defaults: config.stationDefaults, sources, store, tts, memory, smartQueue })
+
+    const plugins =
+      config.plugins?.enabled === false
+        ? null
+        : new PluginHost({ dir: config.plugins?.dir ?? paths.plugins, manager, sources, store, config, version: VERSION, tts })
+    if (plugins) {
+      // A plugin is allowed to write next to itself; on a serverless host
+      // nothing can. `LIVY_PLUGINS` picks the survivors (the console, which
+      // only reads, is the one that matters), and a plugin that cannot write
+      // is skipped rather than allowed to fail every request.
+      const allow = process.env.LIVY_PLUGINS ? new Set(process.env.LIVY_PLUGINS.split(',').map((name) => name.trim()).filter(Boolean)) : null
+      await plugins.loadAll(allow ? { only: [...allow] } : {})
+    }
+
+    for (const stationConfig of [...(config.stations ?? []), ...(store?.listStations() ?? [])]) {
+      if (manager.get?.(stationConfig.id)) continue
+      try {
+        manager.add(stationConfig)
+      } catch (error) {
+        log.warn(`station "${stationConfig.id}" could not start: ${error.message}`)
+      }
+    }
+
+    const handler = createRequestHandler({ manager, config, sources, store, tts, plugins, version: VERSION })
+
+    log.info(`serverless app ready · ${manager.size} station(s) · store ${store ? store.driver : 'off'} · writable ${paths.writable}`)
+    if (owner.created) log.warn('owner key generated for this instance only — set OWNER_KEY in the environment')
+
+    return { config, manager, sources, store, tts, plugins, memory, smartQueue, handler, version: VERSION }
+  })()
+  return appPromise
+}
+
+/**
+ * The request handler itself: what `api/index.js` exports as the function.
+ *
+ * Deliberately never throws: a boot failure in a serverless function becomes a
+ * 500 that says why, and the next request retries the boot instead of caching
+ * the failure forever.
+ */
+export async function handleRequest(req, res) {
+  try {
+    const app = await createApp()
+    return app.handler(req, res)
+  } catch (error) {
+    appPromise = null
+    log.error('serverless boot failed', error instanceof Error ? error : new Error(String(error)))
+    if (!res.headersSent) {
+      res.statusCode = 500
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+    }
+    res.end(JSON.stringify({ error: 'boot_failed', message: error.message }))
+  }
 }
 
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`

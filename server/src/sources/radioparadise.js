@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto'
 
 const API = 'https://api.radioparadise.com/api'
+const AGENT = 'Livy/1 (+https://github.com/orekiServices/livy)'
 
 /** The channels the API exposes, with the names people actually use. */
 const CHANNELS = [
@@ -64,7 +65,7 @@ export class RadioParadiseSource {
     url.searchParams.set('chan', String(channel.id))
     if (event) url.searchParams.set('event', event)
 
-    const res = await this.fetch(url, { headers: { 'user-agent': 'Nodecast/3', accept: 'application/json' } })
+    const res = await this.fetch(url, { headers: { 'user-agent': AGENT, accept: 'application/json' } })
     if (!res.ok) throw new Error(`Radio Paradise answered ${res.status}`)
     const block = await res.json()
     if (!block?.url) throw new Error('Radio Paradise returned no audio block')
@@ -131,7 +132,7 @@ export class RadioParadiseSource {
   }
 
   async stream(track) {
-    const res = await this.fetch(track.url, { headers: { 'user-agent': 'Nodecast/3' } })
+    const res = await this.fetch(track.url, { headers: { 'user-agent': AGENT } })
     if (!res.ok || !res.body) throw new Error(`Radio Paradise block ${res.status}`)
     return {
       stream: res.body,

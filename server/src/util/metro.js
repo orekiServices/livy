@@ -3,7 +3,7 @@
  *
  * Every byte a station airs passes through a re-framer: live relays from
  * plugins, HTTP/ICY ingest, local files, automix output. That loop is the one
- * piece of Nodecast that scales with listeners *and* with stations, so it has
+ * piece of Livy that scales with listeners *and* with stations, so it has
  * a native implementation — `libmetro`, a Rust + napi-rs addon — and a pure
  * JavaScript one.
  *
@@ -39,13 +39,15 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 /** Where a libmetro build might live, in order of preference. */
 const CANDIDATES = [
   // bundled with the node (the layout this repo ships)
-  path.join(here, '..', '..', '..', 'libmetro', 'index.js'),
+  path.join(here, '..', '..', '..', 'native', 'libmetro', 'index.js'),
   // installed as a dependency
   'libmetro'
 ]
 
 function loadNative() {
-  if (process.env.NODECAST_DISABLE_METRO === '1') return null
+  // `NODECAST_DISABLE_METRO` is honoured too: an existing deployment's
+  // environment keeps working after the rename.
+  if (process.env.LIVY_DISABLE_METRO === '1' || process.env.NODECAST_DISABLE_METRO === '1') return null
   for (const candidate of CANDIDATES) {
     try {
       const mod = require(candidate)

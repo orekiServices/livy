@@ -9,7 +9,7 @@ export default function TopBar({ title, subtitle, action = null }) {
   return (
     <header className="topbar">
       <div style={{ minWidth: 0 }}>
-        <h1 className="truncate">{title ?? 'Nodecast'}</h1>
+        <h1 className="truncate">{title ?? 'Livy'}</h1>
         <div className="sub truncate">
           {subtitle ?? (stats ? `${stats.playing}/${stats.stations} on air · ${stats.listeners} listening` : 'multi-station mp3 radio')}
         </div>

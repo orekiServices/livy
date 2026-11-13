@@ -1,0 +1,40 @@
+[package]
+name    = "libmetro"
+version = "1.1.0"
+edition = "2021"
+license = "MIT"
+description = "MetroS — the fast audio engine behind Livy: MP3 framing and re-framing, AAC/HLS/FLAC/Ogg/MP4 decoding and MP3 encoding, as a native Node addon."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# N-API bindings. `napi8` keeps us on a stable ABI: one build per platform
+# works on every Node ≥ 16, so a prebuilt binary never has to chase versions.
+napi        = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+# Pure-Rust decoding — no ffmpeg, no system libraries, cross-compiles
+# anywhere Rust does, which is the whole point of shipping universal binaries.
+# The codec list is what a relay actually meets in the wild: MP3 and AAC
+# (Icecast, HLS), FLAC and Vorbis (lossless and open stations), plus the
+# containers they arrive in — MP4, Ogg, Matroska/WebM, RIFF, CAF, AIFF.
+symphonia   = { version = "0.5", default-features = false, features = [
+  "mp3", "aac", "flac", "vorbis", "alac", "pcm", "adpcm",
+  "isomp4", "ogg", "mkv", "wav", "aiff", "caf"
+] }
+# Pure-Rust MP3 *encoder* (shine): fixed point, ~150x realtime, and it keeps
+# the addon free of C libraries so cross-compilation stays trivial.
+shine-rs    = "0.1"
+# One real FFT for the onset detector behind the beat tracker.
+rustfft     = "6"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto        = true
+opt-level  = 3
+codegen-units = 1
+strip      = "symbols"
+# No `panic = "abort"`: a panic in the addon must surface as a JavaScript
+# exception the node can log and recover from, never take the process down.

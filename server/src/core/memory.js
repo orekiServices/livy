@@ -1,5 +1,5 @@
 /**
- * Nodecast Memory — what the node remembers across a restart.
+ * Livy Memory — what the node remembers across a restart.
  *
  * A radio station is a process that is supposed to never stop, running on
  * hardware that certainly will. Until now a restart meant the queue was

@@ -20,7 +20,7 @@ import { quietLogs, tmpdir, makeMedia, waitFor } from './helpers.js'
 
 quietLogs()
 
-const storeIn = (dir) => Store.open(path.join(dir, 'nodecast.db'), { migrate: true })
+const storeIn = (dir) => Store.open(path.join(dir, 'livy.db'), { migrate: true })
 
 const localStation = (dir, config = {}, extras = {}) => {
   const sources = new SourceRegistry({ mediaDir: dir, hiRes: false, liveFallback: false })

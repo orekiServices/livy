@@ -89,7 +89,10 @@ export class CcMixterSource {
   }
 
   async search(term, limit = 15) {
-    const url = `${API}?f=json&limit=${Math.min(limit * 2, 40)}&search=${encodeURIComponent(term)}&search_type=all&sort=rank`
+    // Ask for more than we need: rows without an MP3 file (FLAC-only uploads,
+    // samples, a cappellas) are dropped, so the raw count is not the result
+    // count.
+    const url = `${API}?f=json&limit=${Math.min(limit * 3, 60)}&search=${encodeURIComponent(term)}&search_type=all&sort=rank`
     const rows = await getJson(url)
     const tracks = this.#toTracks(Array.isArray(rows) ? rows : [], limit)
     log.debug(`search "${term}" -> ${tracks.length}`)
@@ -108,6 +111,11 @@ export class CcMixterSource {
     }
 
     return { type: 'search', name: q, tracks: await this.search(q, limit) }
+  }
+
+  /** The download URL is already public and stable. */
+  getTrackUrl(track) {
+    return track.url ?? null
   }
 
   async stream(track) {

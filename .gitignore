@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# The console's build output. `npm run build:web` regenerates it and installs
+# it into server/plugins/console/public (which *is* committed, because it is
+# what a fresh clone serves).
+web/.next/
+web/out/
+
+# Runtime state: the database, its WAL files, the owner key, logs, caches.
+server/data/
+# The TTS engine writes a synthesised fallback tone when every voice provider is
+# unreachable; it is derived, not source, so it is not worth committing.
+server/media/tts/fallback-tone.mp3
+# Trained DJ models are runtime state; the engine ships none by default.
+server/models/*.bin
+*.log
+
+# Test scratch
+coverage/
+.tmp/
+
+# Editors and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Rust build output (the binaries that ship are copied out by
+# scripts/link-local.js; target/ is just intermediates).
+target/

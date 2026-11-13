@@ -1,7 +1,7 @@
 {
-  "name": "nodecast",
+  "name": "livy",
   "version": "3.10.0",
-  "description": "Nodecast — Node.js + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
+  "description": "Livy — Node.js + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -14,15 +14,15 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test --test-concurrency=4 test/",
+    "test": "node --test --test-concurrency=4 \"test/*.test.js\"",
     "build:web": "node scripts/build-console.js",
     "db": "node scripts/db.js",
     "db:info": "node scripts/db.js info",
     "db:migrate": "node scripts/db.js migrate",
     "bench:metro": "node scripts/metro-bench.js",
-    "build:metro": "cd ../libmetro && cargo build --release && node scripts/link-local.js",
-    "test:js": "NODECAST_DISABLE_METRO=1 node --test --test-concurrency=4 test/",
-    "build:db": "cd ../metrodb && cargo build --release && node scripts/link-local.js"
+    "build:metro": "cd ../native/libmetro && cargo build --release && node scripts/link-local.js",
+    "test:js": "LIVY_DISABLE_METRO=1 node --test --test-concurrency=4 \"test/*.test.js\"",
+    "build:db": "cd ../native/metrodb && cargo build --release && node scripts/link-local.js"
   },
   "engines": {
     "node": ">=18.17.0"
@@ -33,7 +33,7 @@
     "ws": "^8.18.0"
   },
   "keywords": [
-    "nodecast",
+    "livy",
     "radio",
     "icecast",
     "icy",

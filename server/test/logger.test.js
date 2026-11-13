@@ -134,8 +134,8 @@ test('listeners receive every record', () => {
 
 test('the file sink writes JSON lines and rotates', () => {
   resetLogging()
-  const dir = tmpdir('nodecast-log-')
-  const file = path.join(dir, 'nodecast.log')
+  const dir = tmpdir('livy-log-')
+  const file = path.join(dir, 'livy.log')
   configureLogging({ level: 'info', color: false, buffer: 10, file: { enabled: true, path: file, maxMb: 0.004, keep: 2 } })
 
   const log = createLogger('unit')
@@ -165,8 +165,8 @@ test('the boot banner prints the identity of the node', () => {
   }
 
   const text = written.join('')
-  assert.match(text, /Nodecast/)
-  assert.match(text, /nodecast 3\.1\.0/)
+  assert.match(text, /Livy/)
+  assert.match(text, /livy 3\.1\.0/)
   assert.match(text, /http:\/\/0\.0\.0\.0:2333/)
   assert.match(text, /schema v5/)
   assert.match(text, /3\/3 active/)

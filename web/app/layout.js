@@ -5,9 +5,9 @@ import PlayerBar from '../components/PlayerBar.js'
 import Tabs from '../components/Tabs.js'
 
 export const metadata = {
-  title: 'Nodecast',
+  title: 'Livy',
   description: 'A lightweight radio node: many stations, one process, beatmatched automix, streamed as plain MP3.',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Nodecast' }
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Livy' }
 }
 
 /* Phone first: fill the notch, lock the zoom to something sane, dark UI. */

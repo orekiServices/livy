@@ -140,7 +140,7 @@ export default function DJPanel({ station, say }) {
 
       if (urlRef.current) URL.revokeObjectURL(urlRef.current)
       urlRef.current = URL.createObjectURL(await res.blob())
-      setPreviewOf(res.headers.get('x-nodecast-effect') ?? effect)
+      setPreviewOf(res.headers.get('x-livy-effect') ?? effect)
 
       await waveRef.current?.load(urlRef.current)
       await waveRef.current?.play()

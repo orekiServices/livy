@@ -27,7 +27,7 @@ async function node(t) {
   const server = await boot({
     _dir: dir,
     owner: { key: KEY, name: 'tester' },
-    store: { enabled: true, file: path.join(dir, 'nodecast.db') },
+    store: { enabled: true, file: path.join(dir, 'livy.db') },
     plugins: { enabled: true, dir: PLUGINS, disabled: ['now-playing', 'hourly-ident'] }
   })
   t.after(() => server.close())
@@ -77,7 +77,7 @@ test('the mount never shadows the API, the stream or health', { skip: built ? fa
   const { base } = await node(t)
 
   assert.equal((await api(base, '/health')).status, 'ok')
-  assert.equal((await api(base, '/api/v1/info')).name, 'nodecast')
+  assert.equal((await api(base, '/api/v1/info')).name, 'livy')
   assert.equal((await api(base, '/api/v1/stations/nope'))._status, 404, 'an unknown API route is an API 404, not the app shell')
 
   // The console mount must not swallow /stream either: a bad stream URL is
@@ -85,7 +85,7 @@ test('the mount never shadows the API, the stream or health', { skip: built ? fa
   // as JSON for anything that asks for JSON — never as the app shell.
   const stream = await fetch(`${base}/stream/nope`)
   assert.equal(stream.status, 404)
-  assert.equal(stream.headers.get('x-nodecast-error'), 'not_a_stream')
+  assert.equal(stream.headers.get('x-livy-error'), 'not_a_stream')
   assert.match(stream.headers.get('content-type'), /audio\/mpeg/)
   await stream.arrayBuffer()
 
@@ -103,7 +103,7 @@ test('switching the console off leaves a headless node', { skip: built ? false :
   const home = await fetch(`${base}/`)
   assert.equal(home.status, 404, 'no UI')
   assert.equal((await api(base, '/api/v1/x/console/'))._status, 404, 'no console endpoint')
-  assert.equal((await api(base, '/api/v1/info')).name, 'nodecast', 'but the radio is still on')
+  assert.equal((await api(base, '/api/v1/info')).name, 'livy', 'but the radio is still on')
 
   await plugins.enable('console')
   assert.equal((await fetch(`${base}/`)).status, 200, 'and it comes back')
@@ -121,7 +121,7 @@ test('a node with no console build still boots, and picks the build up live', as
   const server = await boot({
     _dir: dir,
     owner: { key: KEY },
-    store: { enabled: true, file: path.join(dir, 'nodecast.db') },
+    store: { enabled: true, file: path.join(dir, 'livy.db') },
     plugins: { enabled: true, dir: plugins }
   })
   t.after(() => server.close())
@@ -137,7 +137,7 @@ test('a node with no console build still boots, and picks the build up live', as
   assert.ok(!html.includes(dir), 'and does not print a filesystem path at a stranger')
 
   assert.equal((await fetch(`${base}/_next/static/chunks/app.js`)).status, 404, 'assets still 404')
-  assert.equal((await api(base, '/api/v1/info')).name, 'nodecast', 'the radio is unaffected')
+  assert.equal((await api(base, '/api/v1/info')).name, 'livy', 'the radio is unaffected')
   assert.equal((await api(base, '/api/v1/x/console/')).built, false)
 
   // Now "build" it while the node runs: no restart, no reload.
@@ -151,7 +151,7 @@ test('a node with no console build still boots, and picks the build up live', as
 
 test('the console build is a static export with no secrets baked in', { skip: built ? false : 'no console build' }, () => {
   const html = fs.readFileSync(path.join(BUILD, 'index.html'), 'utf8')
-  assert.ok(!/NODECAST_|process\.env/.test(html), 'no environment in the HTML')
+  assert.ok(!/LIVY_|process\.env/.test(html), 'no environment in the HTML')
   assert.ok(!/localhost:\d+|127\.0\.0\.1/.test(html), 'no hard-coded node address')
   assert.ok(fs.existsSync(path.join(BUILD, 'owner', 'index.html')), 'the owner console is part of the build')
 })

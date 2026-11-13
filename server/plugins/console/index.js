@@ -1,5 +1,5 @@
 /**
- * Nodecast console — the web app, as a plugin.
+ * Livy console — the web app, as a plugin.
  *
  * The UI used to be baked into the node. It is not any more: this plugin owns
  * the static export (`public/`, built by `npm run build:web`) and mounts it on
@@ -18,7 +18,7 @@ import path from 'node:path'
 export const manifest = {
   name: 'Web console',
   version: '1.1.0',
-  description: 'the Nodecast web UI — station wall, station pages and owner console, served from this node',
+  description: 'the Livy web UI — station wall, station pages and owner console, served from this node',
   scope: 'global'
 }
 
@@ -52,7 +52,7 @@ function placeholder({ version, port, stations }) {
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="5">
-<title>Nodecast · console not built</title>
+<title>Livy · console not built</title>
 <style>
   :root { color-scheme: dark }
   * { box-sizing: border-box }
@@ -76,7 +76,7 @@ function placeholder({ version, port, stations }) {
 <body><main class="card">
   <span class="tag">● on air · no ui</span>
   <h1>The radio is running. The console is not built yet.</h1>
-  <p>Nodecast ${version} is broadcasting on port ${port} with ${stations} station${stations === 1 ? '' : 's'}.
+  <p>Livy ${version} is broadcasting on port ${port} with ${stations} station${stations === 1 ? '' : 's'}.
      The web console ships as a plugin and its static build is missing, so there is nothing to show here yet.</p>
   <pre>cd server
 npm run build:web</pre>
@@ -86,7 +86,7 @@ npm run build:web</pre>
     <li>Streams are unaffected: <code>/stream/&lt;station&gt;</code></li>
     <li>Prefer a headless node? Disable the <code>console</code> plugin and this page goes away too.</li>
   </ul>
-  <div class="row"><span>Nodecast ${version}</span><span>·</span><span>console plugin</span></div>
+  <div class="row"><span>Livy ${version}</span><span>·</span><span>console plugin</span></div>
 </main></body></html>`
 }
 

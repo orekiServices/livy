@@ -14,10 +14,16 @@
  * The point is a moving field of the record's own colour, not a recognisable
  * picture of the sleeve — the sleeve is already on screen above it.
  *
+ * The engine comes from `@kawarp/react` rather than `@kawarp/core` directly:
+ * the wrapper owns the canvas, the `ResizeObserver` and — the part that is
+ * easy to get wrong — `dispose()` on unmount. Constructing the core engine by
+ * hand and calling `destroy()` leaked a WebGL context on every navigation;
+ * the core has no `destroy`, only `dispose`.
+ *
  * Everything degrades: no WebGL, no artwork, a browser that refuses the
  * canvas — the screen falls back to the flat background it would have had.
  */
-import { useEffect, useRef, useState } from 'react'
+import { Kawarp } from '@kawarp/react'
 
 /** Hard settings: this is a background, and it should look like weather. */
 const HARD = {
@@ -32,87 +38,28 @@ const HARD = {
   scale: 1.25
 }
 
-export default function NowPlayingBackground({ artwork }) {
-  const canvasRef = useRef(null)
-  const engineRef = useRef(null)
-  const [ready, setReady] = useState(false)
+/**
+ * The wrapper merges `{ position: 'relative', ...style }` into its container,
+ * so the fixed, full-bleed placement has to be stated here rather than in CSS.
+ */
+const FILL = { position: 'fixed', inset: 0, width: '100%', height: '100%' }
 
-  // Build the renderer once, in the browser, and only if there is a canvas.
-  useEffect(() => {
-    let cancelled = false
+/**
+ * Keep the field dark enough for white type to sit on without a second,
+ * muddying scrim: a gentle top-to-bottom vignette, nothing more.
+ */
+const SCRIM = 'linear-gradient(180deg, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.46) 45%, rgba(0,0,0,0.78) 100%)'
 
-    const start = async () => {
-      if (!canvasRef.current || engineRef.current) return
-      try {
-        const { Kawarp } = await import('@kawarp/core')
-        if (cancelled || !canvasRef.current) return
-        engineRef.current = new Kawarp(canvasRef.current, HARD)
-        setReady(true)
-      } catch {
-        // No WebGL, or the library would not load: the scrim alone is fine.
-        setReady(false)
-      }
-    }
-
-    start()
-    return () => {
-      cancelled = true
-      try {
-        engineRef.current?.stop?.()
-        engineRef.current?.destroy?.()
-      } catch {
-        /* already gone */
-      }
-      engineRef.current = null
-    }
-  }, [])
-
-  // Every new cover crossfades into the field.
-  useEffect(() => {
-    const engine = engineRef.current
-    if (!engine || !ready) return
-
-    let cancelled = false
-    const load = async () => {
-      try {
-        if (artwork) {
-          await engine.loadImage(artwork)
-          if (!cancelled) engine.start()
-        } else {
-          engine.stop?.()
-        }
-      } catch {
-        // Artwork from a provider that forbids cross-origin reads: stop
-        // rather than leave a half-loaded texture spinning.
-        engine.stop?.()
-      }
-    }
-
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [artwork, ready])
-
-  // Pause when the screen is not visible: a WebGL loop in a background tab
-  // is a battery leak with nothing to show for it.
-  useEffect(() => {
-    const onVisibility = () => {
-      const engine = engineRef.current
-      if (!engine) return
-      if (document.hidden) engine.stop?.()
-      else if (artwork) engine.start?.()
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [artwork])
-
+export default function NowPlayingBackground({ artwork = null }) {
   return (
     <>
-      <div className="np-bg" aria-hidden="true">
-        <canvas ref={canvasRef} crossOrigin="anonymous" />
-      </div>
-      <div className="np-scrim" aria-hidden="true" />
+      {artwork ? (
+        <div className="np-bg" aria-hidden="true">
+          {/* No artwork: this renders nothing at all, and the scrim alone is fine. */}
+          <Kawarp src={artwork} autoPlay style={FILL} {...HARD} />
+        </div>
+      ) : null}
+      <div className="np-scrim" style={{ background: SCRIM }} aria-hidden="true" />
     </>
   )
 }

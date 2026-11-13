@@ -2,7 +2,7 @@
  * Anything → MP3.
  *
  * A relay does not get to choose what it is handed: AAC over Icecast, an
- * HLS playlist of MPEG-TS segments, a FLAC block, an MP4 chunk. Nodecast
+ * HLS playlist of MPEG-TS segments, a FLAC block, an MP4 chunk. Livy
  * broadcasts MP3, so MetroS has to turn all of it into MP3 — without
  * re-encoding the MP3 that arrives already correct.
  *

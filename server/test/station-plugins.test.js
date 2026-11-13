@@ -183,7 +183,7 @@ async function node(t) {
     _dir: dir,
     owner: { key: KEY, name: 'tester' },
     sources: { mediaDir },
-    store: { enabled: true, file: path.join(dir, 'nodecast.db') },
+    store: { enabled: true, file: path.join(dir, 'livy.db') },
     plugins: { enabled: true, dir: PLUGINS, disabled: ['console'] },
     stations: [
       { id: 'lofi', name: 'Lo-Fi', playlists: [`local:${mediaDir}`], autoStart: false },

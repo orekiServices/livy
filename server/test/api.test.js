@@ -57,17 +57,28 @@ test('a fresh node is healthy, empty and asks to be set up', async (t) => {
   assert.equal(health.stations, 0)
 
   const info = await api(base, '/api/v1/info')
-  assert.equal(info.name, 'nodecast')
+  assert.equal(info.name, 'livy')
   assert.match(info.version, /^\d+\.\d+\.\d+$/)
   assert.equal(info.stations, 0)
   assert.deepEqual(info.setup, { needed: true, protected: true }, 'a fresh install starts with no stations')
   assert.ok(info.sources.includes('soundcloud'), 'SoundCloud is there…')
+  assert.ok(info.sources.includes('songlink'), '…and the Song.link resolver joins it')
   assert.equal(info.defaultSearch, 'local', '…and the default search provider is configurable')
+  assert.deepEqual(info.legacyNames, ['nodecast'], 'an upgraded console can still recognise this node')
   assert.ok(info.transitions.includes('crossfade'))
 
   const setup = await api(base, '/api/v1/setup')
   assert.equal(setup.configured, false)
   assert.equal(setup.owner, false, 'without a key you are not the owner')
+
+  // Every provider describes itself, so a console can render the list without
+  // knowing anything about how a source is built.
+  const described = await api(base, '/api/v1/sources')
+  const soundcloud = described.sources.find((source) => source.name === 'soundcloud')
+  assert.ok(soundcloud, 'SoundCloud is described')
+  assert.equal(soundcloud.metadataOnly, false)
+  assert.equal(soundcloud.canSearch, true)
+  assert.deepEqual(described.sources.find((source) => source.name === 'deezer').metadataOnly, true)
   assert.deepEqual(leaks({ health, info, setup }, { dir, key: KEY }), [], 'public payloads leak nothing')
   assert.equal(JSON.stringify({ info, setup }).includes('/home/'), false, 'and no absolute paths at all')
 })
@@ -186,7 +197,7 @@ test('/stream/<id>.mp3 is the only stream address, and the rest are spoken 404s'
   for (const path of ['/stream/lofi', '/stream/lofi.m3u', '/stream/lofi.pls', '/stream/lofi.mp3/extra', '/stream/']) {
     const res = await fetch(`${base}${path}`, { redirect: 'manual' })
     assert.equal(res.status, 404, `${path} is not a stream`)
-    assert.equal(res.headers.get('x-nodecast-error'), 'not_a_stream', `${path} says why`)
+    assert.equal(res.headers.get('x-livy-error'), 'not_a_stream', `${path} says why`)
     await res.body?.cancel()
   }
 
@@ -194,7 +205,7 @@ test('/stream/<id>.mp3 is the only stream address, and the rest are spoken 404s'
   const missing = await fetch(`${base}/stream/nope.mp3`)
   assert.equal(missing.status, 404)
   assert.equal(missing.headers.get('content-type'), 'audio/mpeg')
-  assert.equal(missing.headers.get('x-nodecast-error'), 'unknown_station')
+  assert.equal(missing.headers.get('x-livy-error'), 'unknown_station')
   const spoken = Buffer.from(await missing.arrayBuffer())
   assert.ok(probeMp3(spoken).frames > 0, 'the 404 body is real, playable MP3')
 
@@ -246,7 +257,7 @@ test('the owner writes what a failed stream says, and can hear it', async (t) =>
   // instead of holding the socket open and playing nothing.
   const offAir = await fetch(`${base}/stream/lofi.mp3`)
   assert.equal(offAir.status, 503)
-  assert.equal(offAir.headers.get('x-nodecast-error'), 'off_air')
+  assert.equal(offAir.headers.get('x-livy-error'), 'off_air')
   assert.equal(offAir.headers.get('content-type'), 'audio/mpeg')
   await offAir.arrayBuffer()
 
@@ -410,7 +421,7 @@ test('the plugin, log and store control planes are wired to the real thing', asy
     _dir: dir,
     owner: { key: KEY },
     sources: { mediaDir },
-    store: { enabled: true, file: path.join(dir, 'nodecast.db'), migrate: true },
+    store: { enabled: true, file: path.join(dir, 'livy.db'), migrate: true },
     plugins: { enabled: true, dir: path.join(process.cwd(), 'plugins') },
     logging: { level: 'info', color: false, buffer: 200, file: { enabled: false } }
   })
@@ -441,13 +452,13 @@ test('the plugin, log and store control planes are wired to the real thing', asy
 
   const store = await api(base, '/api/v1/owner/store', { key: KEY })
   assert.match(store.driver, /sqlite/, 'the node is on SQLite, whichever binding it found')
-  assert.equal(store.file, 'nodecast.db', 'only the basename is exposed')
+  assert.equal(store.file, 'livy.db', 'only the basename is exposed')
   assert.ok(store.schema >= 1, 'the schema version is reported')
   assert.ok(Array.isArray(store.migrations) && store.migrations.length >= 1, 'so is the migration history')
   assert.ok(store.tables.includes('stations') && store.tables.includes('plugins'))
 
   const backup = await api(base, '/api/v1/owner/store/backup', { method: 'POST', key: KEY })
-  assert.match(backup.backup, /^nodecast\.db\.backup-/, 'a dated copy, named after the database')
+  assert.match(backup.backup, /^livy\.db\.backup-/, 'a dated copy, named after the database')
   assert.equal((await api(base, '/api/v1/owner/store/vacuum', { method: 'POST', key: KEY }))._status, 200)
 
   // All of it is owner-only.

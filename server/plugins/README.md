@@ -1,4 +1,4 @@
-# Nodecast plugins
+# Livy plugins
 
 Everything in this folder is loaded at boot. A plugin can add a **music source**, a **transition**, an
 **HTTP endpoint**, or simply react to what the stations are doing — without touching the node's source.

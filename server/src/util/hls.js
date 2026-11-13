@@ -26,7 +26,7 @@ import createLogger from './logger.js'
 
 const log = createLogger('hls')
 
-const AGENT = 'Nodecast/3 (+https://github.com/nodecast)'
+const AGENT = 'Livy/3 (+https://github.com/livy)'
 
 /** Is this URL (or body) an HLS playlist? */
 export function isHlsUrl(url = '') {

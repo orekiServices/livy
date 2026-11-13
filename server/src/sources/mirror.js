@@ -1,5 +1,5 @@
 /**
- * Mirror source — paste a link from a platform Nodecast cannot legally or
+ * Mirror source — paste a link from a platform Livy cannot legally or
  * practically stream (Spotify, Apple Music, YouTube, Mixcloud, Tidal…), and it
  * reads only the *public metadata* of that link, then finds the same recording
  * on a provider that does serve audio (SoundCloud, Audius, Bandcamp, archive…).
@@ -11,6 +11,7 @@
  *          mixcloud.com / tidal.com link, or mirror:<artist> <title>
  */
 import createLogger from '../util/logger.js'
+import { splitTitle } from './ytmusic.js'
 
 const log = createLogger('src:mirror')
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -68,7 +69,11 @@ export class MirrorSource {
     try {
       // The embed page carries the artist list; the oEmbed payload does not.
       const embed = await fetch(data.iframe_url ?? url, { headers: { 'user-agent': UA } })
-      artist = /"artists":\[\{"name":"([^"]+)"/.exec(await embed.text())?.[1] ?? null
+      const html = await embed.text()
+      artist =
+        /"artists":\[\{"name":"([^"]+)"/.exec(html)?.[1] ??
+        /<meta property="og:description" content="([^"·]+)/.exec(html)?.[1]?.trim() ??
+        null
     } catch {
       /* metadata is best effort */
     }
@@ -95,15 +100,10 @@ export class MirrorSource {
     const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { headers: { 'user-agent': UA } })
     if (!res.ok) throw new Error(`youtube ${res.status}`)
     const data = await res.json()
-    let title = clean(data.title)
-    let artist = clean(data.author_name)
-    // "Artist - Title" is the usual shape of a music upload.
-    const split = /^(.{2,60}?)\s+[-–—]\s+(.{2,})$/.exec(title)
-    if (split) {
-      artist = split[1]
-      title = split[2]
-    }
-    return { title, artist, artwork: data.thumbnail_url ?? null, platform: 'YouTube' }
+    // "Artist - Title" is the usual shape of a music upload; when it is not,
+    // the channel name is the best guess at an artist.
+    const [title, artist] = splitTitle(data.title)
+    return { title, artist: artist ?? clean(data.author_name), artwork: data.thumbnail_url ?? null, platform: 'YouTube' }
   }
 
   async #mixcloud(url) {
@@ -126,8 +126,9 @@ export class MirrorSource {
     if (!res.ok) throw new Error(`tidal ${res.status}`)
     const html = await res.text()
     const og = /<meta property="og:title" content="([^"]+)"/.exec(html)?.[1] ?? ''
-    const [title, artist] = og.split(' by ')
-    return { title: clean(title), artist: clean(artist), platform: 'TIDAL' }
+    const [title, artist] = og.split(/\s+by\s+/i)
+    if (!title) throw new Error('tidal page carried no title')
+    return { title: clean(title), artist: artist ? clean(artist) : null, platform: 'TIDAL' }
   }
 
   async metadata(url) {
@@ -143,7 +144,7 @@ export class MirrorSource {
       case 'tidal':
         return this.#tidal(url)
       default:
-        throw new Error('Not a link Nodecast can mirror')
+        throw new Error('Not a link Livy can mirror')
     }
   }
 
@@ -169,6 +170,7 @@ export class MirrorSource {
       ...candidate,
       artwork: candidate.artwork ?? meta.artwork ?? null,
       mirroredFrom: meta.platform,
+      link: /^https?:/i.test(q) ? q : candidate.link ?? null,
       matchScore: Number(score.toFixed(3))
     }))
 

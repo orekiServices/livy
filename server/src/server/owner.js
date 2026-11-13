@@ -19,6 +19,8 @@
  *   DELETE /api/v1/owner/stations/:id/requests[/:rid]
  *   GET    /api/v1/owner/stations/:id/plays
  *   GET/POST/DELETE /api/v1/owner/bans[/:voter]
+ *   GET/POST/DELETE /api/v1/owner/stations/:id/dj-model    the learned policy
+ *   POST   /api/v1/owner/stations/:id/dj-model/train       train it from history
  */
 import createLogger, { tail, loggingState } from '../util/logger.js'
 import { engineInfo } from '../util/metro.js'
@@ -26,6 +28,7 @@ import { REASONS, REASON_IDS, LINES, SHIPPED_LANGUAGES } from './streamErrors.js
 import { LANGUAGES, normaliseLanguage } from '../tts/index.js'
 import { publicTrack } from '../core/station.js'
 import { EFFECTS, EFFECT_TRAITS, AUTO_EFFECT, DEFAULT_AUTOMIX } from '../core/automix.js'
+import { describe as describeFilters } from '../core/filters/index.js'
 import { previewTransition } from '../core/preview.js'
 
 const log = createLogger('owner')
@@ -222,7 +225,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
 
         const text = String(raw)
           .replace(/\{station\}/g, target.name)
-          .replace(/\{node\}/g, config.name ?? 'Nodecast')
+          .replace(/\{node\}/g, config.name ?? 'Livy')
           .slice(0, 500)
         const language = body.language ? normaliseLanguage(body.language) : (target.language ?? undefined)
 
@@ -235,7 +238,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
             'content-type': 'audio/mpeg',
             'content-length': String(audio.length),
             'content-language': language ?? tts.language,
-            'x-nodecast-tts': provider,
+            'x-livy-tts': provider,
             'cache-control': 'no-store'
           })
           return res.end(audio)
@@ -284,8 +287,8 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         if (method === 'POST' || method === 'PATCH') {
           const body = await readJson(req)
           const patch = {}
-          for (const key of ['enabled', 'crossfadeMs', 'curve', 'effect', 'minTrackMs', 'bitrate', 'beatAlign', 'beatmatch', 'maxStretchPercent', 'trimSilence', 'crossoverHz', 'targetLufs', 'ceilingDb', 'maxGainDb']) {
-            if (body[key] !== undefined) patch[key] = key === 'enabled' || key === 'beatmatch' || key === 'beatAlign' ? Boolean(body[key]) : body[key]
+          for (const key of ['enabled', 'crossfadeMs', 'curve', 'effect', 'minTrackMs', 'bitrate', 'beatAlign', 'beatmatch', 'maxStretchPercent', 'trimSilence', 'crossoverHz', 'targetLufs', 'ceilingDb', 'maxGainDb', 'model']) {
+            if (body[key] !== undefined) patch[key] = ['enabled', 'beatmatch', 'beatAlign', 'model'].includes(key) ? Boolean(body[key]) : body[key]
           }
           if (body.dj !== undefined) {
             patch.dj = typeof body.dj === 'boolean' ? { enabled: body.dj } : body.dj
@@ -301,6 +304,87 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
           return send(res, 200, info)
         }
         return fail(res, 405, 'Method not allowed')
+      }
+
+      // Filters: the NodeLink surface, per station, live.
+      if (action === 'filters') {
+        if (method === 'GET') {
+          return send(res, 200, {
+            active: target.filters?.active ?? [],
+            settings: target.options.filters ?? {},
+            schema: describeFilters(target.options.filters ?? {})
+          })
+        }
+        if (method === 'POST' || method === 'PATCH') {
+          const body = await readJson(req)
+          // `{ filters: {...} }`, `{ settings: {...} }` and a bare payload are
+          // all accepted: the console sends the first, NodeLink clients the last.
+          const payload = body.filters ?? body.settings ?? body
+          let info
+          try {
+            info = target.setFilters(payload)
+          } catch (error) {
+            return fail(res, 400, error.message)
+          }
+          store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
+          log.info(`owner set filters on "${target.id}": ${info.active.join(', ') || 'none'}`)
+          return send(res, 200, info)
+        }
+        if (method === 'DELETE') {
+          const info = target.setFilters({})
+          store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
+          return send(res, 200, info)
+        }
+        return fail(res, 405, 'Method not allowed')
+      }
+
+      // The DJ model that picks this station's transitions. GLobal files live
+      // in models/; this route is the per-station view of them plus the switch
+      // that turns the model off and leaves the heuristic in charge.
+      if (action === 'dj-model') {
+        const { models } = await import('../core/models/index.js')
+        if (method === 'GET') {
+          const seam = target.automix?.last ?? {}
+          return send(res, 200, {
+            ...models.detail(),
+            enabled: target.automix?.options?.model !== false,
+            last: target.automix?.last?.decision ?? null,
+            explain: models.explain(seam)
+          })
+        }
+        if (method === 'POST' || method === 'PATCH') {
+          const body = await readJson(req)
+          if (body.enabled !== undefined) {
+            target.setAutomix({ model: Boolean(body.enabled) })
+            store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
+          }
+          if (body.action === 'reload') models.reload()
+          return send(res, 200, { ...models.info(), enabled: target.automix?.options?.model !== false })
+        }
+        if (method === 'DELETE') {
+          target.setAutomix({ model: false })
+          store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
+          return send(res, 200, { enabled: false })
+        }
+        return fail(res, 405, 'Method not allowed')
+      }
+
+      // The trainer, for this station's history. It runs over the shared seam
+      // log (a model is a node-wide asset; a station only *uses* one) and
+      // returns a report rather than a promise: a training run that fails the
+      // held-out check says so instead of quietly replacing a working model.
+      if (action === 'dj-model/train') {
+        if (method !== 'POST') return fail(res, 405, 'Method not allowed')
+        const body = await readJson(req).catch(() => ({}))
+        const { trainModel } = await import('../core/models/trainer.js')
+        const report = await trainModel({
+          epochs: Math.max(20, Math.min(2000, Number(body.epochs) || 200)),
+          learningRate: Math.max(0.0001, Math.min(0.5, Number(body.learningRate) || 0.01)),
+          gpu: body.gpu === true ? true : body.gpu === false ? false : 'auto',
+          activate: body.activate !== false
+        })
+        log.info(`DJ model training on "${target.id}": ${report.trained ? `${report.accuracyAfter} held-out accuracy` : report.reason}`)
+        return send(res, report.trained ? 200 : 409, report)
       }
 
       if (action === 'queue') {
@@ -622,8 +706,8 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
             'content-type': 'audio/mpeg',
             'content-length': String(audio.mp3.length),
             'cache-control': 'no-store',
-            'x-nodecast-effect': audio.report.effect,
-            'x-nodecast-blend-ms': String(audio.report.blendMs)
+            'x-livy-effect': audio.report.effect,
+            'x-livy-blend-ms': String(audio.report.blendMs)
           })
           return res.end(audio.mp3)
         } catch (error) {
@@ -703,7 +787,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         if (!tts) return fail(res, 503, 'TTS is disabled')
         const body = await readJson(req)
         const language = normaliseLanguage(body.language ?? tts.language)
-        const text = String(body.text ?? '').trim() || `This is ${config.name ?? 'Nodecast'}, testing the ${language} voice.`
+        const text = String(body.text ?? '').trim() || `This is ${config.name ?? 'Livy'}, testing the ${language} voice.`
 
         try {
           const { file, provider, fellBack } = await tts.speak(text, {
@@ -717,8 +801,8 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
             'content-type': 'audio/mpeg',
             'content-length': String(audio.length),
             'content-language': language,
-            'x-nodecast-tts': provider,
-            'x-nodecast-fallback': String(Boolean(fellBack)),
+            'x-livy-tts': provider,
+            'x-livy-fallback': String(Boolean(fellBack)),
             'cache-control': 'no-store'
           })
           return res.end(audio)

@@ -14,6 +14,7 @@
  *   https://player.vimeo.com/video/76979871
  */
 const CONFIG = (id) => `https://player.vimeo.com/video/${id}/config`
+const AGENT = 'Livy/1 (+https://github.com/orekiServices/livy)'
 
 export class VimeoSource {
   name = 'vimeo'
@@ -37,13 +38,38 @@ export class VimeoSource {
     return /vimeo\.com\/(?:video\/)?(\d+)/.exec(q)?.[1] ?? q.replace(/\D/g, '')
   }
 
+  /**
+   * The player config, or the anonymous-player fallback for videos whose
+   * uploader disabled embedding of the page itself.
+   *
+   * `/config` 403s for "embed restricted" videos; the player page still
+   * describes the renditions in its own `window.playerConfig` blob, so this
+   * asks for that rather than giving up on the track.
+   */
   async #config(id) {
     const res = await this.fetch(CONFIG(id), {
-      headers: { 'user-agent': 'Nodecast/3', referer: 'https://vimeo.com/', accept: 'application/json' }
+      headers: { 'user-agent': AGENT, referer: 'https://vimeo.com/', accept: 'application/json' }
     })
-    if (res.status === 403) throw new Error('This Vimeo video does not allow embedding')
-    if (!res.ok) throw new Error(`Vimeo answered ${res.status}`)
-    return res.json()
+    if (res.ok) return res.json()
+
+    if (res.status === 403 || res.status === 401) {
+      const page = await this.fetch(`https://player.vimeo.com/video/${id}`, {
+        headers: { 'user-agent': AGENT, referer: 'https://vimeo.com/' }
+      })
+      if (page.ok) {
+        const html = await page.text()
+        const blob = /window\.playerConfig\s*=\s*(\{[\s\S]*?\});?\s*<\/script>/.exec(html)?.[1]
+        if (blob) {
+          try {
+            return JSON.parse(blob)
+          } catch {
+            /* fall through to the honest error */
+          }
+        }
+      }
+      throw new Error('This Vimeo video does not allow embedding')
+    }
+    throw new Error(`Vimeo answered ${res.status}`)
   }
 
   async resolve(query) {
@@ -89,13 +115,17 @@ export class VimeoSource {
     }
   }
 
+  getTrackUrl(track) {
+    return /^https?:/i.test(track.url ?? '') ? track.url : null
+  }
+
   async stream(track) {
     // An HLS rendition is followed by the station's relay machinery, which
     // knows about playlists; a progressive file is just bytes.
     if (track.format === 'hls' || /\.m3u8(\?|$)/i.test(track.url)) {
       return { url: track.url, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
     }
-    const res = await this.fetch(track.url, { headers: { 'user-agent': 'Nodecast/3', referer: 'https://vimeo.com/' } })
+    const res = await this.fetch(track.url, { headers: { 'user-agent': AGENT, referer: 'https://vimeo.com/' } })
     if (!res.ok || !res.body) throw new Error(`Vimeo file ${res.status}`)
     return { stream: res.body, contentType: res.headers.get('content-type') ?? 'video/mp4', transcode: true, mode: 'mp4' }
   }

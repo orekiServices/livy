@@ -75,6 +75,55 @@ const STATION_EVENTS = ['state', 'track', 'queue', 'listeners', 'requests', 'vot
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]*$/i
 
+
+/**
+ * Load a plugin's module, re-reading the file even when it has changed.
+ *
+ * `import(url + '?v=' + Date.now())` is the usual trick on Node: a distinct
+ * URL is a distinct module, so an edit on disk is picked up by `reload()`.
+ * Bun does not honour it — it keys its module registry on the *resolved path*
+ * and hands back the first copy forever, so a plugin reload silently kept
+ * running the old code (and a test that rewrites a plugin and reloads it can
+ * never pass there).
+ *
+ * Reading the file and importing it as text works on both: a `data:` URL for a
+ * module with no imports, or a `blob:`-like URL where one has. The general
+ * answer is a temporary file next to the original, which keeps relative
+ * imports and `import.meta` sane — a plugin directory is the right place for
+ * it, and it is removed straight after the import.
+ */
+async function loadPluginModule(file) {
+  const source = await import('node:fs').then((fs) => fs.promises.readFile(file, 'utf8'))
+  // No static imports: a data: URL is enough and leaves nothing on disk.
+  if (!/^\s*(import|export)\s[^;]*\bfrom\s/m.test(source) && !/\bimport\s*\(/.test(source)) {
+    try {
+      // A trailing comment on its own line makes the module text unique per
+      // load. Both Node and Bun key a `data:` module on its *bytes*, so the
+      // same plugin loaded twice in one process (a reload, or a second host in
+      // a test) would otherwise share module state — two `seen` objects where
+      // the caller expects one.
+      const unique = `${source}\n// livy-load:${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}\n`
+      return await import(`data:text/javascript;base64,${Buffer.from(unique).toString('base64')}`)
+    } catch {
+      /* fall through to the temp-file path */
+    }
+  }
+
+  const { writeFileSync, rmSync } = await import('node:fs')
+  const { dirname, basename, join } = await import('node:path')
+  const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.${Date.now()}.mjs`)
+  try {
+    writeFileSync(temporary, source)
+    return await import(pathToFileURL(temporary).href)
+  } finally {
+    try {
+      rmSync(temporary, { force: true })
+    } catch {
+      /* a read-only plugin directory: the import already succeeded */
+    }
+  }
+}
+
 export class PluginHost extends EventEmitter {
   /**
    * @param {object} deps
@@ -171,8 +220,15 @@ export class PluginHost extends EventEmitter {
   /* ------------------------------ loading ----------------------------- */
 
   /** Discover and start every plugin that is not disabled in the database. */
-  async loadAll() {
-    const discovered = this.discover()
+  /**
+   * @param {object} [options]
+   * @param {string[]} [options.only] load only these ids. A serverless host
+   *   cannot let a plugin write to the bundle, so it names the ones that only
+   *   read (the console) and skips the rest.
+   */
+  async loadAll({ only = null } = {}) {
+    const allow = Array.isArray(only) ? new Set(only) : null
+    const discovered = this.discover().filter((found) => !allow || allow.has(found.id))
     for (const found of discovered) {
       const scope = found.manifest.scope === 'global' ? 'global' : 'stations'
       const state = this.store?.registerPlugin(found.id, found.manifest.version, {
@@ -219,9 +275,7 @@ export class PluginHost extends EventEmitter {
   async #start(record) {
     const started = Date.now()
     try {
-      // Cache-bust so `reload` really re-reads the file.
-      const url = `${pathToFileURL(record.file).href}?v=${Date.now()}`
-      const module = await import(url)
+      const module = await loadPluginModule(record.file)
       const setup = module.setup ?? module.default
       if (typeof setup !== 'function') throw new Error('module exports no setup() function')
 

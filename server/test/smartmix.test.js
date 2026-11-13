@@ -164,7 +164,7 @@ test('the owner can list and hear transitions over HTTP', async (t) => {
   })
   assert.equal(res.status, 200)
   assert.equal(res.headers.get('content-type'), 'audio/mpeg')
-  assert.equal(res.headers.get('x-nodecast-effect'), 'filter')
+  assert.equal(res.headers.get('x-livy-effect'), 'filter')
   assert.ok(probeMp3(Buffer.from(await res.arrayBuffer())).frames > 40, 'and it is audio')
 
   // Owner-only, and honest about nonsense.
@@ -244,7 +244,7 @@ test('MetroDB behaves like better-sqlite3', { skip: metrodb() ? false : 'no metr
 
 function metrodb() {
   try {
-    const module = require('../../metrodb/index.js')
+    const module = require('../../native/metrodb/index.js')
     return module.available ? module : null
   } catch {
     return null
