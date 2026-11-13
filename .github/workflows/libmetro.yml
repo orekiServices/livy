@@ -1,6 +1,6 @@
-## Build libmetro (MetroS) for every platform Livy ships to.
+## Build libmetro (MetroS) for every platform Nodecast ships to.
 ##
-## Livy runs perfectly well without any of these: the node falls back to
+## Nodecast runs perfectly well without any of these: the node falls back to
 ## its JavaScript re-framer and the WASM decoder. The point of this workflow
 ## is that nobody should ever *need* a Rust toolchain to get the fast path —
 ## a release carries a binary for each target and the loader picks one.
@@ -10,13 +10,13 @@ name: libmetro
 on:
   push:
     paths:
-      - 'native/libmetro/**'
+      - 'libmetro/**'
       - '.github/workflows/libmetro.yml'
   workflow_dispatch:
 
 defaults:
   run:
-    working-directory: native/libmetro
+    working-directory: libmetro
 
 jobs:
   build:
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: libmetro-${{ matrix.target }}
-          path: native/libmetro/*.node
+          path: libmetro/*.node
           if-no-files-found: error
 
   bundle:
