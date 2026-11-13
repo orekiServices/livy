@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { loadConfig } from '../src/config.js'
 import { quietLogs, tmpdir, boot, api } from './helpers.js'
 
 quietLogs()
@@ -156,4 +157,16 @@ test('open mode can be closed with a password, and short passwords are rejected'
   assert.equal((await api(base, '/api/v1/setup')).protected, true)
   assert.equal((await api(base, '/api/v1/owner/whoami'))._status, 401)
   assert.equal((await api(base, '/api/v1/owner/whoami', { key: PASSWORD })).owner, true)
+})
+
+test('OWNER_PASSWORD is read from the environment', () => {
+  const previous = process.env.OWNER_PASSWORD
+  try {
+    process.env.OWNER_PASSWORD = 'from the environment'
+    const config = loadConfig(path.join(tmpdir('config-'), 'config.json'))
+    assert.equal(config.owner.password, 'from the environment')
+  } finally {
+    if (previous === undefined) delete process.env.OWNER_PASSWORD
+    else process.env.OWNER_PASSWORD = previous
+  }
 })
