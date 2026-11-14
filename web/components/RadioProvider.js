@@ -61,7 +61,7 @@ export default function RadioProvider({ children }) {
   const wanted = useRef(null) // the station the listener asked to hear
   const retries = useRef(0)
   const retryTimer = useRef(null)
-  const stallTimer = useRef(null)
+  const lastBeat = useRef(0)
   const reconnectRef = useRef(null)
 
   const refresh = useCallback(async ({ quiet = true } = {}) => {
@@ -136,20 +136,16 @@ export default function RadioProvider({ children }) {
     setOwnerName(null)
   }, [])
 
-  /** Start the "is this stream still moving?" watchdog. */
-  const armStall = useCallback(() => {
-    if (stallTimer.current) return
-    stallTimer.current = setTimeout(() => {
-      stallTimer.current = null
-      reconnectRef.current?.()
-    }, STALL_MS)
-  }, [])
-
-  /** A heartbeat from the element: the stream is alive, stand the watchdog down. */
-  const disarmStall = useCallback(() => {
-    if (!stallTimer.current) return
-    clearTimeout(stallTimer.current)
-    stallTimer.current = null
+  /**
+   * A heartbeat from the element: audio moved, so the stream is alive.
+   *
+   * The watchdog is a *clock*, not a timer on an event. A stream can die
+   * without firing anything — a wifi network that goes away, a proxy that
+   * stops writing — and a player waiting for `error` waits forever. Watching
+   * the heartbeat catches both the loud failure and the silent one.
+   */
+  const beat = useCallback(() => {
+    lastBeat.current = Date.now()
   }, [])
 
   /**
@@ -191,7 +187,7 @@ export default function RadioProvider({ children }) {
 
   /** Re-open the stream the listener asked for, with backoff. */
   const reconnect = useCallback(() => {
-    disarmStall()
+    beat()
     const stationId = wanted.current
     if (!stationId) return
     if (retryTimer.current) return
@@ -211,11 +207,11 @@ export default function RadioProvider({ children }) {
         else reconnect()
       })
     }, wait)
-  }, [disarmStall, open])
+  }, [beat, open])
   reconnectRef.current = reconnect
 
   const stop = useCallback(() => {
-    disarmStall()
+    lastBeat.current = 0
     wanted.current = null
     retries.current = 0
     if (retryTimer.current) {
@@ -230,7 +226,7 @@ export default function RadioProvider({ children }) {
     }
     setPlaying(false)
     setBuffering(false)
-  }, [disarmStall])
+  }, [])
 
   const toggle = useCallback(() => {
     const element = audio.current
@@ -266,6 +262,23 @@ export default function RadioProvider({ children }) {
       /* private mode: the volume simply does not persist */
     }
   }, [])
+
+  /**
+   * While sound is supposed to be coming out, check that it is. Two seconds
+   * between checks, `STALL_MS` of silence before acting, so a healthy stream
+   * is never interrupted for being briefly slow.
+   */
+  useEffect(() => {
+    if (!playing) return
+    lastBeat.current = Date.now()
+    const timer = setInterval(() => {
+      if (!wanted.current) return
+      if (Date.now() - lastBeat.current < STALL_MS) return
+      lastBeat.current = Date.now()
+      reconnectRef.current?.()
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [playing])
 
   // Remembered volume, so a listener does not reset it on every page load.
   useEffect(() => {
@@ -331,23 +344,24 @@ export default function RadioProvider({ children }) {
           setBuffering(false)
           setPlayerError(null)
           retries.current = 0
-          disarmStall()
+          beat()
         }}
         onPause={() => {
           setPlaying(false)
           setBuffering(false)
         }}
         // Progress: the stream is alive.
-        onTimeUpdate={disarmStall}
-        onCanPlay={disarmStall}
-        onProgress={disarmStall}
+        onTimeUpdate={beat}
+        onCanPlay={beat}
+        onPlaying={beat}
+        onProgress={beat}
         onWaiting={() => {
           setBuffering(true)
-          armStall()
+          beat()
         }}
         onStalled={() => {
           setBuffering(true)
-          armStall()
+          beat()
         }}
         onError={() => {
           // `src` is cleared when the listener stops on purpose; that is not an
