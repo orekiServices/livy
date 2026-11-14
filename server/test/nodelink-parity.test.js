@@ -177,6 +177,37 @@ test('the remaining NodeLink ranges match', () => {
   )
 })
 
+test('reverb accepts a custom room, in seconds and feedback', () => {
+  // reverb.ts: `delays` (seconds) and `gains` (comb feedback) in parallel
+  // arrays; when both are present the combs are built from them instead of
+  // Freeverb's, with the right channel a half-millisecond longer.
+  const described = FILTER_SCHEMA.reverb
+  assert.equal(described.delays.array, true)
+  assert.equal(described.gains.array, true)
+  assert.deepEqual(described.gains.range, [0, 0.95])
+
+  // Out-of-range values are clipped rather than rejected, like every other
+  // parameter, and a hostile length is cut down.
+  const compiled = compile(
+    { reverb: { mix: 0.5, delays: [0.03, 0.05, 1], gains: [0.7, 1.4, 0.2] } },
+    { sampleRate: SR }
+  )
+  const reverb = compiled.chain.find((filter) => filter.name === 'reverb')
+  assert.ok(reverb, 'the custom room still compiles')
+  assert.deepEqual(reverb.config.delays, [0.03, 0.05, 0.25])
+  assert.deepEqual(reverb.config.gains, [0.7, 0.95, 0.2])
+
+  // And it actually runs: an impulse must leave a tail behind it.
+  const n = Math.round(SR * 0.5)
+  const left = new Float32Array(n)
+  const right = new Float32Array(n)
+  left[0] = 0.5
+  right[0] = 0.5
+  reverb.process(left, right, n)
+  const tail = left.slice(Math.round(SR * 0.1)).reduce((sum, sample) => sum + Math.abs(sample), 0)
+  assert.ok(tail > 0.01, `the custom room has a tail (${tail.toFixed(3)})`)
+})
+
 test('a filter switched on with no parameters gives NodeLink\'s defaults', () => {
   const chain = compile(
     { equalizer: true, karaoke: true, compressor: true, chorus: true, phaser: true },

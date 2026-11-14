@@ -19,6 +19,12 @@ import { fx } from '../../util/fx.js'
  * and the wet/dry pair are both supported because a console may send either;
  * `mix` wins when it is non-zero, which is what a "reverb amount" slider
  * expects.
+ *
+ * NodeLink also lets a caller build the room itself, with `delays` (seconds)
+ * and `gains` (comb feedback) as parallel arrays. Both present and non-empty
+ * means those combs replace the Freeverb ones, which is how a client gets a
+ * specific room rather than a size knob. Short arrays or a zero gain are
+ * harmless: the network is rebuilt from whatever is actually there.
  */
 const COMB_DELAYS = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617]
 const ALLPASS_DELAYS = [556, 441, 341, 225]
@@ -78,7 +84,10 @@ export class ReverbFilter extends AnimatableFilter {
     width: { range: [0, 1], default: 0 },
     // NodeLink defaults the mix to half wet, and a station that has never
     // asked for reverb must not get any, so the neutral value is zero.
-    mix: { range: [0, 1], default: 0.5, neutral: 0 }
+    mix: { range: [0, 1], default: 0.5, neutral: 0 },
+    // The custom room, in seconds and comb feedback. Empty is "use Freeverb".
+    delays: { array: true, range: [0.0005, 0.25], maxLength: 12 },
+    gains: { array: true, range: [0, 0.95], maxLength: 12 }
   }
 
   name = 'reverb'
@@ -90,6 +99,9 @@ export class ReverbFilter extends AnimatableFilter {
   #allpassL = []
   #allpassR = []
   #native = null
+  #rooms = ''
+  #customL = []
+  #customR = []
 
   constructor(config = {}, { sampleRate = SAMPLE_RATE } = {}) {
     super()
@@ -104,7 +116,20 @@ export class ReverbFilter extends AnimatableFilter {
   }
 
   update(settings = {}) {
-    this.applyAnimatedUpdate(settings, ReverbFilter.schema, { coerce: (_, value) => clamp(value, 0, 1) })
+    this.applyAnimatedUpdate(settings, ReverbFilter.schema, {
+      coerce: (key, value) => (key === 'delays' || key === 'gains' ? value : clamp(value, 0, 1))
+    })
+    this.#retune()
+    return this
+  }
+
+  /** A reverb that is being animated retunes through here, once per block. */
+  onConfigChanged() {
+    this.#retune()
+  }
+
+  #retune() {
+    this.#retuneCustomRoom()
     // Feedback stays below 0.98 or the network rings forever; Freeverb's own
     // mapping is 0.7 + 0.28 × room, which tops out just under that.
     const feedback = 0.7 + clamp(this.config.roomSize ?? 0, 0, 1) * 0.28
@@ -124,7 +149,37 @@ export class ReverbFilter extends AnimatableFilter {
       this.config.mix > 0 ? this.config.mix : (this.config.wetLevel ?? 0),
       this.config.mix > 0 ? 1 - this.config.mix : (this.config.dryLevel ?? 1)
     )
-    return this
+  }
+
+  /**
+   * Rebuild the comb bank when a caller supplies its own room.
+   *
+   * NodeLink keys the rebuild on the pair being present and non-empty; the
+   * right channel gets a half-millisecond more delay so the two sides are not
+   * the same comb twice.
+   */
+  #retuneCustomRoom() {
+    const delays = Array.isArray(this.config.delays) ? this.config.delays : []
+    const gains = Array.isArray(this.config.gains) ? this.config.gains : []
+    const key = delays.length && gains.length ? `${delays.join(',')}|${gains.join(',')}` : ''
+    if (key === this.#rooms) return
+    this.#rooms = key
+    if (!key) {
+      this.#customL = []
+      this.#customR = []
+      return
+    }
+    const size = Math.min(delays.length, gains.length)
+    this.#customL = []
+    this.#customR = []
+    for (let index = 0; index < size; index += 1) {
+      const seconds = clamp(delays[index], 0.0005, 0.25)
+      const gain = clamp(gains[index], 0, 0.95)
+      this.#customL.push(Object.assign(new Comb(Math.max(1, Math.round(seconds * this.#sampleRate))), { feedback: gain, damp: 0.4 }))
+      this.#customR.push(
+        Object.assign(new Comb(Math.max(1, Math.round((seconds + 0.0005) * this.#sampleRate))), { feedback: gain, damp: 0.4 })
+      )
+    }
   }
 
   active() {
@@ -149,12 +204,14 @@ export class ReverbFilter extends AnimatableFilter {
       return
     }
 
+    const combsL = this.#customL.length ? this.#customL : this.#left
+    const combsR = this.#customR.length ? this.#customR : this.#right
     for (let i = 0; i < length; i += 1) {
       const input = (left[i] + right[i]) * 0.5 * INPUT_GAIN
       let outL = 0
       let outR = 0
-      for (const comb of this.#left) outL += comb.run(input)
-      for (const comb of this.#right) outR += comb.run(input)
+      for (const comb of combsL) outL += comb.run(input)
+      for (const comb of combsR) outR += comb.run(input)
       for (const allpass of this.#allpassL) outL = allpass.run(outL)
       for (const allpass of this.#allpassR) outR = allpass.run(outR)
 
@@ -171,6 +228,8 @@ export class ReverbFilter extends AnimatableFilter {
   reset() {
     for (const comb of this.#left) comb.reset()
     for (const comb of this.#right) comb.reset()
+    for (const comb of this.#customL) comb.reset()
+    for (const comb of this.#customR) comb.reset()
     for (const allpass of this.#allpassL) allpass.reset()
     for (const allpass of this.#allpassR) allpass.reset()
     this.#native?.reset()

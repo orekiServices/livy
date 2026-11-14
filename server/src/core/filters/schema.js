@@ -162,6 +162,24 @@ export function validate(payload = {}) {
         unknown.push(`${name}.${key}`)
         continue
       }
+      if (entry.array) {
+        // A plain list of numbers, NodeLink style: reverb's custom `delays`
+        // and `gains`. Clipped to the entry's range and short enough that a
+        // hostile payload cannot ask for a thousand combs.
+        if (!Array.isArray(value)) {
+          unknown.push(`${name}.${key}`)
+          continue
+        }
+        const limit = entry.maxLength ?? 16
+        const low = entry.range?.[0] ?? 0
+        const high = entry.range?.[1] ?? Number.POSITIVE_INFINITY
+        const numbers = value.slice(0, limit).map((item) => Number(item)).filter((item) => Number.isFinite(item))
+        clean[key] = numbers.map((item) => clamp(item, low, high))
+        if (clean[key].length !== value.length || clean[key].some((item, index) => item !== Number(value[index]))) {
+          clamped.push(`${name}.${key}`)
+        }
+        continue
+      }
       if (entry.list) {
         if (!Array.isArray(value)) {
           unknown.push(`${name}.${key}`)

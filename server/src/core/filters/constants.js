@@ -39,8 +39,11 @@ export function neutralValue(spec) {
   // `neutral` is the "never configured" value, `default` is "on with no
   // parameters". They differ: NodeLink's karaoke defaults to level 1, which is
   // right for `{karaoke: true}` and wrong for a station that never asked.
-  if (spec?.neutral !== undefined) return spec.neutral
-  if (spec?.default !== undefined) return spec.default
+  // Arrays are copied: `neutralSettings()` is handed to every station, and a
+  // shared empty array would be a bug waiting for the first caller that pushes.
+  if (spec?.array) return []
+  if (spec?.neutral !== undefined) return Array.isArray(spec.neutral) ? [...spec.neutral] : spec.neutral
+  if (spec?.default !== undefined) return Array.isArray(spec.default) ? [...spec.default] : spec.default
   if (spec?.range) return spec.range[0] === 1 ? 1 : 0
   if (spec?.list) return []
   return 0

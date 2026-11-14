@@ -95,7 +95,8 @@ export function describe(payload = {}) {
         ...('range' in entry ? { min: entry.range[0], max: entry.range[1] } : {}),
         ...(entry.integer ? { integer: true } : {}),
         ...('default' in entry ? { default: entry.default } : {}),
-        ...(entry.list ? { list: true } : {})
+        ...(entry.list ? { list: true } : {}),
+        ...(entry.array ? { array: true } : {})
       }))
     })),
     active: compiled.active,

@@ -629,9 +629,9 @@ cd server && bun test test/seams.test.js   # one file at a time
 cd server && LIVY_DISABLE_METRO=1 bun test # the JavaScript engines only
 ```
 
-404 tests (three transcoder tests skip without a libmetro binary, and three
+405 tests (three transcoder tests skip without a libmetro binary, and three
 more run only there; six cover the PyTorch trainer and skip where torch is
-not installed; twelve are the NodeLink parity table described above).
+not installed; thirteen are the NodeLink parity table described above).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
@@ -698,6 +698,7 @@ NodeLink client should sound the same on Livy, which is only true if
 | `lowpass` | `smoothing` | 1 … 100, where the corner is `20 kHz / smoothing` and 1 is open |
 | `phaser` | `stages` | 2 … 8, default 4; sweep window 100 Hz … 2.5 kHz |
 | `reverb` | `mix` | default 0.5 |
+| `reverb` | `delays`, `gains` | seconds and comb feedback, parallel arrays; a custom room instead of Freeverb's |
 | `vibrato` | `depth` | 0 … 2, twice what the tremolo allows |
 
 Two of those are not just relabelled numbers. Karaoke is a **band split**, not a
@@ -708,6 +709,11 @@ spectrum and then put a band back, which is why it left a hole where the bass
 had been. And a modulation effect needs a rate *and* a depth before it engages,
 so `{ chorus: { mix: 0.4 } }` is a switch that is on and silent — the console
 sends real values for both.
+
+One knob is deliberately left alone. `highpass.smoothing` keeps Livy's own
+law, because NodeLink's is the alpha of a one-pole section rather than a corner
+frequency, and no honest conversion exists between them. `cutoff` is exact in
+both, and it is what the console sends.
 
 Neutral is not the same as "on with no parameters": `{ karaoke: true }` means
 NodeLink's defaults (full cancel, 220 Hz split), while a station that has never

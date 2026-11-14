@@ -82,18 +82,27 @@ export class AnimatableFilter extends BaseFilter {
       // overrides `update()` by hand should not have to build one shape.
       const fallback = spec && typeof spec === 'object' && 'range' in spec ? neutralValueOf(spec) : spec
       const candidate = raw[setting]
+      const isArray = Array.isArray(fallback)
       let value
-      if (typeof candidate === 'number' && Number.isFinite(candidate)) value = candidate
+      if (isArray) {
+        // Plain number arrays (reverb's custom delays/gains) are carried
+        // through as a copy; they step, they do not ramp.
+        value = Array.isArray(candidate)
+          ? candidate.map((item) => Number(item)).filter((item) => Number.isFinite(item))
+          : (this.config[setting] ?? fallback)
+      } else if (typeof candidate === 'number' && Number.isFinite(candidate)) value = candidate
       else if (this.config[setting] !== undefined) value = this.config[setting]
       else value = fallback
 
       if (coerce) value = coerce(setting, value)
-      next[setting] = value
+      next[setting] = isArray ? [...value] : value
       // A filter that has never run starts from its *neutral* value, so a
       // transition on a freshly-built filter fades in from silence rather than
       // snapping to the target and then animating nothing.
-      if (this.config[setting] === undefined) this.config[setting] = fallback
-      if (value !== this.config[setting]) changed = true
+      if (this.config[setting] === undefined) this.config[setting] = isArray ? [...fallback] : fallback
+      if (isArray ? JSON.stringify(value) !== JSON.stringify(this.config[setting]) : value !== this.config[setting]) {
+        changed = true
+      }
     }
 
     const transition = raw.transition ?? settings?.transition
@@ -144,6 +153,12 @@ export class AnimatableFilter extends BaseFilter {
 
     const t = curveValue(this.#animation.elapsedMs / this.#animation.durationMs, this.#animation.curve)
     for (const [setting, target] of Object.entries(this.#target)) {
+      // Arrays (reverb's custom delays/gains) and the animation hints step
+      // rather than ramp; arithmetic on them would produce NaN.
+      if (typeof target !== 'number') {
+        this.config[setting] = target
+        continue
+      }
       const start = this.#start[setting] ?? 0
       this.config[setting] = start + (target - start) * t
     }
