@@ -560,7 +560,7 @@ For a station that stays on air, run the node on a VM or container with
 |---|---|
 | **Stations** | many per process, each with its own queue, rotation, requests, automix and listeners |
 | **Audio path** | MP3 in → MP3 out, byte for byte, no ffmpeg. Anything else is decoded and re-encoded by MetroS at 70–145× realtime |
-| **Sources** | 17 providers — soundcloud · audius · bandcamp · ccmixter · **nhaccuatui** · archive.org · deezer · radio paradise (FLAC) · somafm · podcast/RSS · vimeo · youtube music · mirror · song.link · radio-browser · http/icecast/HLS · local, plus TTS for idents |
+| **Sources** | 16 providers — soundcloud · audius · bandcamp · ccmixter · **nhaccuatui** · archive.org · deezer · somafm · podcast/RSS · vimeo · youtube music · mirror · song.link · radio-browser · http/icecast/HLS · local, plus TTS for idents |
 | **Automix** | loudness-matched, cue-trimmed, beatmatched seams; ten transitions chosen per seam; blends up to 30 s |
 | **DJ** | optional voice-tracking over the seam with a real sidechain duck |
 | **Console** | phone-first, shipped as a plugin — overview, stations, station desk, search, words, seams, filters, training, node, plus the owner index |
@@ -635,7 +635,6 @@ Two things keep a fan-out honest:
 | **bandcamp** | Full-length `mp3-128` from the page's `tralbum` blob; search via its autocomplete API |
 | **ccmixter** (hi-res) | Creative Commons remixes, ~192 kbps VBR |
 | **nhaccuatui** | Vietnam's largest catalogue: `graph.nct.vn/api/v1`, anonymous 128 kbps MP3. Stream URLs are resolved per play (they expire), search rows without a stream are completed from song detail, playlists resolve missing rows, and a 403 retries once with a fresh signature |
-| **radioparadise** (lossless) | **FLAC** blocks with the running order attached |
 | **deezer** / **mirror** / **songlink** | Metadata only — an unplayable link is matched to a source that *can* play it |
 
 ## Tests

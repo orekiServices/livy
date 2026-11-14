@@ -110,6 +110,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const attemptRef = useRef(0)
   const wantedRef = useRef<string | null>(null)
+  const openingRef = useRef(false)
   const [tunedId, setTunedId] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(false)
@@ -236,6 +237,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
   const stop = useCallback(() => {
     attemptRef.current += 1
     wantedRef.current = null
+    openingRef.current = false
     clearRetry()
     const audio = audioRef.current
     if (audio) {
@@ -249,6 +251,8 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     setStreamErrorCode(null)
   }, [clearRetry])
 
+  const openRef = useRef<(stationId: string, opts?: { isRetry?: boolean }) => Promise<void>>(async () => {})
+
   const open = useCallback(
     async (stationId: string, { isRetry = false }: { isRetry?: boolean } = {}) => {
       const audio = audioRef.current
@@ -256,6 +260,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
 
       const attempt = ++attemptRef.current
       wantedRef.current = stationId
+      openingRef.current = true
       if (!isRetry) clearRetry()
       else if (retryRef.current.timer) {
         clearTimeout(retryRef.current.timer)
@@ -263,8 +268,10 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       }
 
       setTunedId(stationId)
-      setStreamError(null)
-      setStreamErrorCode(null)
+      if (!isRetry) {
+        setStreamError(null)
+        setStreamErrorCode(null)
+      }
       setBuffering(true)
       lastBeatRef.current = Date.now()
       lastTimeRef.current = 0
@@ -278,14 +285,17 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
         audio.volume = muted ? 0 : volume
         await audio.play()
         if (attempt !== attemptRef.current) return
+        openingRef.current = false
         setPlaying(true)
       } catch (error) {
         if (attempt !== attemptRef.current) return
+        openingRef.current = false
         const err = error as Error | undefined
         if (err?.name === 'AbortError') return
 
         if (err?.name === 'NotAllowedError') {
           wantedRef.current = null
+          clearRetry()
           setBuffering(false)
           setPlaying(false)
           setStreamError('Browser blocked playback. Click Play to start audio.')
@@ -296,6 +306,26 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
         const diag = await diagnoseStream(stationId)
         if (attempt !== attemptRef.current) return
 
+        if (!diag.terminal && wantedRef.current === stationId && retryRef.current.count < MAX_RETRIES) {
+          retryRef.current.count += 1
+          const currentRetry = retryRef.current.count
+          setRetryCount(currentRetry)
+          const wait = Math.min(10_000, 1000 * 2 ** (currentRetry - 1))
+          setBuffering(true)
+          setPlaying(false)
+          setStreamError(`Reconnecting (${currentRetry}/${MAX_RETRIES})`)
+          setStreamErrorCode('reconnecting')
+          retryRef.current.timer = setTimeout(() => {
+            retryRef.current.timer = null
+            if (attempt === attemptRef.current && wantedRef.current === stationId) {
+              void openRef.current(stationId, { isRetry: true })
+            }
+          }, wait)
+          return
+        }
+
+        wantedRef.current = null
+        clearRetry()
         setBuffering(false)
         setPlaying(false)
         setStreamError(diag.message || err?.message || 'Could not start stream')
@@ -304,6 +334,10 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
     },
     [clearRetry, muted, volume]
   )
+
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
 
   const listen = useCallback((stationId: string) => open(stationId, { isRetry: false }), [open])
 
@@ -382,6 +416,8 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       const stationId = wantedRef.current
       if (!stationId) return
       if (!audio.getAttribute('src')) return
+      // Avoid racing with an in-flight `open()` call or an already-scheduled reconnect.
+      if (openingRef.current || retryRef.current.timer) return
       const activeAttempt = attemptRef.current
 
       const diag = await diagnoseStream(stationId)
@@ -414,6 +450,7 @@ export default function RadioProvider({ children }: { children: ReactNode }) {
       setStreamError(`Reconnecting (${currentRetry}/${MAX_RETRIES})`)
       setStreamErrorCode('reconnecting')
       retryRef.current.timer = setTimeout(() => {
+        retryRef.current.timer = null
         if (activeAttempt === attemptRef.current && wantedRef.current === stationId) {
           void open(stationId, { isRetry: true })
         }

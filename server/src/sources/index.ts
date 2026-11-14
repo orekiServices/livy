@@ -39,10 +39,9 @@ import BandcampSource from './bandcamp.ts'
 import DeezerSource from './deezer.ts'
 import CcMixterSource from './ccmixter.ts'
 import NhacCuaTuiSource from './nhaccuatui.ts'
-import RadioBrowserSource from './radiobrowser.ts'
+import RadioBrowserSource, { isRadioParadiseStation } from './radiobrowser.ts'
 import SomaFmSource from './somafm.ts'
 import PodcastSource from './podcast.ts'
-import RadioParadiseSource from './radioparadise.ts'
 import VimeoSource from './vimeo.ts'
 import YtMusicSource from './ytmusic.ts'
 import MirrorSource from './mirror.ts'
@@ -56,7 +55,7 @@ const log = createLogger('sources')
 /** Providers shipped with the node — a plugin may not replace these. */
 const BUILT_IN_SOURCES = new Set([
   'tts', 'local', 'soundcloud', 'audius', 'bandcamp', 'ccmixter',
-  'nhaccuatui', 'archive', 'deezer', 'radioparadise', 'somafm', 'podcast',
+  'nhaccuatui', 'archive', 'deezer', 'somafm', 'podcast',
   'vimeo', 'ytmusic', 'mirror', 'songlink', 'radiobrowser', 'http'
 ])
 
@@ -157,7 +156,6 @@ export class SourceRegistry {
   declare noSearch: any
   declare podcast: any
   declare radiobrowser: any
-  declare radioparadise: any
   declare searchTimeoutMs: any
   declare searchWeights: any
   declare somafm: any
@@ -186,7 +184,6 @@ export class SourceRegistry {
     this.radiobrowser = new RadioBrowserSource({ http: this.http })
     this.somafm = new SomaFmSource({ http: this.http })
     this.podcast = new PodcastSource({ http: this.http })
-    this.radioparadise = new RadioParadiseSource()
     this.vimeo = new VimeoSource()
 
     // The catalogue: it knows what every song is called, and hands the
@@ -214,7 +211,6 @@ export class SourceRegistry {
       this.nhaccuatui,
       this.archive,
       this.deezer,
-      this.radioparadise,
       this.somafm,
       this.podcast,
       this.vimeo,
@@ -243,7 +239,7 @@ export class SourceRegistry {
     // provider was queried anyway, which is a five-second stall per offline
     // provider and an accidental network call in a test that promised none.
     this.noSearch = new Set(
-      config.noSearch ?? ['tts', 'http', 'mirror', 'songlink', 'radiobrowser', 'somafm', 'radioparadise']
+      config.noSearch ?? ['tts', 'http', 'mirror', 'songlink', 'radiobrowser', 'somafm']
     )
 
     // A small thumb on the scale, applied after matching: taste, not truth.
@@ -265,8 +261,17 @@ export class SourceRegistry {
     this.hiResMinKbps = config.hiResMinKbps ?? 192
     this.hiResMinScore = config.hiResMinScore ?? 0.62
 
-    // fallback policy
-    this.fallbackOrder = config.fallbackOrder ?? ['archive', 'audius', 'soundcloud', 'bandcamp', 'ccmixter', 'radiobrowser']
+    // fallback policy — include every built-in playable searchable source so
+    // none are ignored when cloning or recovering from a failed primary link.
+    this.fallbackOrder = config.fallbackOrder ?? [
+      'archive',
+      'audius',
+      'soundcloud',
+      'nhaccuatui',
+      'bandcamp',
+      'ccmixter',
+      'radiobrowser'
+    ]
     this.liveFallback = config.liveFallback ?? true
 
     this.altCache = new Map() // trackId -> { at, tracks }
@@ -430,9 +435,14 @@ export class SourceRegistry {
         try {
           const prefix = fallback.prefixes?.[0] ?? ''
           const result = await fallback.resolve(prefix ? `${prefix}${q}` : q, options)
+          const foundTracks = Array.isArray(result?.tracks) ? result.tracks : []
           this.#record(fallback.name, { ok: true, ms: Date.now() - started })
-          log.debug(`resolved "${q.slice(0, 50)}" via default (${this.defaultSearch}) → ${result.tracks.length} in ${Date.now() - started}ms`)
-          return { ...result, source: this.defaultSearch }
+          if (foundTracks.length > 0) {
+            log.debug(`resolved "${q.slice(0, 50)}" via default (${this.defaultSearch}) → ${foundTracks.length} in ${Date.now() - started}ms`)
+            return { ...result, tracks: foundTracks, source: this.defaultSearch }
+          }
+          errors.push(`${fallback.name}: no playable tracks`)
+          log.debug(`default search (${this.defaultSearch}) returned 0 tracks for "${q.slice(0, 50)}", falling back to other sources`)
         } catch (error) {
           errors.push(`${fallback.name}: ${error.message}`)
           this.#record(fallback.name, { ok: false, ms: Date.now() - started, error: error.message })
@@ -621,18 +631,66 @@ export class SourceRegistry {
     const term = `${track.artist ?? ''} ${track.title ?? ''}`.trim().slice(0, 120)
     if (!term) return []
 
-    const providers = this.fallbackOrder.filter(
+    // Start from fallbackOrder; when the caller did not explicitly lock
+    // fallbackOrder down, also include any other registered playable searchable
+    // providers so plugin/extra sources are never silently ignored.
+    const names = [...this.fallbackOrder]
+    if (!Array.isArray(this.config?.fallbackOrder) && !this.noSearch.has('*')) {
+      for (const source of this.sources) {
+        if (
+          typeof source.search === 'function' &&
+          typeof source.stream === 'function' &&
+          !source.metadataOnly &&
+          !source.live &&
+          !this.noSearch.has(source.name) &&
+          !names.includes(source.name)
+        ) {
+          names.push(source.name)
+        }
+      }
+    }
+
+    const providers = names.filter(
       (name) => name !== track.source && name !== 'radiobrowser' && !this.get(name)?.metadataOnly
     )
-    const settled = await Promise.allSettled(
-      providers.map((name) => this.get(name)?.search?.(term, 6) ?? Promise.resolve([]))
-    )
+
+    const askProvider = (name) => {
+      const source = this.get(name)
+      if (typeof source?.search !== 'function') return Promise.resolve([])
+      return new Promise((resolve) => {
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          resolve([])
+        }, this.searchTimeoutMs)
+        timer.unref?.()
+        Promise.resolve()
+          .then(() => source.search(term, 6))
+          .then(
+            (found) => {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              resolve(Array.isArray(found) ? found : [])
+            },
+            () => {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              resolve([])
+            }
+          )
+      })
+    }
+
+    const settled = await Promise.allSettled(providers.map((name) => askProvider(name)))
 
     const scored = []
     const wantedIsrc = track.isrc ? String(track.isrc).trim().toUpperCase() : null
     for (const result of settled) {
       if (result.status !== 'fulfilled') continue
-      for (const candidate of result.value) {
+      for (const candidate of result.value as any[]) {
         if (candidate.id === track.id || candidate.metadataOnly) continue
         const candidateIsrc = candidate.isrc ? String(candidate.isrc).trim().toUpperCase() : null
         const sameIsrc = Boolean(wantedIsrc && candidateIsrc && wantedIsrc === candidateIsrc)
@@ -729,6 +787,24 @@ export class SourceRegistry {
       } catch (error) {
         // Spoken announcements have no musical equivalent: never fall back.
         if (track.announcement || track.source === 'tts') throw error
+        // A track restored from memory/store/API often dropped its private
+        // streaming handles (`_transcodings`, file URL, signed token). Try
+        // rehydrating from its page link once before declaring it dead.
+        const hasHandle =
+          track.source === 'soundcloud'
+            ? Boolean(track._transcodings?.progressive || track._transcodings?.hls || track._transcodings?.hlsAac)
+            : Boolean(track.url)
+        if (!hasHandle && (track.link || track.pageUrl)) {
+          try {
+            const hydrated = await this.rehydrate(track)
+            if (hydrated && hydrated !== track) {
+              const opened = await attempt(hydrated)
+              return { ...opened, attempts: 1 }
+            }
+          } catch (rehydrateError) {
+            errors.push(`${track.source} (rehydrate): ${rehydrateError.message}`)
+          }
+        }
         errors.push(`${track.source}: ${error.message}`)
         log.warn(`primary stream failed (${track.source}) — ${error.message}`)
       }
@@ -739,7 +815,7 @@ export class SourceRegistry {
     // 2. clones of the same recording on other providers
     let clones = []
     try {
-      clones = await this.alternatives(track, { minScore: 0.45, limit: 4 })
+      clones = await this.alternatives(track, { minScore: 0.45, limit: 6 })
     } catch {
       /* ignore */
     }
@@ -759,11 +835,18 @@ export class SourceRegistry {
     // 3. last resort: a themed live stream so the station never goes silent
     if (this.liveFallback && options.allowLiveFallback !== false) {
       try {
-        const [live] = (await this.radiobrowser.search(options.fallbackTag ?? track.genre ?? 'music', 1, { minBitrate: 128 })) ?? []
-        if (live) {
-          const opened = await attempt(live)
-          log.warn(`live fallback: relaying "${live.title}" (${live.bitrate} kbps)`)
-          return { ...opened, attempts: tried.size + 1, fallback: true, live: true }
+        const candidates = ((await this.radiobrowser.search(options.fallbackTag ?? track.genre ?? 'music', 6, { minBitrate: 128 })) ?? [])
+          .filter((live) => live && !isRadioParadiseStation(live))
+        for (const live of candidates) {
+          if (tried.has(live.id)) continue
+          tried.add(live.id)
+          try {
+            const opened = await attempt(live)
+            log.warn(`live fallback: relaying "${live.title}" (${live.bitrate} kbps)`)
+            return { ...opened, attempts: tried.size, fallback: true, live: true }
+          } catch (error) {
+            errors.push(`radiobrowser(${live.title}): ${error.message}`)
+          }
         }
       } catch (error) {
         errors.push(`radiobrowser: ${error.message}`)

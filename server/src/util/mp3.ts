@@ -110,7 +110,8 @@ export class Mp3FrameSplitter {
    * @returns {{frames: Buffer[], durationMs: number, info: object|null}}
    */
   push(chunk) {
-    this.#buffer = this.#buffer.length ? Buffer.concat([this.#buffer, chunk]) : chunk
+    const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    this.#buffer = this.#buffer.length ? Buffer.concat([this.#buffer, input]) : input
 
     if (this.#skip > 0) {
       const drop = Math.min(this.#skip, this.#buffer.length)
@@ -192,7 +193,7 @@ export function buildSilence(ms, { bitrate = 128, sampleRate = 44100 }: any = {}
     frame[0] = 0xff
     frame[1] = 0xfb // MPEG1 Layer III, no CRC
     frame[2] = 0x90 // 128 kbps, 44.1 kHz, no padding
-    frame[3] = 0xc4 // mono, no emphasis
+    frame[3] = 0x64 // joint stereo, no emphasis (matches typical music streams)
     frames.push(frame)
   }
   return { frames, durationMs: count * frameMs }

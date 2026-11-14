@@ -200,6 +200,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
 
     res.writeHead(200, headers)
     if (req.method === 'HEAD') return res.end()
+    res.flushHeaders?.()
 
     let source
     try {

@@ -504,9 +504,9 @@ export const playbackMethods = {
         for await (const raw of stream) {
           if (!this._running || this._skipRequested) break
 
-          let chunk = raw
+          let chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
           if (transcoder) {
-            chunk = transcoder.push(raw)
+            chunk = transcoder.push(chunk)
             if (chunk.length === 0) continue
             if (!track.transcodedFrom && !transcoder.passthrough) {
               track.transcodedFrom = transcoder.kind
@@ -612,15 +612,17 @@ export const playbackMethods = {
     let result = await pump(opened, { isCache: fromCache })
 
     // If a cached copy was corrupt or truncated, evict it and stream live instead.
-    if (fromCache && result.frames === 0 && !this._skipRequested && this._running) {
+    if (fromCache && (result.frames === 0 || result.errored) && !this._skipRequested && this._running) {
       this.cache?.evictAudio?.(cacheHit.hash)
       track = { ...track, cached: false }
-      try {
-        opened = await openUpstream({ skipDirect: false })
-        result = await pump(opened, { isCache: false })
-      } catch (error) {
-        this.stats.errors += 1
-        this.log.warn(`upstream fallback after cache miss failed for "${track.title}": ${error.message}`)
+      if (result.frames === 0) {
+        try {
+          opened = await openUpstream({ skipDirect: false })
+          result = await pump(opened, { isCache: false })
+        } catch (error) {
+          this.stats.errors += 1
+          this.log.warn(`upstream fallback after cache miss failed for "${track.title}": ${error.message}`)
+        }
       }
     }
 

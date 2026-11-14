@@ -16,8 +16,8 @@
  *     (spectrograms, ZIPs, 64 kbps "alternate" copies) are ignored, and the
  *     highest-bitrate MP3 of each song wins.
  */
-import { Readable } from 'node:stream'
 import createLogger from '../util/logger.ts'
+import { fetchWithConnectTimeout, responseToNodeStream } from '../util/fetchStream.ts'
 
 const log = createLogger('src:archive')
 const UA = 'Livy/1 (+https://github.com/orekiServices/livy; mp3 radio)'
@@ -156,10 +156,20 @@ export class ArchiveSource {
     return { type: 'search', name: q, tracks: await this.search(q, limit) }
   }
 
-  async stream(track) {
-    const res = await fetch(track.url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20_000) })
+  async stream(track, { signal }: any = {}) {
+    if (!track.url) throw new Error('archive.org: missing stream url')
+    const res = await fetchWithConnectTimeout(track.url, {
+      headers: { 'user-agent': UA },
+      connectTimeoutMs: 20_000,
+      signal
+    })
     if (!res.ok || !res.body) throw new Error(`archive.org download ${res.status}`)
-    return { stream: Readable.fromWeb(res.body as any), contentType: 'audio/mpeg', mode: 'archive', bitrate: track.bitrate }
+    return {
+      stream: responseToNodeStream(res, { signal }),
+      contentType: res.headers.get('content-type') || 'audio/mpeg',
+      mode: 'archive',
+      bitrate: track.bitrate
+    }
   }
 
   getTrackUrl(track) {

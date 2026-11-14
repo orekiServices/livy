@@ -353,10 +353,20 @@ export async function failStream(req, res, { voice, reason, station = null, stat
   }
 
   if (wantsJson) {
-    res.writeHead(spec.status, { ...headers, 'content-type': 'application/json; charset=utf-8' })
-    return res.end(
-      JSON.stringify({ error: true, status: spec.status, code: spec.code, message: spec.http, station: stationId ?? undefined })
-    )
+    const payload = JSON.stringify({
+      error: true,
+      status: spec.status,
+      code: spec.code,
+      message: spec.http,
+      station: stationId ?? undefined
+    })
+    res.writeHead(spec.status, {
+      ...headers,
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': String(Buffer.byteLength(payload))
+    })
+    if (req.method === 'HEAD') return res.end()
+    return res.end(payload)
   }
 
   const language = voice.languageFor(req.headers['accept-language'])

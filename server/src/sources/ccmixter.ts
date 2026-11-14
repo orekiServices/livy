@@ -7,8 +7,8 @@
  * at 192 kbps or better, which makes this a useful hi-res clone target when
  * SoundCloud only offers a 128 kbps progressive stream.
  */
+import http from 'node:http'
 import https from 'node:https'
-import { Readable } from 'node:stream'
 import createLogger from '../util/logger.ts'
 
 const log = createLogger('src:ccmixter')
@@ -118,9 +118,12 @@ export class CcMixterSource {
     return track.url ?? null
   }
 
-  async stream(track) {
+  async stream(track, { signal }: any = {}, _redirects = 0) {
+    if (!track.url) throw new Error('ccmixter: missing stream url')
     return new Promise((resolve, reject) => {
-      const req = https.get(
+      if (signal?.aborted) return reject(signal.reason ?? new Error('Aborted'))
+      const client = String(track.url).startsWith('http://') ? http : https
+      const req = client.get(
         track.url,
         {
           headers: { 'user-agent': UA, referer: track.pageUrl ?? 'https://ccmixter.org/' },
@@ -128,15 +131,46 @@ export class CcMixterSource {
           timeout: 20_000
         },
         (res) => {
-          if (res.statusCode >= 400) {
+          // Clear the connect timeout once headers arrive so station
+          // backpressure pauses never kill an active download mid-song.
+          req.setTimeout(0)
+          res.socket?.setTimeout?.(0)
+
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume()
-            return reject(new Error(`ccmixter stream ${res.statusCode}`))
+            if (signal) signal.removeEventListener('abort', onAbort)
+            if (_redirects >= 5) return reject(new Error('ccmixter: too many redirects'))
+            const nextUrl = new URL(res.headers.location, track.url).toString()
+            return resolve(this.stream({ ...track, url: nextUrl }, { signal }, _redirects + 1))
           }
-          resolve({ stream: res, contentType: 'audio/mpeg', mode: 'ccmixter', bitrate: track.bitrate })
+          if (!res.statusCode || res.statusCode >= 400) {
+            res.resume()
+            if (signal) signal.removeEventListener('abort', onAbort)
+            return reject(new Error(`ccmixter stream ${res.statusCode ?? 'error'}`))
+          }
+          const detach = () => {
+            if (signal) signal.removeEventListener('abort', onAbort)
+          }
+          res.once('close', detach)
+          res.once('end', detach)
+          res.once('error', detach)
+          resolve({
+            stream: res,
+            contentType: res.headers['content-type'] || 'audio/mpeg',
+            mode: 'ccmixter',
+            bitrate: track.bitrate
+          })
         }
       )
+      const onAbort = () => {
+        req.destroy(signal?.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true })
       req.on('timeout', () => req.destroy(new Error('ccmixter: timed out')))
-      req.on('error', reject)
+      req.on('error', (error) => {
+        if (signal) signal.removeEventListener('abort', onAbort)
+        reject(error)
+      })
     })
   }
 }

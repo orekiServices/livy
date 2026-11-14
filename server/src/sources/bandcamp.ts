@@ -15,8 +15,8 @@
  * Queries: bcsearch:<terms> | bandcamp:<terms> |
  *          https://<artist>.bandcamp.com/track|album/<slug>
  */
-import { Readable } from 'node:stream'
 import createLogger from '../util/logger.ts'
+import { fetchWithConnectTimeout, responseToNodeStream } from '../util/fetchStream.ts'
 
 const log = createLogger('src:bandcamp')
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -141,12 +141,14 @@ export class BandcampSource {
    * A hit whose page no longer carries the matching track is an error, so the
    * registry's fallback chain gets a chance.
    */
-  async stream(track) {
+  async stream(track, { signal }: any = {}) {
     let url = track.url
     if (!url) {
-      const html = await this.#page(track.pageUrl)
-      const found = this.#tracksFromPage(html, track.pageUrl)
-      if (found.length === 0) throw new Error(`no mp3-128 on ${track.pageUrl}`)
+      const pageUrl = track.pageUrl ?? track.link
+      if (!pageUrl) throw new Error('bandcamp: missing track url')
+      const html = await this.#page(pageUrl)
+      const found = this.#tracksFromPage(html, pageUrl)
+      if (found.length === 0) throw new Error(`no mp3-128 on ${pageUrl}`)
       const match =
         found.find((t) => t.title.toLowerCase() === String(track.title).toLowerCase()) ?? found[0]
       url = match.url
@@ -154,12 +156,18 @@ export class BandcampSource {
       track.url = url
     }
 
-    const res = await fetch(url, {
-      headers: { 'user-agent': UA, referer: track.pageUrl ?? 'https://bandcamp.com/' },
-      signal: AbortSignal.timeout(20_000)
+    const res = await fetchWithConnectTimeout(url, {
+      headers: { 'user-agent': UA, referer: track.pageUrl ?? track.link ?? 'https://bandcamp.com/' },
+      connectTimeoutMs: 20_000,
+      signal
     })
     if (!res.ok || !res.body) throw new Error(`bandcamp stream ${res.status}`)
-    return { stream: Readable.fromWeb(res.body as any), contentType: 'audio/mpeg', mode: 'bandcamp', bitrate: 128 }
+    return {
+      stream: responseToNodeStream(res, { signal }),
+      contentType: res.headers.get('content-type') || 'audio/mpeg',
+      mode: 'bandcamp',
+      bitrate: 128
+    }
   }
 
   async getTrackUrl(track) {

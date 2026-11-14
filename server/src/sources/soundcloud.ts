@@ -22,6 +22,7 @@
  */
 import { Readable } from 'node:stream'
 import createLogger from '../util/logger.ts'
+import { fetchWithConnectTimeout, responseToNodeStream } from '../util/fetchStream.ts'
 
 const log = createLogger('src:soundcloud')
 
@@ -272,20 +273,65 @@ export class SoundCloudSource {
     return url
   }
 
+  /**
+   * Recover `_transcodings` when a track lost its private handles (e.g. after
+   * crossing the REST API, SQLite store, or station memory).
+   */
+  async #recoverTranscodings(track) {
+    const numericId = /^sc:(\d+)$/.exec(String(track?.id ?? ''))?.[1]
+    if (numericId) {
+      try {
+        const raw = await this.#api(`/tracks/${numericId}`)
+        const hydrated = this.#track(raw)
+        if (hydrated?._transcodings) {
+          track._transcodings = hydrated._transcodings
+          return hydrated._transcodings
+        }
+      } catch {
+        /* fall through to permalink resolve */
+      }
+    }
+    const hint = track?.url ?? track?.pageUrl ?? track?.link
+    if (hint && /^https?:/i.test(String(hint))) {
+      try {
+        const raw = await this.#api('/resolve', { url: hint })
+        const hydrated = this.#track(raw)
+        if (hydrated?._transcodings) {
+          track._transcodings = hydrated._transcodings
+          return hydrated._transcodings
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return {}
+  }
+
   /** @returns {Promise<{stream?: Readable, url?: string, hls?: boolean, transcode?: boolean, contentType: string, mode: string}>} */
-  async stream(track) {
-    const t = track._transcodings ?? {}
+  async stream(track, { signal }: any = {}) {
+    let t = track._transcodings ?? {}
+    if (!t.progressive && !t.hls && !t.hlsAac) {
+      t = await this.#recoverTranscodings(track)
+    }
 
     if (t.progressive) {
       const { url } = await this.#api(t.progressive, { track_authorization: t.trackAuth })
-      const res = await fetch(url, { headers: { 'user-agent': UA } })
+      const res = await fetchWithConnectTimeout(url, {
+        headers: { 'user-agent': UA },
+        connectTimeoutMs: 20_000,
+        signal
+      })
       if (!res.ok || !res.body) throw new Error(`Progressive fetch failed (${res.status})`)
-      return { stream: Readable.fromWeb(res.body as any), contentType: 'audio/mpeg', mode: 'progressive' }
+      return {
+        stream: responseToNodeStream(res, { signal }),
+        contentType: res.headers.get('content-type') || 'audio/mpeg',
+        mode: 'progressive'
+      }
     }
 
     if (t.hls) {
       const { url } = await this.#api(t.hls, { track_authorization: t.trackAuth })
-      return { stream: hlsMp3Stream(url), contentType: 'audio/mpeg', mode: 'hls' }
+      return { stream: hlsMp3Stream(url, { signal }), contentType: 'audio/mpeg', mode: 'hls' }
     }
 
     if (t.hlsAac) {
@@ -304,13 +350,16 @@ export class SoundCloudSource {
  * should not cost the station the song, and a genuinely dead playlist should
  * not hang the reader forever.
  */
-export function hlsMp3Stream(playlistUrl, { retries = 1 }: any = {}) {
+export function hlsMp3Stream(playlistUrl, { retries = 1, signal }: any = {}) {
   return Readable.from(
     (async function* () {
-      const text = await fetch(playlistUrl, { headers: { 'user-agent': UA } }).then((r) => {
-        if (!r.ok) throw new Error(`HLS playlist ${r.status}`)
-        return r.text()
+      const playlistRes = await fetchWithConnectTimeout(playlistUrl, {
+        headers: { 'user-agent': UA },
+        connectTimeoutMs: 15_000,
+        signal
       })
+      if (!playlistRes.ok) throw new Error(`HLS playlist ${playlistRes.status}`)
+      const text = await playlistRes.text()
       const segments = text
         .split('\n')
         .map((l) => l.trim())
@@ -320,15 +369,22 @@ export function hlsMp3Stream(playlistUrl, { retries = 1 }: any = {}) {
       if (segments.length === 0) throw new Error('HLS playlist had no segments')
 
       for (const segment of segments) {
+        if (signal?.aborted) return
         let lastError
         for (let attempt = 0; attempt <= retries; attempt += 1) {
+          if (signal?.aborted) return
           try {
-            const res = await fetch(segment, { headers: { 'user-agent': UA } })
+            const res = await fetchWithConnectTimeout(segment, {
+              headers: { 'user-agent': UA },
+              connectTimeoutMs: 15_000,
+              signal
+            })
             if (!res.ok) throw new Error(`HLS segment ${res.status}`)
             yield Buffer.from(await res.arrayBuffer())
             lastError = null
             break
           } catch (error) {
+            if (signal?.aborted) return
             lastError = error
           }
         }

@@ -20,6 +20,14 @@ const MIRRORS = [
   'https://all.api.radio-browser.info'
 ]
 
+const RADIO_PARADISE_RE = /radio\s*paradise|radioparadise\.com/i
+
+export function isRadioParadiseStation(station: any): boolean {
+  if (!station) return false
+  return [station.name, station.title, station.url, station.url_resolved, station.homepage]
+    .some((field) => field && RADIO_PARADISE_RE.test(String(field)))
+}
+
 export class RadioBrowserSource {
   declare http: any
   declare mirror: any
@@ -109,8 +117,9 @@ export class RadioBrowserSource {
     }
 
     const tracks = stations
+      .filter((s) => !isRadioParadiseStation(s))
       .map((s) => this.#track(s))
-      .filter((t) => t.streamable && t.url && t.bitrate >= minBitrate)
+      .filter((t) => t.streamable && t.url && t.bitrate >= minBitrate && !isRadioParadiseStation(t))
       .sort((a, b) => b.bitrate - a.bitrate)
       .slice(0, limit)
 

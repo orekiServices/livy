@@ -12,8 +12,8 @@
  *          audius.co/<handle>/<slug> | audius:trending[:genre] |
  *          audius:playlist:<id>
  */
-import { Readable } from 'node:stream'
 import createLogger from '../util/logger.ts'
+import { fetchWithConnectTimeout, responseToNodeStream } from '../util/fetchStream.ts'
 
 const log = createLogger('src:audius')
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -190,10 +190,11 @@ export class AudiusSource {
     return url.toString()
   }
 
-  async stream(track) {
+  async stream(track, { signal }: any = {}) {
     const tried = new Set()
     let lastError
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (signal?.aborted) throw signal.reason ?? new Error('Aborted')
       const base = await this.#base({ exclude: [...tried].pop() ?? null })
       if (tried.has(base)) break
       tried.add(base)
@@ -201,14 +202,25 @@ export class AudiusSource {
       const url = new URL(`/v1/tracks/${encodeURIComponent(id)}/stream`, base)
       url.searchParams.set('app_name', this.#appName)
       try {
-        const res = await fetch(url, { headers: { 'user-agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20_000) })
+        const res = await fetchWithConnectTimeout(url, {
+          headers: { 'user-agent': UA },
+          redirect: 'follow',
+          connectTimeoutMs: 20_000,
+          signal
+        })
         if (!res.ok || !res.body) {
           lastError = new Error(`audius stream ${res.status}`)
           this.#host = null
           continue
         }
-        return { stream: Readable.fromWeb(res.body as any), contentType: 'audio/mpeg', mode: 'audius', bitrate: 320 }
+        return {
+          stream: responseToNodeStream(res, { signal }),
+          contentType: res.headers.get('content-type') || 'audio/mpeg',
+          mode: 'audius',
+          bitrate: 320
+        }
       } catch (error) {
+        if (signal?.aborted) throw error
         lastError = error
         this.#host = null
       }

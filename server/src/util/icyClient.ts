@@ -317,18 +317,33 @@ export function connectStream(url: string, options: any = {}): Promise<{
       const body = new PassThrough({ highWaterMark: 512 * 1024 })
       const chunked = /chunked/i.test(headers['transfer-encoding'] ?? '')
 
+      // Pause the socket while we drain `rest` (the first body bytes that
+      // arrived in the same packet as the HTTP headers) so they are always
+      // written strictly *before* subsequent socket chunks — otherwise an ICY
+      // `metaint` boundary can shift and corrupt framing.
+      socket.pause()
       if (chunked) {
         const decoder = new ChunkedDecoder()
         decoder.on('error', (error) => body.destroy(error))
-        socket.pipe(decoder).pipe(body)
         if (rest.length) decoder.write(rest)
+        socket.pipe(decoder).pipe(body)
       } else {
-        socket.pipe(body)
         if (rest.length) body.write(rest)
+        socket.pipe(body)
+      }
+      socket.resume()
+
+      const onStreamAbort = () => body.destroy(signal?.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+      if (signal) {
+        if (signal.aborted) onStreamAbort()
+        else signal.addEventListener('abort', onStreamAbort, { once: true })
       }
 
       socket.on('error', (error) => body.destroy(error))
-      body.on('close', () => socket.destroy())
+      body.on('close', () => {
+        if (signal) signal.removeEventListener('abort', onStreamAbort)
+        socket.destroy()
+      })
 
       resolve({
         url: target.toString(),

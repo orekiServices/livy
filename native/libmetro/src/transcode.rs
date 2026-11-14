@@ -62,9 +62,13 @@ pub fn detect(buf: &[u8]) -> Kind {
   }
 
   // An ID3 tag says "MP3" loudly enough, but AAC files carry them too, so
-  // skip it and look at what follows.
+  // skip it and look at what follows. If the tag extends past this buffer,
+  // wait for more bytes instead of scanning tag/artwork payload as audio.
   let start = framer::id3v2_size(buf);
-  let body = if start < buf.len() { &buf[start..] } else { buf };
+  if start >= buf.len() {
+    return Kind::Unknown;
+  }
+  let body = &buf[start..];
 
   if body.len() >= 4 {
     match &body[0..4] {

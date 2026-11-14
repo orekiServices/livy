@@ -36,8 +36,7 @@
       "mirror",
       "songlink",
       "radiobrowser",
-      "somafm",
-      "radioparadise"
+      "somafm"
     ],
     "maxTrackMs": 1800000
   },

@@ -39,9 +39,19 @@ export const relayMethods = {
     this.stats.peakListeners = Math.max(this.stats.peakListeners, this.subscribers.size)
 
     if (burst) {
-      for (const frame of this._burst) {
-        if (stream.destroyed || stream.writableEnded) break
-        stream.write(frame.data)
+      if (this._burst.length > 0) {
+        for (const frame of this._burst) {
+          if (stream.destroyed || stream.writableEnded) break
+          stream.write(frame.data)
+        }
+      } else if (this._running) {
+        // Seed a tiny valid MP3 lead-in when a listener connects while the
+        // first track is still buffering so HTTP clients and browsers lock
+        // onto audio/mpeg immediately instead of timing out on an empty body.
+        for (const frame of buildSilence(80).frames) {
+          if (stream.destroyed || stream.writableEnded) break
+          stream.write(frame)
+        }
       }
     }
 

@@ -19,7 +19,7 @@
  *   https://vimeo.com/76979871/abcdef1234
  *   https://player.vimeo.com/video/76979871?h=abcdef1234
  */
-import { Readable } from 'node:stream'
+import { fetchWithConnectTimeout, responseToNodeStream } from '../util/fetchStream.ts'
 
 const VIMEO_BASE = 'https://vimeo.com'
 const VIMEO_API_BASE = 'https://api.vimeo.com'
@@ -232,15 +232,21 @@ export class VimeoSource {
     return /^https?:/i.test(track.url ?? '') ? track.url : null
   }
 
-  async stream(track) {
+  async stream(track, { signal }: any = {}) {
+    if (!track.url) throw new Error('vimeo: missing stream url')
     // An HLS rendition is followed by the station's relay machinery, which
     // knows about playlists; a progressive file is just bytes.
     if (track.format === 'hls' || /\.m3u8(\?|$)/i.test(track.url)) {
       return { url: track.url, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
     }
-    const res = await this.fetch(track.url, { headers: { 'user-agent': AGENT, referer: `${VIMEO_BASE}/` } })
+    const res = await fetchWithConnectTimeout(track.url, {
+      headers: { 'user-agent': AGENT, referer: `${VIMEO_BASE}/` },
+      connectTimeoutMs: 20_000,
+      signal,
+      fetchImpl: this.fetch
+    })
     if (!res.ok || !res.body) throw new Error(`Vimeo file ${res.status}`)
-    const stream = typeof res.body.getReader === 'function' ? Readable.fromWeb(res.body) : res.body
+    const stream = responseToNodeStream(res, { signal })
     return { stream, contentType: res.headers.get('content-type') ?? 'video/mp4', transcode: true, mode: 'mp4' }
   }
 }

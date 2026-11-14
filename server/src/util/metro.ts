@@ -219,10 +219,11 @@ export class MetroFramer {
    * Returns the buffer to process, or null when there is nothing to do yet.
    */
   #gather(chunk, flush) {
-    if (!this.#coalesce) return chunk ?? EMPTY
-    if (chunk?.length) {
-      this.#hold.push(chunk)
-      this.#holdBytes += chunk.length
+    const buf = chunk ? (Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)) : null
+    if (!this.#coalesce) return buf ?? EMPTY
+    if (buf?.length) {
+      this.#hold.push(buf)
+      this.#holdBytes += buf.length
     }
     if (!flush && this.#holdBytes < this.#coalesce) return null
     if (this.#holdBytes === 0) return null
@@ -433,14 +434,19 @@ async function decodeWithWasm(buffer) {
 
 /** What is this audio? `mp3` · `aac` · `mpeg-ts` · `ogg` · `flac` · … */
 export function sniff(buffer) {
-  if (native) return native.sniff(buffer)
+  const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer)
+  const tag = id3v2Size(buf)
+  // An ID3v2 tag (often containing large cover art) that extends past this
+  // buffer must never be scanned for sync words — JPEG bytes can look like
+  // false ADTS headers or fail detection completely in both native and JS.
+  if (tag > 0 && tag >= buf.length) return 'unknown'
+  const body = tag > 0 ? buf.subarray(tag) : buf
+  if (native) return native.sniff(body)
   // The fallback can only recognise what it can also play.
-  const tag = id3v2Size(buffer)
-  const body = tag < buffer.length ? buffer.subarray(tag) : buffer
   if (body.length >= 4 && body.toString('latin1', 0, 4) === 'OggS') return 'ogg'
   if (body.length >= 4 && body.toString('latin1', 0, 4) === 'fLaC') return 'flac'
   if (body.length >= 12 && body.toString('latin1', 4, 8) === 'ftyp') return 'mp4'
-  if (body[0] === 0x47 && body[188] === 0x47) return 'mpeg-ts'
+  if (body.length >= 189 && body[0] === 0x47 && body[188] === 0x47) return 'mpeg-ts'
   for (let at = 0; at + 4 < Math.min(body.length, 8192); at += 1) {
     if (body[at] !== 0xff) continue
     // ADTS has layer bits 00; an MP3 frame never does.
@@ -467,6 +473,10 @@ export class MetroTranscoder {
   #framer = null
   #kind = 'unknown'
   #seen = 0
+  #id3Checked = false
+  #id3Skip = 0
+  #headerBuf: Buffer = EMPTY
+  #sniffBuf: Buffer = EMPTY
   #bitrate
 
   constructor({ bitrate = 128 }: any = {}) {
@@ -475,34 +485,94 @@ export class MetroTranscoder {
     else this.#framer = new MetroFramer()
   }
 
+  /** Strip any leading ID3v2 block before format detection or decoding. */
+  #stripLeadingId3(buf: Buffer): Buffer {
+    if (!this.#id3Checked) {
+      this.#headerBuf = this.#headerBuf.length ? Buffer.concat([this.#headerBuf, buf]) : buf
+      if (this.#headerBuf.length < 10) return EMPTY
+      this.#id3Checked = true
+      const tag = id3v2Size(this.#headerBuf)
+      let out: Buffer
+      if (tag > 0) {
+        if (tag <= this.#headerBuf.length) {
+          out = this.#headerBuf.subarray(tag)
+        } else {
+          this.#id3Skip = tag - this.#headerBuf.length
+          out = EMPTY
+        }
+      } else {
+        out = this.#headerBuf
+      }
+      this.#headerBuf = EMPTY
+      return out
+    }
+    if (this.#id3Skip > 0) {
+      const drop = Math.min(this.#id3Skip, buf.length)
+      this.#id3Skip -= drop
+      return buf.subarray(drop)
+    }
+    return buf
+  }
+
   /** @returns {Buffer} MP3 bytes (possibly empty while buffering) */
   push(chunk) {
+    const raw = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    const buf = this.#stripLeadingId3(raw)
+    if (buf.length === 0) return EMPTY
+
     if (this.#native) {
-      const out = this.#native.push(chunk)
+      const out = this.#native.push(buf)
       this.#kind = this.#native.kind
       return out
     }
 
     // JavaScript fallback: MP3 only.
-    this.#seen += chunk.length
     if (this.#kind === 'unknown') {
-      const guess = sniff(chunk)
-      if (guess !== 'unknown') this.#kind = guess
+      this.#seen += buf.length
+      this.#sniffBuf = this.#sniffBuf.length ? Buffer.concat([this.#sniffBuf, buf]) : buf
+      if (this.#sniffBuf.length > 8192) this.#sniffBuf = this.#sniffBuf.subarray(0, 8192)
+
+      const guess = sniff(this.#sniffBuf)
+      if (guess !== 'unknown') {
+        this.#kind = guess
+        this.#sniffBuf = EMPTY
+      }
       if (this.#kind !== 'unknown' && this.#kind !== 'mp3') {
         throw new Error(`${this.#kind} needs the libmetro native engine to be transcoded to mp3`)
       }
       // Say so rather than airing nothing: after a few kilobytes of
-      // something we cannot recognise, this relay is never going to work.
+      // post-ID3 data we cannot recognise, this relay is never going to work.
       if (this.#kind === 'unknown' && this.#seen >= 4096) {
         throw new Error('unrecognised audio: not mp3 (and this build has no native decoder)')
       }
     }
-    const { frames } = this.#framer.push(chunk)
-    return frames.length ? Buffer.concat(frames) : EMPTY
+
+    const { frames } = this.#framer.push(buf)
+    if (frames.length > 0) {
+      if (this.#kind === 'unknown') this.#kind = 'mp3'
+      this.#sniffBuf = EMPTY
+      return Buffer.concat(frames)
+    }
+    return EMPTY
   }
 
   /** End of stream: decode anything held whole and flush the encoder. */
   flush() {
+    if (this.#headerBuf.length > 0) {
+      const rest = this.#headerBuf
+      this.#headerBuf = EMPTY
+      this.#id3Checked = true
+      if (this.#native) {
+        const a = this.#native.push(rest)
+        const b = this.#native.flush()
+        this.#kind = this.#native.kind
+        return a.length && b.length ? Buffer.concat([a, b]) : a.length ? a : b
+      }
+      const { frames } = this.#framer.push(rest)
+      const { blocks } = this.#framer.flush()
+      const parts = [...frames, ...blocks.map((block) => block.data)]
+      return parts.length ? Buffer.concat(parts) : EMPTY
+    }
     if (this.#native) return this.#native.flush()
     const { blocks } = this.#framer.flush()
     return blocks.length ? Buffer.concat(blocks.map((block) => block.data)) : EMPTY

@@ -67,16 +67,43 @@ export class HttpSource {
   }
 
   async stream(track, { onMetadata, signal }: any = {}) {
-    // HLS is a playlist, not a socket: hand the URL back and let the station
-    // follow it segment by segment.
-    if (track.format === 'hls' || isHlsUrl(track.url)) {
-      return { url: track.url, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
+    let targetUrl = track.url
+    if (!targetUrl) throw new Error('http: missing stream url')
+
+    // Unwrap .pls / .m3u playlists before opening a raw audio socket (for
+    // example RadioBrowser entries that point to a playlist file).
+    if (!isHlsUrl(targetUrl) && /\.(pls|m3u|asx|xspf)(\?|$)/i.test(targetUrl)) {
+      const resolved = await resolveStreamUrl(targetUrl)
+      targetUrl = resolved.url
     }
 
-    const res = await connectStream(track.url, { metadata: true, timeout: 12_000, signal })
+    // HLS is a playlist, not a socket: hand the URL back and let the station
+    // follow it segment by segment.
+    if (track.format === 'hls' || isHlsUrl(targetUrl)) {
+      return { url: targetUrl, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
+    }
+
+    let res = await connectStream(targetUrl, { metadata: true, timeout: 12_000, signal })
+    let contentType = res.headers['content-type'] ?? 'audio/mpeg'
+
+    // Some broadcasters serve an HLS manifest or .pls/.m3u playlist without
+    // a file extension in the URL.
+    if (/vnd\.apple\.mpegurl/i.test(contentType)) {
+      res.body.destroy?.()
+      return { url: res.url || targetUrl, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
+    }
+    if (/x-scpls|x-mpegurl|pls\+xml/i.test(contentType)) {
+      res.body.destroy?.()
+      const resolved = await resolveStreamUrl(res.url || targetUrl)
+      if (isHlsUrl(resolved.url)) {
+        return { url: resolved.url, hls: true, transcode: true, contentType: 'application/vnd.apple.mpegurl', mode: 'hls' }
+      }
+      res = await connectStream(resolved.url, { metadata: true, timeout: 12_000, signal })
+      contentType = res.headers['content-type'] ?? 'audio/mpeg'
+    }
+
     const metaint = res.headers['icy-metaint'] ? Number(res.headers['icy-metaint']) : 0
 
-    const contentType = res.headers['content-type'] ?? 'audio/mpeg'
     if (/text\/html|application\/json/i.test(contentType)) {
       res.body.destroy?.()
       throw new Error(`that URL is a web page, not audio (${contentType})`)
@@ -93,6 +120,9 @@ export class HttpSource {
       if (title && onMetadata) onMetadata(title)
     })
     res.body.on('error', (error) => de.destroy(error))
+    de.once('close', () => {
+      if (!res.body.destroyed) res.body.destroy()
+    })
     return { stream: res.body.pipe(de), contentType, transcode, mode: 'icy' }
   }
 }

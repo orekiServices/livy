@@ -52,9 +52,8 @@
  *   https://www.nhaccuatui.com/bai-hat/<slug>.<key>.html
  *   https://www.nhaccuatui.com/playlist/<slug>.<key>.html
  */
-import { Readable } from 'node:stream'
-
 import createLogger from '../util/logger.ts'
+import { fetchWithConnectTimeout, responseToNodeStream } from '../util/fetchStream.ts'
 
 const log = createLogger('src:nhaccuatui')
 
@@ -349,17 +348,18 @@ export class NhacCuaTuiSource {
     throw new Error('nhaccuatui: no playable stream')
   }
 
-  async stream(track) {
+  async stream(track, { signal }: any = {}) {
     const url = await this.getTrackUrl(track)
     if (!url) throw new Error('nhaccuatui: no stream url')
 
     const open = (target) =>
-      fetch(target, {
+      fetchWithConnectTimeout(target, {
         // The CDN checks the referer, and answers 206 to a Range request,
         // which is exactly what a seek in the console sends.
         headers: { 'user-agent': HEADERS['user-agent'], referer: `${PAGE}/` },
         redirect: 'follow',
-        signal: AbortSignal.timeout(20_000)
+        connectTimeoutMs: 20_000,
+        signal
       })
 
     let res = await open(url)
@@ -373,7 +373,7 @@ export class NhacCuaTuiSource {
     if (!res.body) throw new Error('nhaccuatui stream: empty body')
 
     return {
-      stream: Readable.fromWeb(res.body as any),
+      stream: responseToNodeStream(res, { signal }),
       contentType: res.headers.get('content-type') ?? 'audio/mpeg',
       mode: 'nhaccuatui',
       // Anonymous playback is the 128 kbps tier; the header is believed when
