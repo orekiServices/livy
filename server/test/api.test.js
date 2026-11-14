@@ -81,8 +81,49 @@ test('a fresh node is healthy, empty and asks to be set up', async (t) => {
   assert.equal(soundcloud.metadataOnly, false)
   assert.equal(soundcloud.canSearch, true)
   assert.deepEqual(described.sources.find((source) => source.name === 'deezer').metadataOnly, true)
+  // Health is part of the description: a console can show what each provider
+  // has actually done without a second call, and "not tried" is its own state.
+  assert.ok(soundcloud.health, 'each provider carries a health row')
+  assert.equal(soundcloud.health.calls, 0, 'nothing has been asked of it yet')
+  assert.equal(soundcloud.health.healthy, null, 'untried is not unhealthy')
+  assert.ok(described.searchTimeoutMs > 0, 'and the deadline a search gives each provider')
   assert.deepEqual(leaks({ health, info, setup }, { dir, key: KEY }), [], 'public payloads leak nothing')
   assert.equal(JSON.stringify({ info, setup }).includes('/home/'), false, 'and no absolute paths at all')
+})
+
+test('lyrics: the node answers for whatever is on air, and never 500s over words', async (t) => {
+  const { base } = await node(t, {
+    // The lookup is off in this test: lyrics are a nicety, and the assertion is
+    // about the shape of the answer and the station context, not LRCLIB.
+    lyrics: { enabled: false },
+    stations: (mediaDir) => [{ id: 'main', name: 'Main', playlists: [`local:${mediaDir}`] }]
+  })
+
+  assert.equal((await api(base, '/api/v1/lyrics?station=nope'))._status, 404, 'an unknown station is a 404')
+
+  const idle = await api(base, '/api/v1/lyrics')
+  assert.equal(idle.found, false)
+  assert.equal(idle.reason, 'nothing on air')
+  assert.equal(idle.positionMs, 0)
+
+  // Once something is playing, the answer carries the track and a sync anchor
+  // the console can start its own clock from.
+  const onAir = await waitFor(async () => {
+    const payload = await api(base, '/api/v1/lyrics?station=main')
+    return payload.track ? payload : null
+  }, { timeout: 10_000, label: 'a track on air' })
+  assert.equal(onAir.found, false, 'a disabled lookup answers nothing, not an error')
+  assert.equal(onAir.station, 'main')
+  assert.equal(onAir.provider, 'lrclib')
+  assert.ok(onAir.track.title, 'the track it answered about')
+  assert.ok(Number.isFinite(onAir.positionMs) && onAir.positionMs >= 0)
+  assert.ok(Number.isFinite(onAir.serverTime))
+  assert.deepEqual(onAir.lines, [])
+
+  // By artist and title, no station involved — the listener app's shape.
+  const byName = await api(base, '/api/v1/lyrics?artist=Someone&title=Song')
+  assert.equal(byName.found, false)
+  assert.equal(byName.track.artist, 'Someone')
 })
 
 test('the owner key gates the control plane, by header, bearer or query', async (t) => {

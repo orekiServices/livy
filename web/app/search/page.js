@@ -7,11 +7,89 @@
  * Audius and the rest are one list. "Play now" goes through the listener route
  * (which the station can switch off); "Queue" is the owner's.
  */
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
 import { Badge, Button, Empty, Field, Panel, clock, cx, inputClass } from '../../components/ui.js'
 import { api, owner } from '../../lib/api.js'
+
+/** What each provider has done lately — the registry keeps the numbers. */
+function Sources() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      setData(await api('/api/v1/sources'))
+      setError(null)
+    } catch (problem) {
+      setError(problem.message)
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const timer = setInterval(load, 15_000)
+    return () => clearInterval(timer)
+  }, [load])
+
+  if (error) return <Panel title="Sources"><p className="text-sm text-rose">{error}</p></Panel>
+  if (!data) return <Panel title="Sources"><div className="h-20 animate-pulse rounded-xl bg-ink-800/60" /></Panel>
+
+  const rows = [...(data.sources ?? [])].sort((a, b) => {
+    const tried = (entry) => (entry.health?.calls ?? 0) > 0
+    return Number(tried(b)) - Number(tried(a)) || a.name.localeCompare(b.name)
+  })
+  const searched = rows.filter((row) => row.canSearch)
+  const broken = rows.filter((row) => row.health?.healthy === false)
+
+  return (
+    <Panel
+      title="Sources"
+      subtitle={`${rows.length} providers · ${searched.length} can search · ${data.searchTimeoutMs ?? 4000} ms each before a search answers without them`}
+      actions={<Badge tone={broken.length ? 'rose' : 'lime'}>{broken.length ? `${broken.length} unhealthy` : 'all answering'}</Badge>}
+      padded={false}
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="text-[10px] uppercase tracking-wider text-ink-500">
+            <tr className="border-b border-ink-700/60">
+              <th className="px-4 py-2">provider</th>
+              <th className="px-2 py-2">can</th>
+              <th className="px-2 py-2 text-right">calls</th>
+              <th className="px-2 py-2 text-right">failed</th>
+              <th className="px-2 py-2 text-right">avg</th>
+              <th className="px-4 py-2">last</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono text-ink-200">
+            {rows.map((row) => {
+              const health = row.health ?? {}
+              const state = health.healthy === null || health.healthy === undefined ? 'text-ink-500' : health.healthy ? 'text-lime' : 'text-rose'
+              return (
+                <tr key={row.name} className="border-b border-ink-700/40 last:border-0">
+                  <td className="px-4 py-1.5">
+                    <span className={state}>●</span> {row.name}
+                    {row.metadataOnly && <span className="ml-1 text-[10px] text-ink-500">metadata</span>}
+                  </td>
+                  <td className="px-2 py-1.5 text-[11px] text-ink-400">
+                    {[row.canSearch ? 'search' : null, row.metadataOnly ? '' : 'play', row.live ? 'live' : null].filter(Boolean).join(' · ') || '—'}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">{health.calls ?? 0}</td>
+                  <td className={cx('px-2 py-1.5 text-right', health.failed ? 'text-rose' : 'text-ink-500')}>{health.failed ?? 0}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-300">{health.avgMs == null ? '—' : `${health.avgMs} ms`}</td>
+                  <td className="max-w-[220px] truncate px-4 py-1.5 text-[11px] text-ink-500" title={health.lastError ?? ''}>
+                    {health.lastError ?? (health.lastAt ? 'ok' : 'not tried yet')}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  )
+}
 
 export default function SearchPage() {
   const { stations, setup, key, info } = useRadio()
@@ -100,6 +178,8 @@ export default function SearchPage() {
         {error && <p className="mt-2 text-xs text-rose">{error}</p>}
         {said && <p className="mt-2 text-xs text-lime">{said}</p>}
       </Panel>
+
+      <Sources />
 
       {results && (
         <Panel title={`Results · ${results.length}`} padded={false}>

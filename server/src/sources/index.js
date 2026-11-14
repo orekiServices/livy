@@ -228,6 +228,59 @@ export class SourceRegistry {
 
     this.altCache = new Map() // trackId -> { at, tracks }
     this.altTtl = config.altCacheTtl ?? 10 * 60_000
+
+    // How long one provider may take before a search answers without it.
+    // A directory that is down or rate-limiting must cost the console a
+    // fraction of a second, not the whole request: the results that arrived
+    // are still results.
+    this.searchTimeoutMs = config.searchTimeoutMs ?? 4000
+    // What each provider has actually done — the console shows it, and it is
+    // the difference between "SoundCloud is broken" and "SoundCloud took 3 s".
+    this.health = new Map()
+  }
+
+  /* ------------------------------ health ------------------------------ */
+
+  /** Record one provider call: did it work, how long did it take, why not. */
+  #record(name, { ok, ms, error = null } = {}) {
+    const row = this.health.get(name) ?? { calls: 0, ok: 0, failed: 0, totalMs: 0, lastMs: null, lastError: null, lastFailAt: null, lastAt: null }
+    row.calls += 1
+    row.lastAt = Date.now()
+    if (ms != null) {
+      row.totalMs += ms
+      row.lastMs = Math.round(ms)
+    }
+    if (ok) row.ok += 1
+    else {
+      row.failed += 1
+      row.lastError = String(error ?? 'failed').slice(0, 200)
+      row.lastFailAt = Date.now()
+    }
+    this.health.set(name, row)
+    return row
+  }
+
+  /** Per-provider numbers, ready to print. */
+  healthOf(name = null) {
+    const one = (key) => {
+      const row = this.health.get(key)
+      if (!row) return { calls: 0, ok: 0, failed: 0, avgMs: null, lastMs: null, lastError: null, lastFailAt: null, lastAt: null, healthy: null }
+      return {
+        calls: row.calls,
+        ok: row.ok,
+        failed: row.failed,
+        avgMs: row.calls ? Math.round(row.totalMs / row.calls) : null,
+        lastMs: row.lastMs,
+        lastError: row.lastError,
+        lastFailAt: row.lastFailAt,
+        lastAt: row.lastAt,
+        // Unknown until something has been tried: a provider nobody searched
+        // is not "unhealthy", it is unmeasured.
+        healthy: row.calls === 0 ? null : row.failed === 0 || Date.now() - (row.lastFailAt ?? 0) > 5 * 60_000
+      }
+    }
+    if (name) return one(name)
+    return Object.fromEntries([...this.sources.map((source) => source.name), ...this.health.keys()].map((key) => [key, one(key)]))
   }
 
   /* ---------------------------- inspection ---------------------------- */
@@ -240,7 +293,7 @@ export class SourceRegistry {
    * Everything a console needs to draw the source list, including what each
    * provider claims and whether it can actually play audio.
    */
-  describe() {
+  describe({ health = false } = {}) {
     return this.sources.map((source) => ({
       name: source.name,
       prefixes: source.prefixes ?? [],
@@ -248,7 +301,8 @@ export class SourceRegistry {
       // Does it need another provider to actually open a stream?
       metadataOnly: source.metadataOnly === true || typeof source.stream !== 'function',
       canSearch: typeof source.search === 'function',
-      live: source.live === true
+      live: source.live === true,
+      ...(health ? { health: this.healthOf(source.name) } : {})
     }))
   }
 
@@ -308,9 +362,15 @@ export class SourceRegistry {
     const started = Date.now()
 
     if (source) {
-      const result = await source.resolve(q, options)
-      log.debug(`resolved "${q.slice(0, 50)}" via ${source.name} → ${result.tracks?.length ?? 0} in ${Date.now() - started}ms`)
-      return { ...result, source: source.name }
+      try {
+        const result = await source.resolve(q, options)
+        this.#record(source.name, { ok: true, ms: Date.now() - started })
+        log.debug(`resolved "${q.slice(0, 50)}" via ${source.name} → ${result.tracks?.length ?? 0} in ${Date.now() - started}ms`)
+        return { ...result, source: source.name }
+      } catch (error) {
+        this.#record(source.name, { ok: false, ms: Date.now() - started, error: error.message })
+        throw error
+      }
     }
 
     const fallback = this.get(this.defaultSearch)
@@ -318,10 +378,12 @@ export class SourceRegistry {
     if (fallback?.resolve) {
       try {
         const result = await fallback.resolve(`scsearch:${q}`, options)
+        this.#record(fallback.name, { ok: true, ms: Date.now() - started })
         log.debug(`resolved "${q.slice(0, 50)}" via default (${this.defaultSearch}) → ${result.tracks.length} in ${Date.now() - started}ms`)
         return { ...result, source: this.defaultSearch }
       } catch (error) {
         errors.push(`${fallback.name}: ${error.message}`)
+        this.#record(fallback.name, { ok: false, ms: Date.now() - started, error: error.message })
         log.debug(`default search failed for "${q.slice(0, 50)}": ${error.message}`)
       }
     }
@@ -370,7 +432,15 @@ export class SourceRegistry {
     if (provider !== 'all') {
       const source = this.get(provider)
       if (!source?.search) throw new Error(`Source "${provider}" cannot search`)
-      return (await source.search(term, limit)) ?? []
+      const started = Date.now()
+      try {
+        const found = (await source.search(term, limit)) ?? []
+        this.#record(source.name, { ok: true, ms: Date.now() - started })
+        return found
+      } catch (error) {
+        this.#record(source.name, { ok: false, ms: Date.now() - started, error: error.message })
+        throw error
+      }
     }
 
     // Everything that can search, in parallel, each asked for a share of
@@ -381,20 +451,44 @@ export class SourceRegistry {
     if (searchable.length === 0) return []
     const per = Math.max(4, Math.ceil((limit * 1.5) / searchable.length))
 
-    const settled = await Promise.allSettled(
-      searchable.map(async (source) => {
+    // Every provider gets the same deadline. One that has not answered by then
+    // is not dropped from the list for ever — it is recorded as slow in its
+    // health row and the results that did arrive are returned. Waiting for the
+    // slowest catalogue is what made a console search feel broken.
+    const ask = (source) =>
+      new Promise((resolve) => {
         const started = Date.now()
-        const found = (await source.search(term, per)) ?? []
-        return found.map((track) => ({ ...track, source: track.source ?? source.name, searchMs: Date.now() - started }))
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          this.#record(source.name, { ok: false, ms: Date.now() - started, error: `timed out after ${this.searchTimeoutMs} ms` })
+          resolve({ tracks: [] })
+        }, this.searchTimeoutMs)
+        timer.unref?.()
+        Promise.resolve()
+          .then(() => source.search(term, per))
+          .then(
+            (found) => {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              this.#record(source.name, { ok: true, ms: Date.now() - started })
+              resolve({ tracks: (found ?? []).map((track) => ({ ...track, source: track.source ?? source.name, searchMs: Date.now() - started })) })
+            },
+            (error) => {
+              if (settled) return
+              settled = true
+              clearTimeout(timer)
+              this.#record(source.name, { ok: false, ms: Date.now() - started, error: error?.message ?? String(error) })
+              log.debug(`search failed on ${source.name}: ${error?.message ?? error}`)
+              resolve({ tracks: [], error: error?.message ?? String(error) })
+            }
+          )
       })
-    )
 
-    const candidates = []
-    settled.forEach((result, index) => {
-      if (result.status === 'fulfilled') candidates.push(...result.value)
-      else log.debug(`search failed on ${searchable[index].name}: ${result.reason?.message ?? result.reason}`)
-    })
-
+    const answered = await Promise.all(searchable.map((source) => ask(source)))
+    const candidates = answered.flatMap((result) => result.tracks ?? [])
     return this.rank(term, candidates, limit)
   }
 
@@ -547,8 +641,15 @@ export class SourceRegistry {
       const source = this.get(candidate.source)
       if (!source) throw new Error(`No source "${candidate.source}"`)
       if (typeof source.stream !== 'function') throw new Error(`"${candidate.source}" cannot stream`)
-      const opened = await source.stream(candidate, options)
-      return { ...opened, track: candidate }
+      const started = Date.now()
+      try {
+        const opened = await source.stream(candidate, options)
+        this.#record(candidate.source, { ok: true, ms: Date.now() - started })
+        return { ...opened, track: candidate }
+      } catch (error) {
+        this.#record(candidate.source, { ok: false, ms: Date.now() - started, error: error.message })
+        throw error
+      }
     }
 
     // 1. the track itself
