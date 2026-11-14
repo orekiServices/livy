@@ -19,7 +19,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, Empty, Field, KeyGate, Panel, Slider, cx, inputClass } from '../../components/ui.js'
+import { Badge, Button, Chip, Empty, Field, KeyGate, PageHeading, PageSkeleton, Panel, Slider, Toolbar, cx, inputClass } from '../../components/ui.js'
 import { owner } from '../../lib/api.js'
 
 /** The documented "on" value for each unit, since most defaults are neutral. */
@@ -126,20 +126,32 @@ const PRESET_LIST = [
 
 function Fader({ frequency, gain, onChange }) {
   const db = gainDb(gain)
+  const label = frequency >= 1000 ? `${frequency / 1000}k` : String(frequency)
   return (
-    <div className="flex flex-col items-center gap-1">
-      <span className="font-mono text-[10px] text-ink-300">{db > 0.5 ? '+' : ''}{db.toFixed(0)}</span>
+    <div className="flex flex-1 flex-col items-center gap-1.5">
+      <span
+        className={cx(
+          'numeric rounded-md px-1 py-0.5 font-mono text-2xs',
+          Math.abs(db) < 0.5 ? 'text-ink-500' : 'text-amber'
+        )}
+        aria-hidden="true"
+      >
+        {db > 0.5 ? '+' : ''}
+        {db.toFixed(0)}
+      </span>
       <input
         type="range"
         className="fader accent-amber"
+        style={{ '--fill': `${Math.round(((gain + 1) / 2) * 100)}%` }}
         min={-1}
         max={1}
         step={0.01}
         value={gain}
         onChange={(event) => onChange(Number(event.target.value))}
-        aria-label={`${frequency} Hz`}
+        aria-label={`${frequency} hertz band, ${db.toFixed(0)} decibels`}
+        title={`${frequency} Hz · ${db.toFixed(1)} dB`}
       />
-      <span className="text-[10px] text-ink-500">{frequency >= 1000 ? `${frequency / 1000}k` : frequency}</span>
+      <span className="font-mono text-2xs text-ink-500">{label}</span>
     </div>
   )
 }
@@ -155,13 +167,14 @@ function FilterCard({ filter, settings, onChange }) {
   })
   const toggle = () => onChange(name, engaged ? null : ENGAGE[name] ?? {})
   return (
-    <div className={cx('rounded-xl border p-3 transition', engaged ? 'border-cyan-dim bg-cyan/[0.04]' : 'border-ink-700 bg-ink-900/40')}>
+    <div className={cx('rounded-xl border p-3 transition', engaged ? 'border-cyan-dim bg-cyan/[0.05]' : 'border-hairline bg-ink-900/50')}>
       <div className="flex items-center justify-between gap-2">
-        <span className={cx('text-sm', engaged ? 'text-cyan' : 'text-ink-100')}>{label}</span>
+        <span className={cx('text-sm', engaged ? 'text-cyan' : 'text-ink-200')}>{label}</span>
         <button
           type="button"
           role="switch"
           aria-checked={engaged}
+          aria-label={`${label} filter`}
           onClick={toggle}
           className={cx('relative h-4 w-7 rounded-full border transition', engaged ? 'border-cyan-dim bg-cyan/60' : 'border-ink-600 bg-ink-700')}
         >
@@ -278,44 +291,52 @@ function RackPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Radio filters</h1>
-          <p className="mt-1 text-sm text-ink-300">Live DSP chain for one station: before the stream, and before the automix.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select className={cx(inputClass, 'w-44')} value={stationId} onChange={(event) => setStationId(event.target.value)}>
-            {stations.map((station) => (
-              <option key={station.id} value={station.id}>{station.name}</option>
-            ))}
-          </select>
-          <Badge tone={state === 'error' ? 'rose' : state === 'saving' ? 'ink' : active.length ? 'cyan' : 'ink'}>
-            {state === 'error' ? 'error' : state === 'saving' ? 'saving…' : active.length ? `${active.length} live` : 'bypassed'}
-          </Badge>
-        </div>
-      </header>
+      <PageHeading
+        eyebrow="Live DSP"
+        title="Radio filters"
+        subtitle="One station's chain, applied before the stream and before the automix. Changes land on air in the same breath."
+        actions={
+          <>
+            <select
+              aria-label="Station"
+              className={cx(inputClass, 'w-44')}
+              value={stationId}
+              onChange={(event) => setStationId(event.target.value)}
+            >
+              {stations.map((station) => (
+                <option key={station.id} value={station.id}>{station.name}</option>
+              ))}
+            </select>
+            <Badge tone={state === 'error' ? 'rose' : active.length ? 'cyan' : 'ink'} dot={active.length > 0}>
+              {state === 'error' ? 'error' : state === 'saving' ? 'saving…' : active.length ? `${active.length} live` : 'bypassed'}
+            </Badge>
+          </>
+        }
+      />
 
       {!key && <KeyGate />}
 
       <KeyGate>
         <div className="space-y-4">
           <Panel title="Presets" subtitle="A preset replaces the whole chain. Nothing from the last one lingers.">
-            <div className="flex flex-wrap gap-1.5">
+            <Toolbar>
               {PRESET_LIST.map((entry) => (
-                <Button key={entry.id} size="sm" variant={entry.id === 'off' ? 'ghost' : 'default'} onClick={() => preset(entry.id)}>
+                <Chip key={entry.id} onClick={() => preset(entry.id)} title={`Apply the ${entry.label.toLowerCase()} preset`}>
                   {entry.label}
-                </Button>
+                </Chip>
               ))}
-            </div>
+            </Toolbar>
             {active.length > 0 && (
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] uppercase tracking-wider text-ink-300">chain</span>
+                <span className="label mr-1">chain</span>
                 {active.map((name) => (
                   <Badge key={name} tone="cyan">{LABELS[name] ?? name}</Badge>
                 ))}
               </div>
             )}
-            {error && <p className="mt-2 text-xs text-rose">{error}</p>}
+            {error && (
+              <p role="alert" className="mt-2 text-xs text-rose">{error}</p>
+            )}
           </Panel>
 
           <Panel
@@ -345,7 +366,15 @@ function RackPage() {
 
 export default function FiltersPage() {
   return (
-    <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-ink-800/60" />}>
+    <Suspense
+      fallback={
+        <PageSkeleton
+          title="Radio filters"
+          subtitle="One station's chain, applied before the stream and before the automix."
+          rows={4}
+        />
+      }
+    >
       <RackPage />
     </Suspense>
   )

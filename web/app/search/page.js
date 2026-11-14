@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, Empty, Field, Panel, clock, cx, inputClass } from '../../components/ui.js'
+import { Badge, Button, Empty, Field, PageHeading, Panel, clock, cx, inputClass } from '../../components/ui.js'
 import { api, owner } from '../../lib/api.js'
 
 /** What each provider has done lately, the registry keeps the numbers. */
@@ -143,17 +143,30 @@ export default function SearchPage() {
 
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
-        <p className="mt-1 text-sm text-ink-300">
-          {setup?.sources?.length ? `${setup.sources.length} sources on this node.` : 'The node has not published its sources yet.'}
-        </p>
-      </header>
+      <PageHeading
+        eyebrow="Library"
+        title="Search"
+        subtitle={
+          setup?.sources?.length ? `${setup.sources.length} sources on this node.` : 'The node has not published its sources yet.'
+        }
+      />
 
       <Panel>
         <form onSubmit={search} className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-          <input className={inputClass} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="artist, title, or a provider prefix" autoFocus />
-          <select className={cx(inputClass, 'sm:w-40')} value={provider} onChange={(event) => setProvider(event.target.value)}>
+          <input
+            className={inputClass}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="artist, title, or a provider prefix"
+            aria-label="Search the library"
+            autoFocus
+          />
+          <select
+            aria-label="Source"
+            className={cx(inputClass, 'sm:w-40')}
+            value={provider}
+            onChange={(event) => setProvider(event.target.value)}
+          >
             <option value="all">all sources</option>
             {(setup?.sources ?? []).map((source) => (
               <option key={source.name} value={source.name}>{source.name}</option>

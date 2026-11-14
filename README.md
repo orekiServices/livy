@@ -168,6 +168,51 @@ The player is part of the frame, not a page: switching view does not interrupt
 the stream. Owner actions are behind the key, which lives in the tab's session
 storage and is never put in a URL.
 
+### The frame
+
+The console is a rail, a page and a transport. The rail groups its nine
+destinations by what they are for — what is on air, what the engine knows, what
+the node is doing — because eight flat items is a list and three groups is a
+map. Below `md` the rail becomes a scrolling strip and the brand stays, so a
+phone still says where it is.
+
+Everything visual comes from three places and nowhere else:
+
+- **tokens** in `app/globals.css`: the charcoal ramp, amber for on air, cyan for
+  the machinery, plus named `hairline` and `rule` borders and a type scale with
+  a real display size
+- **`.surface`** and **`.surface-lifted`**: one panel look, one border colour,
+  one shadow; a second border colour is how a console starts to look noisy
+- **`components/ui.js`**: `PageHeading`, `Panel`, `Stat`, `Badge`, `Button`,
+  `Chip`, `Slider`, `Meter`, `Switch`, `Field`, `Empty`, `KeyGate`
+
+Pages own their `<h1>` through `PageHeading`, which also means the exported HTML
+has the page's real heading before any data arrives: the three pages that need
+`useSearchParams` (station, seams, filters) render `PageSkeleton` inside their
+Suspense boundary, so the frame does not jump and the static file is not a
+blank rectangle.
+
+### Checking the console as DOM
+
+Playwright needs a browser; the DOM checks do not.
+
+```bash
+cd web && bun run verify:dom            # against a node on :3000
+bun run verify:dom http://host:2399     # or against the node's own port
+```
+
+`web/scripts/verify-dom.mjs` fetches every route, parses it, and asserts what is
+wrong in the markup whether or not anyone looks at a screenshot: exactly one
+`<main>`, one primary `<nav>`, one `<h1>`; a skip link that points at `#main`;
+headings that never skip a level; no duplicate ids; every nav destination
+present with the current page marked; a name on every control and `alt` on
+every image; no positive `tabindex`; every internal link answering 200; and
+every class in the markup actually present in the built CSS — which is how a
+mistyped Tailwind utility, silently dropped by the compiler, gets caught.
+
+212 checks across 10 routes, run against both shapes: the static export from
+the node and the Next server build.
+
 ```bash
 bun run build:web        # rebuild the console and install it into the node
 cd web && bun run dev    # develop it on :3000 against a node on :2333

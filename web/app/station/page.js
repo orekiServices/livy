@@ -14,7 +14,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
 import { IconPlay, IconRadio, IconSeams } from '../../components/icons.js'
-import { Badge, Button, Empty, Field, KeyGate, Panel, Slider, Stat, Switch, ago, clock, cx, inputClass } from '../../components/ui.js'
+import { Badge, Button, Empty, Field, KeyGate, PageSkeleton, Panel, Slider, Stat, Switch, ago, clock, cx, inputClass } from '../../components/ui.js'
 import { api, owner } from '../../lib/api.js'
 
 const EFFECTS = ['crossfade', 'bass-swap', 'filter', 'echo', 'sweep', 'spindown', 'slam', 'wash', 'roll', 'drop']
@@ -72,8 +72,8 @@ function Header({ station, refresh }) {
   }
   return (
     <header className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <div className="h-12 w-12 overflow-hidden rounded-xl border border-ink-700 bg-ink-800">
+      <div className="flex items-center gap-3.5">
+        <div className="h-14 w-14 overflow-hidden rounded-xl border border-hairline bg-ink-800">
           {station.nowPlaying?.track?.artwork || station.artwork ? (
             <img src={station.nowPlaying?.track?.artwork ?? station.artwork} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -82,13 +82,14 @@ function Header({ station, refresh }) {
             </div>
           )}
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">{station.name}</h1>
-            <Badge tone={live ? 'amber' : 'ink'}>{live ? 'on air' : station.state}</Badge>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-display font-semibold tracking-tight">{station.name}</h1>
+            <Badge tone={live ? 'amber' : 'ink'} dot={live}>{live ? 'on air' : station.state}</Badge>
           </div>
-          <p className="text-xs text-ink-300">
-            {station.genre ?? 'no genre'} · {station.listeners ?? 0} listening · buffered {clock(station.bufferedMs ?? 0)}
+          <p className="mt-1 text-xs text-ink-300">
+            {station.genre ?? 'no genre'} · <span className="numeric">{station.listeners ?? 0}</span> listening · buffered{' '}
+            <span className="numeric">{clock(station.bufferedMs ?? 0)}</span>
           </p>
         </div>
       </div>
@@ -595,7 +596,7 @@ function StationBody() {
 
 export default function StationPage() {
   return (
-    <Suspense fallback={<div className="h-40 animate-pulse rounded-2xl bg-ink-800/60" />}>
+    <Suspense fallback={<PageSkeleton title="Station" subtitle="What is playing, what is next, and what the engine decided." rows={3} />}>
       <StationBody />
     </Suspense>
   )

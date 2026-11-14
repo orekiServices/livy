@@ -3,7 +3,7 @@
   "version": "3.10.0",
   "private": true,
   "type": "module",
-  "description": "Livy web console — a Next export served by the radio node, and optionally a Next server of its own.",
+  "description": "Livy web console \u2014 a Next export served by the radio node, and optionally a Next server of its own.",
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
@@ -11,7 +11,8 @@
     "start": "LIVY_CONSOLE_SERVER=1 next start -H 0.0.0.0 -p 3000",
     "clean": "rm -rf out .next .next-server",
     "test:e2e": "playwright test",
-    "test:e2e:screens": "playwright test -g screenshots"
+    "test:e2e:screens": "playwright test -g screenshots",
+    "verify:dom": "bun scripts/verify-dom.mjs"
   },
   "dependencies": {
     "next": "16.4.6",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@playwright/test": "1.65.1",
     "@tailwindcss/turbopack": "4.3.3",
+    "cheerio": "1.2.0",
     "tailwindcss": "4.3.3"
   },
   "packageManager": "bun@1.4.4",

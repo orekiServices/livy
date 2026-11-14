@@ -10,7 +10,7 @@
 import Link from 'next/link'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, KeyGate, Panel } from '../../components/ui.js'
+import { Badge, Button, KeyGate, PageHeading, Panel } from '../../components/ui.js'
 
 const DESKS = [
   { href: '/stations/', title: 'Stations', line: 'Start, stop, skip, shuffle, and create a station from a provider string.' },
@@ -25,12 +25,11 @@ export default function OwnerPage() {
   const { key, ownerName, forgetKey, info } = useRadio()
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Owner desk</h1>
-        <p className="mt-1 text-sm text-ink-300">
-          {key && ownerName ? `Signed in as ${ownerName}.` : 'Enter the node’s owner key to change anything.'}
-        </p>
-      </header>
+      <PageHeading
+        eyebrow="Credential"
+        title="Owner desk"
+        subtitle={key && ownerName ? `Signed in as ${ownerName}.` : 'Enter the node’s owner key to change anything.'}
+      />
 
       <Panel title="Where everything is" subtitle="One view per job, all behind the same key." padded={false}>
         <ul className="divide-y divide-ink-700/60">

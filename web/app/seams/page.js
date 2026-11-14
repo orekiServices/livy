@@ -17,7 +17,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, Empty, KeyGate, Panel, Stat, ago, clock, cx } from '../../components/ui.js'
+import { Badge, Button, Empty, KeyGate, PageHeading, PageSkeleton, Panel, Stat, ago, clock, cx } from '../../components/ui.js'
 import { owner } from '../../lib/api.js'
 
 const DETECTORS = ['ending', 'energy', 'novelty', 'phrase', 'vocal', 'loop']
@@ -273,17 +273,23 @@ function SeamsBody() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Seams & Forever</h1>
-          <p className="mt-1 text-sm text-ink-300">What the scout hears in the song on air, and what the jukebox graph can do with it.</p>
-        </div>
-        <select className={cx('rounded-lg border border-ink-600 bg-ink-900 px-2.5 py-1.5 text-sm')} value={stationId} onChange={(event) => setStationId(event.target.value)}>
-          {stations.map((station) => (
-            <option key={station.id} value={station.id}>{station.name}</option>
-          ))}
-        </select>
-      </header>
+      <PageHeading
+        eyebrow="Analysis and jumps"
+        title="Seams & Forever"
+        subtitle="What the scout hears in the song on air, and what the jukebox graph can do with it."
+        actions={
+          <select
+            aria-label="Station"
+            className={cx(inputClass, 'w-44')}
+            value={stationId}
+            onChange={(event) => setStationId(event.target.value)}
+          >
+            {stations.map((station) => (
+              <option key={station.id} value={station.id}>{station.name}</option>
+            ))}
+          </select>
+        }
+      />
 
       {!key ? (
         <KeyGate />
@@ -324,7 +330,15 @@ function SeamsBody() {
 
 export default function SeamsPage() {
   return (
-    <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-ink-800/60" />}>
+    <Suspense
+      fallback={
+        <PageSkeleton
+          title="Seams & Forever"
+          subtitle="What the scout hears in the song on air, and what the jukebox graph can do with it."
+          rows={4}
+        />
+      }
+    >
       <SeamsBody />
     </Suspense>
   )

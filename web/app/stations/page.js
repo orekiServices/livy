@@ -11,7 +11,7 @@ import { useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
 import { IconRadio } from '../../components/icons.js'
-import { Badge, Button, Field, KeyGate, Panel, inputClass } from '../../components/ui.js'
+import { Badge, Button, Field, KeyGate, PageHeading, Panel, inputClass } from '../../components/ui.js'
 import { owner } from '../../lib/api.js'
 
 function StationCard({ station }) {
@@ -136,18 +136,18 @@ export default function StationsPage() {
   const { stations, ready, key, info } = useRadio()
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Stations</h1>
-          <p className="mt-1 text-sm text-ink-300">
-            {stations.length} station{stations.length === 1 ? '' : 's'} on this node.
-            {!key && ' Enter the owner key below to change anything.'}
-          </p>
-        </div>
-        <Link href="/ops/">
-          <Button size="sm">Node & key</Button>
-        </Link>
-      </header>
+      <PageHeading
+        eyebrow="On air"
+        title="Stations"
+        subtitle={`${stations.length} station${stations.length === 1 ? '' : 's'} on this node.${
+          key ? '' : ' Enter the owner key below to change anything.'
+        }`}
+        actions={
+          <Link href="/ops/">
+            <Button size="sm">Node &amp; key</Button>
+          </Link>
+        }
+      />
 
       {!ready ? (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

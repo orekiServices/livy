@@ -17,7 +17,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, Empty, Field, KeyGate, Panel, Slider, Stat, Switch, ago, cx, inputClass } from '../../components/ui.js'
+import { Badge, Button, Empty, Field, KeyGate, PageHeading, Panel, Slider, Stat, Switch, ago, cx, inputClass } from '../../components/ui.js'
 import { owner } from '../../lib/api.js'
 
 const percent = (value) => (value == null ? '–' : `${Math.round(value * 100)}%`)
@@ -309,18 +309,21 @@ export default function ModelsPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Training</h1>
-          <p className="mt-1 text-sm text-ink-300">
-            {models ? `${models.seams ?? 0} seams · ${registry.length} model${registry.length === 1 ? '' : 's'} on this node` : 'Loading the registry…'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href="/seams/"><Button size="sm" variant="ghost">Seams & RL</Button></Link>
-          <Button size="sm" onClick={load}>Refresh</Button>
-        </div>
-      </header>
+      <PageHeading
+        eyebrow="Learned policy"
+        title="Training"
+        subtitle={
+          models
+            ? `${models.seams ?? 0} seams · ${registry.length} model${registry.length === 1 ? '' : 's'} on this node`
+            : 'Loading the registry…'
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <Link href="/seams/"><Button size="sm" variant="ghost">Seams &amp; RL</Button></Link>
+            <Button size="sm" onClick={load}>Refresh</Button>
+          </div>
+        }
+      />
 
       {!key ? (
         <KeyGate />

@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, Empty, Field, KeyGate, Panel, Stat, ago, cx, inputClass } from '../../components/ui.js'
+import { Badge, Button, Empty, Field, KeyGate, PageHeading, Panel, Stat, ago, cx, inputClass } from '../../components/ui.js'
 import { api, owner } from '../../lib/api.js'
 
 function KeyPanel() {
@@ -227,13 +227,12 @@ export default function OpsPage() {
   const { key, info } = useRadio()
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Node</h1>
-          <p className="mt-1 text-sm text-ink-300">The process behind the stations: credential, plugins, log.</p>
-        </div>
-        <Link href="/stations/"><Button size="sm" variant="ghost">Stations →</Button></Link>
-      </header>
+      <PageHeading
+        eyebrow="Operations"
+        title="Node"
+        subtitle="The process behind the stations: credential, plugins, log."
+        actions={<Link href="/stations/"><Button size="sm" variant="ghost">Stations →</Button></Link>}
+      />
 
       <NodeCard />
 

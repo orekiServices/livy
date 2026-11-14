@@ -4,18 +4,25 @@
  * The console's palette is the radio's own: charcoal, a warm amber for what is
  * on air, and a cool cyan for the new seam machinery. Everything else is a
  * neutral so the two accents keep meaning something.
+ *
+ * The tokens are named for their job rather than their colour, because the
+ * second thing a redesign needs is for "the surface a panel sits on" to have
+ * one name that survives the colour changing.
  */
 @theme {
-  --color-ink-950: #08090b;
-  --color-ink-900: #0c0e12;
-  --color-ink-850: #111318;
-  --color-ink-800: #15181e;
-  --color-ink-700: #1c2028;
-  --color-ink-600: #262b35;
-  --color-ink-500: #3a414e;
-  --color-ink-300: #7d8798;
-  --color-ink-200: #a9b2c0;
-  --color-ink-100: #d7dce4;
+  /* Surfaces, from the page up to the thing you can touch. */
+  --color-ink-950: #07080a;
+  --color-ink-900: #0b0d11;
+  --color-ink-850: #101319;
+  --color-ink-800: #151920;
+  --color-ink-700: #1d222b;
+  --color-ink-600: #2a303b;
+  --color-ink-500: #3d4553;
+  --color-ink-300: #808b9d;
+  --color-ink-200: #aeb7c6;
+  --color-ink-100: #dde2ea;
+
+  /* Accents: amber is on air, cyan is the machinery that chooses. */
   --color-amber: #ffb454;
   --color-amber-dim: #a8752f;
   --color-cyan: #6ee7ff;
@@ -23,8 +30,24 @@
   --color-lime: #b8f36a;
   --color-rose: #ff7a8a;
 
+  /* A hairline is a border, a rule is a divider inside a surface. */
+  --color-hairline: #222833;
+  --color-rule: #1a1f27;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Type ramp. The console reads at a glance or not at all. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-display: clamp(1.65rem, 1.2rem + 1.6vw, 2.35rem);
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -0.022em;
+
+  --radius-panel: 0.95rem;
+
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.035) inset, 0 18px 40px -32px rgba(0, 0, 0, 0.9);
+  --shadow-lifted: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 60px -32px rgba(0, 0, 0, 0.95);
 }
 
 @layer base {
@@ -49,6 +72,144 @@
   :focus-visible {
     outline: 2px solid var(--color-amber);
     outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    /* Two very wide pools of accent light, so the charcoal has a direction
+       instead of being a flat rectangle. */
+    background:
+      radial-gradient(1100px 560px at 8% -12%, rgba(255, 180, 84, 0.075), transparent 62%),
+      radial-gradient(900px 520px at 104% -6%, rgba(110, 231, 255, 0.055), transparent 58%),
+      var(--color-ink-950);
+    background-attachment: fixed;
+    color: var(--color-ink-100);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Numbers in a console are read in columns and compared, so they line up. */
+  .numeric {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  ::selection {
+    background: rgba(255, 180, 84, 0.3);
+  }
+
+  /* A thin, quiet scrollbar — the console is mostly lists. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-ink-600) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-ink-600);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* The one surface. Panels, cards and the dock are all this, with different
+     padding; a second border colour is how a console starts to look noisy. */
+  .surface {
+    background: color-mix(in oklab, var(--color-ink-850) 88%, transparent);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .surface-lifted {
+    background: color-mix(in oklab, var(--color-ink-800) 92%, transparent);
+    border: 1px solid var(--color-ink-600);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-lifted);
+  }
+
+  /* The label above a value: small, spaced, upper case, never a sentence. */
+  .label {
+    font-size: var(--text-2xs);
+    line-height: 1rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-300);
+  }
+
+  /* A hairline rule inside a surface, without the margin fights. */
+  .rule {
+    height: 1px;
+    background: var(--color-rule);
+  }
+
+  /* Range inputs: one look for the EQ, the crossfade and the rest. The filled
+     part of the track is a gradient sized by `--fill`, which Slider sets. */
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      var(--fill-colour, var(--color-amber)) 0,
+      var(--fill-colour, var(--color-amber)) var(--fill, 0%),
+      var(--color-ink-600) var(--fill, 0%),
+      var(--color-ink-600) 100%
+    );
+    outline: none;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-ink-100);
+    border: 2px solid var(--color-ink-950);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    cursor: pointer;
+    transition: transform 120ms ease;
+  }
+  input[type='range']::-webkit-slider-thumb:hover {
+    transform: scale(1.12);
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--color-ink-100);
+    border: 2px solid var(--color-ink-950);
+    cursor: pointer;
+  }
+  input[type='range'].accent-amber {
+    --fill-colour: var(--color-amber);
+  }
+  input[type='range'].accent-cyan {
+    --fill-colour: var(--color-cyan);
+  }
+  input[type='range']:disabled {
+    opacity: 0.4;
+  }
+
+  /* A fader strip: vertical range inputs, for the equaliser. */
+  .fader {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 5px;
+    height: 104px;
+    background: transparent;
   }
 }
 
@@ -59,90 +220,16 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .live-bars i,
-  .pulse-dot {
+  .pulse-dot,
+  .sweep {
     animation: none;
   }
   .live-bars i {
     transform: scaleY(0.7);
   }
-}
-
-html,
-body {
-  height: 100%;
-}
-
-body {
-  background:
-    radial-gradient(1200px 600px at 12% -10%, rgba(255, 180, 84, 0.07), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(110, 231, 255, 0.05), transparent 55%),
-    var(--color-ink-950);
-  color: var(--color-ink-100);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-}
-
-::selection {
-  background: rgba(255, 180, 84, 0.3);
-}
-
-/* A thin, quiet scrollbar — the console is mostly lists. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-ink-600) transparent;
-}
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--color-ink-600);
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-
-/* Range inputs: one look for the EQ, the crossfade and the rest. */
-input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--color-ink-600);
-  outline: none;
-}
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--color-ink-100);
-  border: 2px solid var(--color-ink-950);
-  cursor: pointer;
-}
-input[type="range"]::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--color-ink-100);
-  border: 2px solid var(--color-ink-950);
-  cursor: pointer;
-}
-input[type="range"].accent-amber::-webkit-slider-thumb {
-  background: var(--color-amber);
-}
-input[type="range"].accent-cyan::-webkit-slider-thumb {
-  background: var(--color-cyan);
-}
-
-/* A fader strip: vertical range inputs, for the equaliser. */
-.fader {
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 6px;
-  height: 92px;
-  background: var(--color-ink-700);
+  * {
+    transition-duration: 1ms !important;
+  }
 }
 
 /* The bars that mean "on air". */
@@ -184,4 +271,23 @@ input[type="range"].accent-cyan::-webkit-slider-thumb {
 }
 .pulse-dot {
   animation: livy-pulse 2s infinite;
+}
+
+/* The one indeterminate animation: a hairline sweeping a card that is
+   waiting on the node. It is the skeleton, so it stops with the skeleton. */
+@keyframes livy-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+.sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  animation: livy-sweep 1.6s ease-in-out infinite;
 }

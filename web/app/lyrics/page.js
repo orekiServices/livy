@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useRadio } from '../../components/RadioProvider.js'
-import { Badge, Button, Empty, Panel, cx } from '../../components/ui.js'
+import { Badge, Button, Empty, PageHeading, Panel, cx, inputClass } from '../../components/ui.js'
 import { api } from '../../lib/api.js'
 
 const POLL_MS = 4000
@@ -101,22 +101,26 @@ export default function LyricsPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Words</h1>
-          <p className="mt-1 text-sm text-ink-300">
-            What is on air, in time. The node fetches it once and caches it; this page only follows along.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select className={cx('rounded-lg border border-ink-600 bg-ink-900 px-2.5 py-1.5 text-sm')} value={station} onChange={(event) => setStationId(event.target.value)}>
-            {stations.map((row) => (
-              <option key={row.id} value={row.id}>{row.name}</option>
-            ))}
-          </select>
-          <Button size="sm" onClick={load}>Refresh</Button>
-        </div>
-      </header>
+      <PageHeading
+        eyebrow="On air, in time"
+        title="Words"
+        subtitle="What is on air, in time. The node fetches it once and caches it; this page only follows along."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Station"
+              className={cx(inputClass, 'w-44')}
+              value={station}
+              onChange={(event) => setStationId(event.target.value)}
+            >
+              {stations.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+            <Button size="sm" onClick={load}>Refresh</Button>
+          </div>
+        }
+      />
 
       {!stations.length && (
         <Panel title="Words">
