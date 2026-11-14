@@ -15,8 +15,8 @@
  * the difference, at most half a frame (13 ms at 44.1 kHz), so the audio
  * after the jump falls back onto the file's own frame grid.
  */
-import { codec, codecKey, decodeFrames } from '../../util/codec.js'
-import { parseFrameHeader } from '../../util/mp3.js'
+import { codec, codecKey, decodeFrames } from '../../util/codec.ts'
+import { parseFrameHeader } from '../../util/mp3.ts'
 import { LEAD_FRAMES, bridge, reservoirBefore } from '../../util/splice.ts'
 import type { BeatTrack } from './beats.ts'
 import { JukeboxWalker, bestBackward, type JukeboxGraph, type Edge } from './jukebox.ts'

@@ -30,7 +30,7 @@
  * References: ISO/IEC 11172-3 §2.4.1.7 (side information), the LAME technical
  * FAQ (encoder/decoder delay), "Gapless looping MP3 tracks" (CompuPhase).
  */
-import { parseFrameHeader } from './mp3.js'
+import { parseFrameHeader } from './mp3.ts'
 
 export interface Layer3Frame {
   /** MPEG-1 (false) or MPEG-2/2.5 "low sampling frequency" (true). */

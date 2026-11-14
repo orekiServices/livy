@@ -60,7 +60,7 @@ export interface BeatTrack {
 export const VECTOR = 2 * TIMBRE + 2 * CHROMA + 4 + 2
 
 /** Tempo, in frames per beat, from the onset envelope. */
-export function estimatePeriod(onset: Float32Array, fps: number, { minBpm = 60, maxBpm = 200 } = {}): { period: number; confidence: number } {
+export function estimatePeriod(onset: Float32Array, fps: number, { minBpm = 60, maxBpm = 200 }: any = {}): { period: number; confidence: number } {
   const n = onset.length
   if (n < fps * 4) return { period: 0, confidence: 0 }
   // Remove the mean so a loud passage is not a tempo.
@@ -104,7 +104,7 @@ export function estimatePeriod(onset: Float32Array, fps: number, { minBpm = 60, 
 }
 
 /** Beat positions (frame indices) by dynamic programming. */
-export function placeBeats(onset: Float32Array, period: number, { tightness = 100 } = {}): number[] {
+export function placeBeats(onset: Float32Array, period: number, { tightness = 100 }: any = {}): number[] {
   const n = onset.length
   if (!(period > 1) || n < period * 2) return []
   // Normalise so `tightness` means the same thing on every song.

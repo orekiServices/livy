@@ -54,6 +54,6 @@ say "Livy on Termux — data in $LIVY_DATA_DIR, console on http://localhost:${PO
 cd server
 if "$BUN_BIN" --version >/dev/null 2>&1; then
   # --smol: a smaller heap and a keener collector, for a 2 GB device.
-  exec "$BUN_BIN" --smol src/index.js "$@"
+  exec "$BUN_BIN" --smol src/index.ts "$@"
 fi
-exec grun "$BUN_BIN" --smol src/index.js "$@"
+exec grun "$BUN_BIN" --smol src/index.ts "$@"

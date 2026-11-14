@@ -13,11 +13,11 @@
  * a beat's time converts to a frame number exactly, which is what lets a
  * seam be cut on it.
  */
-import { decodeFrames, samplesIn } from '../../util/codec.js'
-import { parseFrameHeader } from '../../util/mp3.js'
+import { decodeFrames, samplesIn } from '../../util/codec.ts'
+import { parseFrameHeader } from '../../util/mp3.ts'
 import { FeatureStream } from './features.ts'
 import { trackBeats, type BeatTrack } from './beats.ts'
-import { jukeboxKernel } from '../../util/metro.js'
+import { jukeboxKernel } from '../../util/metro.ts'
 import { buildGraph, useNativeKernel, type JukeboxGraph, type JukeboxOptions } from './jukebox.ts'
 import { DETECTORS, detectAll, fuse, type DetectorName, type SeamCandidate } from './detectors.ts'
 import { CATEGORIES, PROTOTYPES, WIDTH, sortBeats, type Category } from './categories.ts'

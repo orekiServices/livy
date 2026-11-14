@@ -1,29 +1,30 @@
 {
   "name": "livy",
   "version": "3.10.0",
-  "description": "Livy \u2014 Bun + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
+  "description": "Livy — Bun + Icecast-style multi-station internet radio in TypeScript: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own Next.js console. One process, no transcoding tools.",
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./station": "./src/core/station.js",
-    "./sources": "./src/sources/index.js",
-    "./mp3": "./src/util/mp3.js",
-    "./metro": "./src/util/metro.js"
+    ".": "./src/index.ts",
+    "./station": "./src/core/station.ts",
+    "./sources": "./src/sources/index.ts",
+    "./mp3": "./src/util/mp3.ts",
+    "./metro": "./src/util/metro.ts"
   },
   "scripts": {
-    "start": "bun src/index.js",
-    "dev": "bun --watch src/index.js",
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:js": "LIVY_DISABLE_METRO=1 bun test",
-    "verify:console": "bun scripts/verify-console.mjs",
-    "build:web": "bun scripts/build-console.js",
-    "db": "bun scripts/db.js",
-    "db:info": "bun scripts/db.js info",
-    "db:migrate": "bun scripts/db.js migrate",
-    "bench:metro": "bun scripts/metro-bench.js",
-    "build:metro": "cd ../native/libmetro && cargo build --release && bun scripts/link-local.js",
-    "build:db": "cd ../native/metrodb && cargo build --release && bun scripts/link-local.js",
+    "verify:console": "bun scripts/verify-console.ts",
+    "build:web": "bun scripts/build-console.ts",
+    "db": "bun scripts/db.ts",
+    "db:info": "bun scripts/db.ts info",
+    "db:migrate": "bun scripts/db.ts migrate",
+    "bench:metro": "bun scripts/metro-bench.ts",
+    "build:metro": "cd ../native/libmetro && cargo build --release && bun scripts/link-local.ts",
+    "build:db": "cd ../native/metrodb && cargo build --release && bun scripts/link-local.ts",
     "train:setup": "python3 -m venv .venv && .venv/bin/pip install -r python/requirements.txt",
     "train:probe": ".venv/bin/python python/train.py --probe"
   },
@@ -34,6 +35,12 @@
     "@breezystack/lamejs": "^1.2.7",
     "mpg123-decoder": "^1.0.3",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.15",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
   },
   "keywords": [
     "livy",
@@ -46,7 +53,8 @@
     "beatmatch",
     "soundcloud",
     "audius",
-    "broadcast"
+    "broadcast",
+    "typescript"
   ],
   "license": "MIT",
   "packageManager": "bun@1.4.4"

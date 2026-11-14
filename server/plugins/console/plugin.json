@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "description": "The Livy web UI (station wall, station pages, owner console) served from this node's own port. Boots even when the build is missing.",
   "author": "livy",
-  "main": "index.js",
+  "main": "index.ts",
   "enabled": true,
   "settings": {
     "mount": "/",

@@ -31,8 +31,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { paths } from '../../config.js'
-import createLogger from '../../util/logger.js'
+import { paths } from '../../config.ts'
+import createLogger from '../../util/logger.ts'
 import type { Beat, BeatTrack } from './beats.ts'
 import type { Edge, JukeboxGraph, JukeboxOptions } from './jukebox.ts'
 
@@ -401,7 +401,7 @@ export function beatTrackFromFj(analysis: FjAnalysis): BeatTrack {
     beats,
     vectors: new Float32Array(0),
     engine: 'forever-jukebox'
-  } as BeatTrack
+  } as unknown as BeatTrack
 }
 
 /** Where a beat is in the song's own time, in milliseconds. */
@@ -604,7 +604,11 @@ export class FjClient {
   }
 
   #durationOk(analysis: FjAnalysis, track: { durationMs?: number; duration?: number }) {
-    const mine = track?.durationMs ?? (track?.duration ? track.duration * 1000 : 0)
+    // Livy tracks store `duration` in milliseconds; accept seconds too when a
+    // caller passes a small bare number.
+    const raw = track?.duration
+    const fromDuration = raw ? (raw > 3600 ? raw : raw * 1000) : 0
+    const mine = track?.durationMs ?? fromDuration
     const theirs = analysis?.track?.duration ? analysis.track.duration * 1000 : 0
     if (!mine || !theirs) return true
     return Math.abs(mine - theirs) <= this.durationToleranceMs

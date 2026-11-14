@@ -7,13 +7,13 @@ Everything in this folder is loaded at boot. A plugin can add a **music source**
 plugins/
   now-playing/          folder plugin
     plugin.json         metadata (name, version, main, enabled, settings)
-    index.js
-  my-effect.js          single-file plugin
+    index.ts
+  my-effect.ts          single-file plugin
 ```
 
 ## Shape
 
-```js
+```ts
 export const manifest = { name: 'My Plugin', version: '1.0.0', description: 'what it does' }
 
 export default function setup(ctx) {
@@ -137,8 +137,8 @@ A plugin can declare what its settings *are*, and the node does the rest:
 defaults, validation, coercion, per-station overrides, and a form the console
 renders without knowing anything about your plugin.
 
-```js
-// plugin.json (or `export const manifest` in index.js)
+```ts
+// plugin.json (or `export const manifest` in index.ts)
 {
   "settings": { "everyMinutes": 30 },
   "settingsSchema": [

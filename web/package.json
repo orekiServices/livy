@@ -3,16 +3,18 @@
   "version": "3.10.0",
   "private": true,
   "type": "module",
-  "description": "Livy web console \u2014 a Next export served by the radio node, and optionally a Next server of its own.",
+  "description": "Livy web console — a Next.js TypeScript app exported into the radio node, or run as its own server.",
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "build:server": "LIVY_CONSOLE_SERVER=1 next build",
     "start": "LIVY_CONSOLE_SERVER=1 next start -H 0.0.0.0 -p 3000",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "clean": "rm -rf out .next .next-server",
     "test:e2e": "playwright test",
     "test:e2e:screens": "playwright test -g screenshots",
-    "verify:dom": "bun scripts/verify-dom.mjs"
+    "verify:dom": "bun scripts/verify-dom.ts"
   },
   "dependencies": {
     "next": "16.4.6",
@@ -22,8 +24,14 @@
   "devDependencies": {
     "@playwright/test": "1.65.1",
     "@tailwindcss/turbopack": "4.3.3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "cheerio": "1.2.0",
-    "tailwindcss": "4.3.3"
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "tailwindcss": "4.3.3",
+    "typescript": "^5"
   },
   "packageManager": "bun@1.4.4",
   "ignoreScripts": [

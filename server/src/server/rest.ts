@@ -1,0 +1,809 @@
+/**
+ * Livy HTTP surface (node:http, no framework): the REST API, the MP3
+ * broadcast endpoint and the static web console — one port, one origin.
+ *
+ * Responses are built from explicit projections (`publicTrack`), so upstream
+ * media URLs, local file paths and anything else internal stay on the server.
+ *
+ *   GET    /health
+ *   GET    /api/v1/info | /stats
+ *   GET    /api/v1/search?q=&limit=
+ *   GET    /api/v1/resolve?q=
+ *   GET    /api/v1/stations                     (?queue=1 to include queues)
+ *   POST   /api/v1/stations                     (auth)
+ *   GET    /api/v1/stations/:id
+ *   PATCH  /api/v1/stations/:id                 (auth)
+ *   DELETE /api/v1/stations/:id                 (auth)
+ *   GET    /api/v1/stations/:id/queue | /history | /nowplaying
+ *   POST   /api/v1/stations/:id/queue           (auth) { query | track, position }
+ *   DELETE /api/v1/stations/:id/queue/:index    (auth)
+ *   POST   /api/v1/stations/:id/skip|shuffle|start|stop|reload  (auth)
+ *   GET    /stream/:id                          continuous MP3 (+ICY metadata)
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
+import { buildIcyMetadataBlock } from '../util/icyClient.ts'
+import { resolveStaticFile, sendFile } from '../util/files.ts'
+import { paths } from '../config.ts'
+import { hostInfo } from '../util/platform.ts'
+import { fxInfo } from '../util/fx.ts'
+import { createOwnerRouter, isOwner, isProtected } from './owner.ts'
+import { canClaimPassword, passwordInfo, passwordProblem, setPassword } from './owner/password.ts'
+import { StreamErrorVoice, failStream } from './streamErrors.ts'
+import { LANGUAGES } from '../tts/index.ts'
+import Lyrics from '../core/lyrics.ts'
+import { publicTrack } from '../core/station.ts'
+import createLogger from '../util/logger.ts'
+import { EFFECTS } from '../core/automix.ts'
+import { describe as describeFilters } from '../core/filters/index.ts'
+import { isServerless } from '../config.ts'
+
+const log = createLogger('http')
+const VERSION = createRequire(import.meta.url)('../../package.json').version
+const startedAt = Date.now()
+
+/** Fold a display string down to something safe for an HTTP header value. */
+const asciiHeader = (value) =>
+  String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[^\x20-\x7e]/g, '')
+    .trim()
+
+
+/** Never hand an internal detail (path, host, stack) to a browser. */
+const SAFE_ERROR = /^[\w .,'"()\-+:;!?\/]{0,160}$/
+const publicMessage = (error) => {
+  const message = String(error?.message ?? '')
+  if (!message || /[\\/](home|users|var|etc|node_modules)[\\/]/i.test(message) || !SAFE_ERROR.test(message)) return 'Request failed'
+  return message
+}
+
+export function createRequestHandler({ manager, config, sources, store = null, tts = null, plugins = null, autoTrainer = null, cache = null }: any) {
+  // A config assembled by hand (tests, embedders) may not carry every key.
+  // A missing one must never turn into `Invalid value "undefined" for header`.
+  const cors = config.server?.cors ?? '*'
+
+  const send = (res, status, body, headers: any = {}) => {
+    const isJson = typeof body === 'object' && !Buffer.isBuffer(body)
+    const payload = isJson ? JSON.stringify(body) : body
+    res.writeHead(status, {
+      'content-type': isJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
+      'access-control-allow-origin': cors,
+      'cache-control': 'no-store',
+      ...headers
+    })
+    res.end(payload)
+  }
+
+  const fail = (res, status, message) => send(res, status, { error: true, status, message })
+
+  /**
+   * A browser request from another site must not be able to claim a fresh
+   * node. The first-run endpoint is deliberately unauthenticated, so it is
+   * the one place where a cross-origin form/fetch would be dangerous. Native
+   * clients send no Origin at all and are allowed; a browser must be same-site.
+   */
+  const sameOrigin = (req) => {
+    // Browsers say how the request was made. `same-site` covers a dev console
+    // on :3000 and a node on :2333, or a sibling subdomain; `cross-site` is
+    // exactly the case this guard exists for.
+    const fetchSite = String(req.headers['sec-fetch-site'] ?? '')
+    if (fetchSite === 'cross-site') return false
+    if (fetchSite === 'same-origin' || fetchSite === 'same-site') return true
+
+    const origin = req.headers.origin
+    if (!origin) return true // curl, a native client, an old browser
+    try {
+      const from = new URL(origin)
+      const host = new URL(`http://${req.headers.host}`)
+      // Same host, any port, for browsers that do not send Sec-Fetch-Site.
+      return from.host === host.host || from.hostname === host.hostname
+    } catch {
+      return false
+    }
+  }
+
+  const authorized = (req, url) => {
+    // One credential rules them all: an explicit owner key, a password, or a
+    // generated key that a password has not superseded. No credential on an
+    // unclaimed node is open mode — a laptop, not the internet.
+    return isOwner(req, config, url)
+  }
+
+  /** Stable-ish identity for rate limiting: forwarded IP + chosen name. */
+  const requesterId = (req, body: any = {}) => {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? 'unknown'
+    return createHash('sha1').update(`${ip}|${body.by ?? ''}`).digest('hex').slice(0, 12)
+  }
+
+  const readJson = (req: any, limit = 1 << 20): Promise<Record<string, any>> =>
+    new Promise((resolve, reject) => {
+      let size = 0
+      const chunks = []
+      req.on('data', (c) => {
+        size += c.length
+        if (size > limit) return req.destroy(new Error('Body too large'))
+        chunks.push(c)
+      })
+      req.on('end', () => {
+        if (!chunks.length) return resolve({})
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        } catch (error) {
+          // A malformed body is the caller's mistake, not a server fault.
+          reject(Object.assign(new Error(`Invalid JSON: ${error.message}`), { status: 400 }))
+        }
+      })
+      req.on('error', reject)
+    })
+
+  /* ---------------------------- MP3 broadcast --------------------------- */
+
+  function handleStream(req, res, station, speak) {
+    const wantsMeta = String(req.headers['icy-metadata'] ?? '') === '1'
+    const metaint = config.relay.metaint
+    const remote = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ?? req.socket?.remoteAddress ?? 'unknown'
+
+    // A station that exists but is not broadcasting, a listener who has been
+    // banned, a node at capacity: all of them get told, out loud, instead of
+    // being handed an empty socket to stare at.
+    if (store?.isBanned?.(remote)) return speak('banned', { station: station.name, stationId: station.id })
+
+    // Auto-start an idle station configured with autoStart !== false so
+    // listeners connecting during startup don't hit a false 503 off-air.
+    if (!station._running && station.state === 'idle' && station.options?.autoStart !== false) {
+      station.start()
+    }
+
+    // Only reject as off-air when the station is genuinely not running.
+    // A running station in 'loading' (buffering or playing keepalive silence)
+    // stays connectable.
+    if (!station._running && ['idle', 'stopped', 'error'].includes(station.state)) {
+      return speak('off-air', { station: station.name, stationId: station.id })
+    }
+    if (station.subscribers.size >= (station.options.maxListeners ?? Infinity)) {
+      return speak('full', { station: station.name, stationId: station.id })
+    }
+
+    // Long-lived radio streams must not inherit HTTP request/socket timeouts
+    // or wait on Nagle buffering.
+    req.socket?.setTimeout?.(0)
+    req.socket?.setNoDelay?.(true)
+    res.socket?.setTimeout?.(0)
+    res.socket?.setNoDelay?.(true)
+
+    const headers = {
+      'content-type': 'audio/mpeg',
+      'access-control-allow-origin': cors,
+      'access-control-expose-headers': 'icy-name, icy-genre, icy-br, icy-metaint, x-livy-error, x-livy-reason',
+      'cache-control': 'no-cache, no-store',
+      connection: 'close',
+      // HTTP headers are latin-1: em dashes & emoji in station text would 500.
+      'icy-name': asciiHeader(station.name),
+      'icy-genre': asciiHeader(station.genre ?? ''),
+      'icy-description': asciiHeader(station.description ?? ''),
+      'icy-br': String(station.options?.bitrate ?? 128),
+      'icy-pub': '0',
+      // The URL ends in .mp3 and so does the filename: players that save a
+      // stream, and the handful that sniff the extension, both behave.
+      'content-disposition': `inline; filename="${asciiHeader(station.id)}.mp3"`,
+      // A live broadcast has no length and no seeking: say so, or players
+      // will try byte ranges and some proxies will try to cache it.
+      'accept-ranges': 'none'
+    }
+    if (wantsMeta) headers['icy-metaint'] = String(metaint)
+
+    res.writeHead(200, headers)
+    if (req.method === 'HEAD') return res.end()
+
+    let source
+    try {
+      source = station.subscribe({ label: `http:${remote}` })
+    } catch (error) {
+      // Only now do we know it cannot be served, and the headers are gone.
+      log.warn(`could not subscribe a listener to ${station.id}: ${error.message}`)
+      return res.end()
+    }
+    log.info(`listener → ${station.id} (${remote}${wantsMeta ? ', icy' : ''})`)
+
+    let closed = false
+    const cleanup = () => {
+      if (closed) return
+      closed = true
+      if (!source.destroyed) source.destroy()
+      if (!res.destroyed && !res.writableEnded) {
+        try { res.end() } catch { /* ignore */ }
+      }
+    }
+
+    res.on('close', cleanup)
+    res.on('error', cleanup)
+    source.on('error', cleanup)
+
+    if (!wantsMeta) {
+      source.pipe(res)
+      return
+    }
+
+    let counter = 0
+    let lastTitle = null
+    const titleOf = () => station.nowPlaying()?.title ?? station.name
+
+    const safeWrite = (buf) => {
+      if (closed || res.destroyed || res.writableEnded) {
+        cleanup()
+        return false
+      }
+      try {
+        return res.write(buf)
+      } catch {
+        cleanup()
+        return false
+      }
+    }
+
+    source.on('data', (chunk) => {
+      if (closed || res.destroyed || res.writableEnded) {
+        cleanup()
+        return
+      }
+      let offset = 0
+      let backpressured = false
+      while (offset < chunk.length && !closed) {
+        const take = Math.min(metaint - counter, chunk.length - offset)
+        if (!safeWrite(chunk.subarray(offset, offset + take))) backpressured = true
+        offset += take
+        counter += take
+        if (counter === metaint && !closed) {
+          counter = 0
+          const title = titleOf()
+          if (title !== lastTitle) {
+            if (!safeWrite(buildIcyMetadataBlock(title))) backpressured = true
+            lastTitle = title
+          } else if (!safeWrite(Buffer.from([0]))) {
+            backpressured = true
+          }
+        }
+      }
+      if (backpressured && !closed && !source.isPaused()) {
+        source.pause()
+        res.once('drain', () => {
+          if (!closed && !source.destroyed) source.resume()
+        })
+      }
+    })
+
+    source.on('end', cleanup)
+  }
+
+  /* ------------------------------- statics ------------------------------ */
+
+  // The web console is a static export (web/out). Serving it from this same
+  // process means one port, one origin, no CORS and no second runtime — and
+  // the browser never learns that an "API host" exists at all.
+  const webRoots = [config.web?.enabled === false ? null : config.web?.dir, paths.public].filter(Boolean)
+
+  function serveStatic(res, urlPath) {
+    for (const root of webRoots) {
+      const file = resolveStaticFile(root, urlPath)
+      if (file) return sendFile(res, file)
+    }
+    return false
+  }
+
+  /** Single-page fallback so /owner and /station?id=… survive a hard refresh. */
+  function serveApp(res) {
+    for (const root of webRoots) {
+      const index = resolveStaticFile(root, '/')
+      if (index) return sendFile(res, index, { headers: { 'cache-control': 'no-cache' } })
+    }
+    return false
+  }
+
+  // What a listener hears when a stream cannot be served (see streamErrors.js).
+  const streamErrors = new StreamErrorVoice({ tts, store, settings: config.streamErrors })
+  // Words for what is on air. Fetched here, never by the listener's browser.
+  const lyrics = new Lyrics({ store, ...(config.lyrics ?? {}) })
+  const ownerRoutes = createOwnerRouter({ manager, config, sources, store, tts, plugins, streamErrors, autoTrainer, cache })
+
+  /* -------------------------------- router ------------------------------ */
+
+  return async function handler(req, res) {
+    const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
+    const seg = url.pathname.split('/').filter(Boolean)
+    const method = req.method.toUpperCase()
+
+    if (method === 'OPTIONS') {
+      return send(res, 204, '', {
+        'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+        'access-control-allow-headers': 'authorization,content-type,icy-metadata,x-owner-key'
+      })
+    }
+
+    try {
+      if (url.pathname === '/health') return send(res, 200, { status: 'ok', uptime: Date.now() - startedAt, ...manager.stats() })
+
+      // `/stream/<id>.mp3` is the *only* stream address. Not `/stream/<id>`,
+      // not `.m3u`, not `.pls`: one canonical URL means one thing to cache,
+      // one thing to log and one thing to get right. Everything else under
+      // /stream is a 404 — and because the caller is usually a media player
+      // rather than a browser, the 404 is spoken (see streamErrors.js).
+      if (seg[0] === 'stream') {
+        if (isServerless()) {
+          return send(
+            res,
+            501,
+            {
+              error: true,
+              status: 501,
+              code: 'stream_unavailable',
+              message: 'Live MP3 streaming is unavailable in serverless deployments'
+            },
+            {
+              'access-control-expose-headers': 'x-livy-error, x-livy-reason',
+              'x-livy-error': 'stream_unavailable',
+              'x-livy-reason': 'serverless'
+            }
+          )
+        }
+
+        const raw = seg[1] ? decodeURIComponent(seg[1]) : ''
+        const speak = (reason, extra: any = {}) =>
+          failStream(req, res, { voice: streamErrors, reason, node: config.name ?? 'this node', cors, ...extra })
+
+        if (seg.length !== 2 || !raw.toLowerCase().endsWith('.mp3')) {
+          log.debug(`not a stream address: ${url.pathname}`)
+          return speak('not-a-stream', { stationId: raw || null })
+        }
+
+        const id = raw.slice(0, -4)
+        const station = manager.find(id)
+        if (!station) {
+          log.debug(`unknown station requested: ${id}`)
+          return speak('unknown-station', { stationId: id, station: id })
+        }
+        return handleStream(req, res, station, speak)
+      }
+
+      if (seg[0] === 'api' && seg[1] === 'v1') {
+        const [, , resource, id, action, param] = seg
+
+        // Everything an owner can do lives behind one credential (see
+        // server/owner.js). The password form is same-site even in open mode,
+        // so a random page cannot set one on an unclaimed node.
+        if (resource === 'owner') {
+          if (id === 'password' && method === 'POST' && !sameOrigin(req)) {
+            return fail(res, 403, 'Cross-origin credential changes are not allowed')
+          }
+          return await ownerRoutes({ req, res, url, seg, method, send, fail, readJson })
+        }
+
+        // Plugin endpoints live under /api/v1/x/<plugin>/… so they can never
+        // collide with (or shadow) a core route.
+        if (resource === 'x') {
+          if (plugins && (await plugins.handle({ req, res, url, method, send, fail, readJson }))) return
+          return fail(res, 404, 'No such plugin endpoint')
+        }
+
+        // What the node can say, and in which languages — a console builds
+        // its language picker from this, with no owner key needed.
+        // Words for whatever is on air, with the position to sync them to.
+        // The console hands `lrc` straight to <am-lyrics>; a player that
+        // renders its own can use `lines`.
+        if (resource === 'lyrics' && method === 'GET') {
+          const stationId = url.searchParams.get('station')
+          const station = stationId ? manager.find(stationId) : null
+          if (stationId && !station) return fail(res, 404, `Unknown station "${stationId}"`)
+
+          const playing = station?.nowPlaying() ?? null
+          const track = station
+            ? playing?.track
+            : {
+                artist: url.searchParams.get('artist') ?? '',
+                title: url.searchParams.get('title') ?? '',
+                album: url.searchParams.get('album') ?? undefined,
+                duration: Number(url.searchParams.get('duration')) || undefined
+              }
+
+          if (!track?.title) {
+            return send(res, 200, { found: false, reason: 'nothing on air', station: station?.id ?? null, positionMs: 0 })
+          }
+
+          const found = await lyrics.find(track)
+          return send(res, 200, {
+            ...found,
+            // Where the station is in the song right now, so the client can
+            // start its own clock from here and interpolate.
+            positionMs: playing?.positionMs ?? 0,
+            serverTime: Date.now(),
+            track: playing?.track ?? { artist: track.artist, title: track.title },
+            station: station?.id ?? null
+          })
+        }
+
+        if (resource === 'tts' && method === 'GET') {
+          return send(res, 200, {
+            enabled: Boolean(tts),
+            language: tts?.language ?? config.tts?.language ?? 'en',
+            // The catalogue is knowledge, not a capability: a node with TTS
+            // switched off still knows which languages it would speak, and a
+            // console can show the picker either way.
+            languages: tts?.languages ?? LANGUAGES,
+            spokenErrors: streamErrors.settings.enabled,
+            errorLanguages: streamErrors.languages
+          })
+        }
+
+        if (resource === 'info') {
+          const modelInfo = await import('../core/models/index.ts')
+            .then(({ models }) => models.info())
+            .catch(() => null)
+          return send(res, 200, {
+            name: 'livy',
+            // Where this is running, and what that costs: a serverless
+            // deployment cannot stream, cannot keep a socket open and does not
+            // keep its data. Saying so in the first endpoint a client calls is
+            // how an operator finds out before they build on it.
+            deployment: {
+              serverless: isServerless(),
+              storage: paths.writable,
+              writable: paths.writable,
+              limits: {
+                streaming: !isServerless(),
+                websocket: !isServerless(),
+                persistence: paths.writable === 'disk',
+                maxFunctionSeconds: isServerless() ? 300 : null
+              }
+            },
+            // What this node used to be called. The console probes for it so
+            // that a self-hosted node can be upgraded server-first without
+            // its (older, cached) UI losing track of it.
+            legacyNames: ['nodecast'],
+            version: VERSION,
+            // Termux/Android gets a smaller training budget; a client can
+            // show which one this node chose without guessing from a UA.
+            device: hostInfo(),
+            // Which filter kernels are loaded: MetroFX native, or JS.
+            fx: fxInfo(),
+            uptime: Date.now() - startedAt,
+            sources: sources.sources.map((s) => s.name),
+            defaultSearch: sources.defaultSearch,
+            transitions: [...EFFECTS],
+            stations: manager.size,
+            language: tts?.language ?? config.tts?.language ?? 'en',
+            // The learned mix, and the trainer watching for new seams.
+            models: modelInfo,
+            automixModel: autoTrainer?.state?.() ?? null,
+            // Two-tier cache summary (memory LRU + on-disk MP3 audio cache).
+            cache: cache?.stats?.() ?? { enabled: false },
+            // First run: the console shows the setup flow instead of an empty grid.
+            setup: { needed: manager.size === 0, protected: isProtected(config) }
+          })
+        }
+
+        if (resource === 'stats') {
+          const mem = process.memoryUsage()
+          return send(res, 200, {
+            uptime: Date.now() - startedAt,
+            rssMb: +(mem.rss / 1048576).toFixed(1),
+            heapMb: +(mem.heapUsed / 1048576).toFixed(1),
+            ...manager.stats()
+          })
+        }
+
+        // A first-run browser can create the owner password instead of
+        // transcribing the key from the server log. Allowed only on an
+        // unclaimed node, or by someone who already holds a credential.
+        if (resource === 'setup' && id === 'password' && method === 'POST') {
+          if (!sameOrigin(req)) return fail(res, 403, 'Cross-origin setup is not allowed')
+          const authenticated = isOwner(req, config, url)
+          if (passwordInfo(config).configured) return fail(res, 409, 'An owner password is already set')
+          if (!canClaimPassword(config, { stations: manager.size, authenticated })) {
+            return fail(res, 401, 'Owner key or password required')
+          }
+          const body = await readJson(req)
+          const problem = passwordProblem(body?.password)
+          if (problem) return fail(res, 400, problem)
+          const result = setPassword(config, body.password)
+          if (result.problem) return fail(res, 400, result.problem)
+          log.info(`owner credential created during first-run setup (${result.persisted ? 'saved' : 'this process only'})`)
+          return send(res, 201, { configured: true, persisted: result.persisted, ...passwordInfo(config) })
+        }
+
+        // What a brand-new install needs to know, and nothing else: no paths,
+        // no environment, no upstream URLs.
+        if (resource === 'setup' && !id && method === 'GET') {
+          const authenticated = isOwner(req, config, url)
+          const password = passwordInfo(config)
+          return send(res, 200, {
+            configured: manager.size > 0,
+            stations: manager.size,
+            protected: isProtected(config),
+            owner: authenticated && isProtected(config),
+            password: {
+              ...password,
+              // `canSet` is the setup wizard's cue to ask for a new password
+              // rather than for the key printed in the log.
+              canSet: !password.configured && canClaimPassword(config, { stations: manager.size, authenticated }),
+              changeable: authenticated && !password.fromEnv
+            },
+            sources: sources.sources.map((s) => ({ name: s.name, prefixes: s.prefixes ?? [] })),
+            transitions: [...EFFECTS],
+            // The filter surface the console and any NodeLink-shaped client
+            // needs: band centres, parameter ranges, and defaults. Read-only —
+            // changing a chain is an owner action.
+            filters: describeFilters(),
+            // The learned DJ policy, if one is installed: what it is, how many
+            // parameters, and whether the last seam was its call or the
+            // heuristic's. `null` model means the heuristic is in charge.
+            djModel: await import('../core/models/index.ts')
+              .then(({ models }) => models.info())
+              .catch(() => null),
+            defaults: {
+              crossfadeMs: config.stationDefaults?.automix?.crossfadeMs ?? 6000,
+              effect: config.stationDefaults?.automix?.effect ?? 'crossfade',
+              beatmatch: config.stationDefaults?.automix?.beatmatch !== false,
+              dj: config.stationDefaults?.automix?.dj?.enabled !== false
+            }
+          })
+        }
+
+        if (resource === 'search' && method === 'GET') {
+          const q = url.searchParams.get('q')
+          if (!q) return fail(res, 400, 'Missing ?q=')
+          const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 50)
+          // `?provider=` is what the console sends; `?source=` was the
+          // original spelling and still works.
+          const provider = url.searchParams.get('provider') ?? url.searchParams.get('source') ?? 'all'
+          const found = await sources.search(q, limit, provider)
+          // Search results keep their playable handle (id + source) but not
+          // the upstream media URL the node resolved.
+          return send(res, 200, { query: q, source: provider, tracks: found.map(publicTrack) })
+        }
+
+        if (resource === 'sources' && method === 'GET') {
+          return send(res, 200, {
+            // `describe()` is the one place that knows how a provider is
+            // shaped; the console renders this list directly. `health` says
+            // what each one has done lately, so a dead provider is visible
+            // instead of merely slow.
+            sources: sources.describe({ health: true }),
+            health: sources.healthOf(),
+            searchTimeoutMs: sources.searchTimeoutMs,
+            hiRes: { enabled: sources.hiRes, minKbps: sources.hiResMinKbps },
+            fallbackOrder: sources.fallbackOrder,
+            liveFallback: sources.liveFallback
+          })
+        }
+
+        /**
+         * The direct audio URL for a track, for a browser's own player.
+         *
+         * The station's stream is one continuous MP3 for everybody; a person
+         * listening in the console wants *this song*, scrubbable, which is a
+         * different question. Only some providers can answer it (SoundCloud
+         * progressive, Audius, archive, Bandcamp, a local file, a Deezer
+         * preview…) and the answer is null when nothing can — never an error,
+         * because the console falls back to the station stream.
+         */
+        if (resource === 'track-url' && method === 'POST') {
+          const body = await readJson(req)
+          const track = body?.track ?? body
+          if (!track?.source) return fail(res, 400, 'Missing track')
+          const url = await sources.trackUrl(track)
+          return send(res, 200, { url, source: track.source, playable: Boolean(url) })
+        }
+
+        if (resource === 'resolve' && method === 'GET') {
+          const q = url.searchParams.get('q')
+          if (!q) return fail(res, 400, 'Missing ?q=')
+          const resolved = await sources.resolve(q)
+          return send(res, 200, { ...resolved, tracks: resolved.tracks.map(publicTrack) })
+        }
+
+        if (resource === 'stations') {
+          if (!id) {
+            if (method === 'GET') return send(res, 200, { stations: manager.list({ queue: url.searchParams.has('queue') }) })
+            if (method === 'POST') {
+              if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
+              const body = await readJson(req)
+              // Created through the API is still an owned station: it must
+              // survive a restart, not just this process.
+              const station = manager.add({ ...body, _owned: true })
+              if (body.autoStart !== false) {
+                station.load().then(() => station.start()).catch((e) => log.warn(e.message))
+              }
+              return send(res, 201, station.info())
+            }
+            return fail(res, 405, 'Method not allowed')
+          }
+
+          const station = manager.find(decodeURIComponent(id))
+          if (!station) return fail(res, 404, `Unknown station "${id}"`)
+
+          if (!action) {
+            if (method === 'GET') return send(res, 200, station.info({ queue: url.searchParams.has('queue') }))
+            if (method === 'PATCH') {
+              if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
+              return send(res, 200, manager.update(station.id, await readJson(req)).info())
+            }
+            if (method === 'DELETE') {
+              if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
+              manager.remove(station.id)
+              return send(res, 200, { removed: station.id })
+            }
+            return fail(res, 405, 'Method not allowed')
+          }
+
+          if (action === 'nowplaying' && method === 'GET') return send(res, 200, station.nowPlaying() ?? {})
+
+          /* ----- listener requests: open to everyone ----- */
+          if (action === 'requests' && method === 'GET') {
+            return send(res, 200, {
+              allowRequests: station.options.allowRequests === true,
+              requests: station.publicRequests(),
+              voteSkips: station.info().voteSkips
+            })
+          }
+
+          if (action === 'request' && method === 'POST') {
+            const body = await readJson(req)
+            try {
+              const result = await station.request({
+                query: body.query,
+                track: body.track,
+                by: body.by ?? 'anonymous',
+                requesterId: body.requesterId ?? requesterId(req, body)
+              })
+              return send(res, 200, result)
+            } catch (error) {
+              return fail(res, error.status ?? 400, error.message)
+            }
+          }
+
+          /* ----- listener play-now: the web client's search → play ----- */
+          if (action === 'play' && method === 'POST') {
+            if (station.options.allowPlayNow === false) {
+              return fail(res, 403, 'This station does not let listeners pick songs')
+            }
+            const body = await readJson(req)
+            const who = body.requesterId ?? requesterId(req, body)
+            if (station.store?.isBanned?.(who)) return fail(res, 403, 'Your line has been restricted by the station owner')
+            try {
+              let track = body.track
+              if (!track && body.query) {
+                const resolved = await sources.resolve(body.query, { limit: 5 })
+                track = resolved.tracks.find((candidate) => candidate.streamable !== false)
+              }
+              if (!track) return fail(res, 400, 'Provide "track" or "query"')
+              if (typeof sources.rehydrate === 'function') track = await sources.rehydrate(track)
+              const queued = station.playNow(track, { by: body.by ?? 'listener' })
+              return send(res, 200, {
+                queued: publicTrack(queued),
+                station: station.id,
+                playingNext: true,
+                queueLength: station.queue.length
+              })
+            } catch (error) {
+              return fail(res, error.status ?? 400, error.message)
+            }
+          }
+
+          if (action === 'requests' && param && seg[6] === 'vote' && method === 'POST') {
+            const body = await readJson(req)
+            try {
+              return send(res, 200, station.voteRequest(param, body.voter ?? requesterId(req, body)))
+            } catch (error) {
+              return fail(res, error.status ?? 400, error.message)
+            }
+          }
+
+          if (action === 'requests' && param && method === 'DELETE') {
+            if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
+            const removed = station.removeRequest(param)
+            return removed ? send(res, 200, { removed }) : fail(res, 404, 'No such request')
+          }
+
+          if (action === 'voteskip' && method === 'POST') {
+            const body = await readJson(req)
+            try {
+              return send(res, 200, station.voteSkip(body.voter ?? requesterId(req, body)))
+            } catch (error) {
+              return fail(res, error.status ?? 400, error.message)
+            }
+          }
+          if (action === 'history' && method === 'GET') return send(res, 200, { history: station.history.map(publicTrack) })
+
+          if (action === 'queue') {
+            if (method === 'GET') return send(res, 200, { queue: station.queue.map(publicTrack), length: station.queue.length })
+            if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
+
+            if (method === 'POST') {
+              const body = await readJson(req)
+              let tracks = body.track
+                ? [typeof sources.rehydrate === 'function' ? await sources.rehydrate(body.track) : body.track]
+                : body.tracks
+              if (!tracks) {
+                if (!body.query) return fail(res, 400, 'Provide "query", "track" or "tracks"')
+                const resolved = await sources.resolve(body.query, { limit: body.limit ?? 50 })
+                tracks = resolved.tracks
+              }
+              if (!tracks?.length) return fail(res, 404, 'Nothing found for that query')
+              station.enqueue(tracks, { position: body.next ? 0 : -1 })
+              if (station.state === 'idle') station.start()
+              return send(res, 200, { added: tracks.length, tracks: tracks.map(publicTrack), queueLength: station.queue.length })
+            }
+
+            if (method === 'DELETE') {
+              if (param == null) {
+                station.clearQueue()
+                return send(res, 200, { cleared: true })
+              }
+              const removed = station.removeAt(Number(param))
+              return removed ? send(res, 200, { removed }) : fail(res, 404, 'No such queue index')
+            }
+          }
+
+          if (method === 'POST') {
+            if (!authorized(req, url)) return fail(res, 401, 'Unauthorized')
+            if (action === 'skip') {
+              station.skip()
+              return send(res, 200, { skipped: true })
+            }
+            if (action === 'shuffle') {
+              station.shuffle()
+              return send(res, 200, { shuffled: station.queue.length })
+            }
+            if (action === 'start') {
+              await station.load()
+              await station.start()
+              return send(res, 200, station.info())
+            }
+            if (action === 'stop') {
+              station.stop('api')
+              return send(res, 200, station.info())
+            }
+            if (action === 'reload') {
+              station.clearQueue()
+              await station.load(true)
+              return send(res, 200, { queueLength: station.queue.length })
+            }
+          }
+
+          return fail(res, 404, 'Unknown station action')
+        }
+
+        // The WebSocket lives on the node's own socket, which a serverless
+        // function does not have. Say that, rather than 404 — a client polling
+        // this deserves to know the difference between "wrong URL" and "this
+        // deployment cannot do that".
+        if (resource === 'events' && isServerless()) {
+          return fail(res, 501, 'Live events need a long-lived connection; run the node (bun start) instead of a serverless deployment')
+        }
+
+        return fail(res, 404, 'Unknown API route')
+      }
+
+      // The web app is a plugin: plugin mounts are consulted first, and the
+      // node's own `public/` is only a fallback for installs that keep one.
+      if ((method === 'GET' || method === 'HEAD') && plugins?.serve({ req, res, url })) return
+      if (method === 'GET' && serveStatic(res, url.pathname)) return
+      if (method === 'GET' && !url.pathname.startsWith('/api/') && serveApp(res)) return
+      return fail(res, 404, 'Not found')
+    } catch (error) {
+      // Bad input is answered as bad input; anything else is ours to own.
+      const status = Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 500
+      if (status >= 500) log.error(error) // the detail stays in the log …
+      else log.debug(`${status}: ${error.message}`)
+      if (!res.headersSent) return fail(res, status, status >= 500 ? publicMessage(error) : error.message) // … not in the response
+      res.destroy()
+    }
+  }
+}
+
+export default createRequestHandler

@@ -32,8 +32,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { paths } from '../../config.js'
-import { ACTIONS, ATTRIBUTION_MS } from './features.js'
+import { paths } from '../../config.ts'
+import { ACTIONS, ATTRIBUTION_MS } from './features.ts'
 import { CATEGORIES, PROTOTYPES, WIDTH, fitCentroids, nearest, type Category } from '../seams/categories.ts'
 
 export const CODENAME = 'RL'
@@ -159,7 +159,7 @@ export class RLModel {
    * Rank the transitions in `pool` for a seam from `exit` into `entry`.
    * `explore` scales the bonus for untried cells; 0 is pure exploitation.
    */
-  rank(exit: Category, entry: Category, pool: readonly string[] = ACTIONS, { explore = 0.35 } = {}): Ranked[] {
+  rank(exit: Category, entry: Category, pool: readonly string[] = ACTIONS, { explore = 0.35 }: any = {}): Ranked[] {
     const context = this.#sum((e, n) => e === CATEGORIES.indexOf(exit) && n === CATEGORIES.indexOf(entry)).plays
     const out: Ranked[] = []
     for (const effect of pool) {
@@ -193,7 +193,7 @@ export class RLModel {
    * Fit a fresh model to a log: centroids first (from every beat descriptor
    * in it), then every seam replayed through them.
    */
-  static train(records: SeamRecord[], { anchor = 20 } = {}): RLModel {
+  static train(records: SeamRecord[], { anchor = 20 }: any = {}): RLModel {
     const model = new RLModel()
     const samples: number[][] = []
     for (const record of records) {
@@ -214,7 +214,7 @@ export class RLModel {
    * (Off-policy evaluation by matching — crude, honest, and needing no
    * simulator.)
    */
-  static evaluate(records: SeamRecord[], { fraction = 0.2 } = {}) {
+  static evaluate(records: SeamRecord[], { fraction = 0.2 }: any = {}) {
     const usable = records.filter((record) => rewardFor(record) != null && ACTIONS.includes(record.effect as string))
     const cut = Math.floor(usable.length * (1 - fraction))
     const model = RLModel.train(usable.slice(0, cut))
@@ -333,7 +333,7 @@ export function saveRL(model: RLModel, file = RL_FILE()): boolean {
 }
 
 /** Refit RL from a seam log, keep it if there was anything to learn. */
-export function trainRL(records: SeamRecord[], { file = RL_FILE(), save = true } = {}) {
+export function trainRL(records: SeamRecord[], { file = RL_FILE(), save = true }: any = {}) {
   const started = Date.now()
   const model = RLModel.train(records)
   const report = {

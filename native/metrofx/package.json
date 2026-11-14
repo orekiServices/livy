@@ -3,12 +3,14 @@
   "version": "0.1.0",
   "description": "MetroFX — biquad, compressor, reverb and oversampled distortion kernels for Livy, as a native Node addon (Rust + napi-rs).",
   "main": "index.js",
+  "types": "index.d.ts",
   "license": "MIT",
   "engines": {
     "node": ">=16"
   },
   "files": [
     "index.js",
+    "index.d.ts",
     "*.node",
     "README.md"
   ],
@@ -31,7 +33,7 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "build:local": "cargo build --release && bun scripts/link-local.js",
+    "build:local": "cargo build --release && bun scripts/link-local.ts",
     "artifacts": "napi artifacts",
     "prepublishOnly": "napi prepublish -t npm"
   },
