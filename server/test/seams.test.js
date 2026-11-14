@@ -10,7 +10,7 @@ import { encodeMp3 } from '../src/core/automix.js'
 import { codec, decodeFrames } from '../src/util/codec.js'
 import { SeamScout, ForeverJukebox, JukeboxWalker, CATEGORIES, PROTOTYPES, fitCentroids, nearest, fuse } from '../src/core/seams/index.ts'
 import { boot, tone, toMp3, tmpdir } from './helpers.js'
-import { FEATURES, featuresFor } from '../src/core/models/features.js'
+import { ACTIONS, FEATURES, featuresFor, targetFor } from '../src/core/models/features.js'
 import { chooseEffectWithModel, effectUsable } from '../src/core/automix/effects.js'
 import { split } from '../src/core/models/trainer/dataset.js'
 import { RLModel, rewardFor, rl, saveRL, trainRL, reloadRL } from '../src/core/models/rl.ts'
@@ -553,9 +553,15 @@ describe('on a station', () => {
       expect(row.bpmIn).toBe(row.bpmOut)
       expect(row.energy).toBeGreaterThan(0)
       expect(row.jukebox.source).toBe('forever-jukebox')
-      // The trainer reads these rows like any other seam.
+      // The trainer reads these rows like any other seam: the feature vector
+      // is defined, the label is the transition that carried the audio, and
+      // RL learns a (exit kind, entry kind, transition) cell from it.
       const vector = featuresFor(row)
       expect(vector.length).toBe(FEATURES.length)
+      const target = targetFor(row)
+      expect(target).toBeTruthy()
+      expect(target[ACTIONS.indexOf('crossfade')]).toBe(1)
+      expect(rl().learn(row)).toBe(true)
     } finally {
       stub.stop(true)
     }

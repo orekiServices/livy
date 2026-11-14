@@ -199,11 +199,16 @@ export const seamMethods = {
     const exit = scout?.beatAt?.(jump.fromMs) ?? null
     const entry = scout?.beatAt?.(jump.toMs) ?? null
     const analysis = this._foreverAnalysis
+    const beats = scout?.analysis?.()?.track?.beats ?? []
     const beat = (index) => analysis?.beats?.[index] ?? null
+    // Level at a beat: the segments' own loudness when a Forever Jukebox
+    // analysis is behind the walk, and the scout's measurement when the node
+    // built the graph itself.
     const loudness = (index) => {
       const segments = beat(index)?.overlappingSegments
-      if (!segments?.length) return null
-      return segments.reduce((sum, segment) => sum + segment.loudness_max, 0) / segments.length
+      if (segments?.length) return segments.reduce((sum, segment) => sum + segment.loudness_max, 0) / segments.length
+      const local = beats[index]
+      return local ? (local.level ?? local.loudMax ?? null) : null
     }
     const energy = (db) => (db === null ? 0.5 : Math.max(0, Math.min(1, (db + 60) / 60)))
     const outDb = loudness(jump.fromBeat)
@@ -213,6 +218,11 @@ export const seamMethods = {
       at: Date.now(),
       kind: 'jukebox',
       transition: 'jukebox-jump',
+      // What actually carried the audio across: a 17 ms crossfade between two
+      // moments of one song. Naming it that way (rather than inventing a
+      // transition the automix cannot play) is what makes the row usable by
+      // the trainer, which learns from `effect` and `outcome`.
+      effect: 'crossfade',
       track: track?.id ?? null,
       outcome: 'completed',
       // Same recording on both sides: the tempo is the same by construction.
@@ -223,8 +233,8 @@ export const seamMethods = {
       loudnessGap: outDb !== null && inDb !== null ? outDb - inDb : 0,
       energy: energy(outDb),
       energyIn: energy(inDb),
-      vocalOut: exit ? 1 : 0,
-      vocalIn: entry ? 1 : 0,
+      vocalOut: beats[exit?.index ?? -1]?.vocal ?? 0,
+      vocalIn: beats[entry?.index ?? -1]?.vocal ?? 0,
       fadeMs: JUKEBOX_FADE_MS,
       phraseAligned: jump.fromBar !== undefined && jump.fromBar === jump.toBar,
       talkover: false,
