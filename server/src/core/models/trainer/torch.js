@@ -228,18 +228,39 @@ async function ensureWorker(env = process.env) {
 
 const cache = { probe: null, at: 0 }
 
+/** What to tell an owner whose node has no torch. */
+const INSTALL_HINT = 'python3 -m venv .venv && .venv/bin/pip install -r python/requirements.txt'
+
 /**
  * Can this node train with PyTorch?
  *
  * Cached: the answer changes when someone installs a venv, not between two
  * training runs, and finding it out costs an interpreter start.
  */
-export async function torchStatus({ fresh = false, env = process.env } = {}) {
+export async function torchStatus({ fresh = false, env = process.env, wait = true } = {}) {
   if (env.LIVY_TRAIN_BACKEND === 'js') return { available: false, reason: 'LIVY_TRAIN_BACKEND=js', interpreter: null }
   if (env.LIVY_PYTHON === 'off') return { available: false, reason: 'LIVY_PYTHON=off', interpreter: null }
   if (!fresh && cache.probe && Date.now() - cache.at < 60_000) return cache.probe
   if (fresh) {
     stopTorch()
+  }
+  // `wait: false` is for the console: starting an interpreter costs a second,
+  // and a page that asks "is torch here?" should not hang for it. The answer
+  // is `available: null` (probing) on the first request and the real one on the
+  // next poll, which reads the cache this call warmed.
+  if (!wait) {
+    if (lastFailure && Date.now() - failureAt < RETRY_AFTER_MS) {
+      return { available: false, reason: lastFailure, interpreter: null, install: INSTALL_HINT, backend: 'js' }
+    }
+    const probing = Boolean(starting)
+    ensureWorker(env).catch(() => {})
+    return {
+      available: null,
+      probing: true,
+      reason: probing ? 'the interpreter is still starting' : 'probing the interpreter',
+      interpreter: null,
+      backend: 'auto'
+    }
   }
   const ready = await ensureWorker(env)
   if (ready && cache.probe) return { ...cache.probe, backend: 'torch' }
@@ -247,7 +268,7 @@ export async function torchStatus({ fresh = false, env = process.env } = {}) {
     available: false,
     reason: lastFailure ?? 'no python interpreter found',
     interpreter: null,
-    install: 'python3 -m venv .venv && .venv/bin/pip install -r python/requirements.txt',
+    install: INSTALL_HINT,
     backend: 'js'
   }
 }

@@ -156,7 +156,9 @@ does:
 |---|---|
 | **Overview** | what is on air, the node's vitals, and the seam machine at a glance |
 | **Stations** | every station as a card; create one from a provider string |
-| **Station** (`?id=`) | player, queue, requests, automix, announcements, and the policy on air |
+| **Station** (`?id=`) | player, queue, requests, automix, announcements, settings, listener bans, and the policy on air |
+| **Search** | one query across every provider, then queue or play the pick; the sources table shows each provider's health |
+| **Words** | the lyrics for whatever is on air, in time, with a nudge control when they drift |
 | **Seams & Forever** | the scout's candidates on a time axis, the jukebox graph, Forever, RL |
 | **Radio filters** | the live DSP rack: 15-band EQ, 18 units, presets, one station at a time |
 | **Training** | the trainer: backend, preset, candidates, the run report, the registry, auto-train |
@@ -462,8 +464,8 @@ For a station that stays on air, run the node on a VM or container with
 | **Sources** | 17 providers — soundcloud · audius · bandcamp · ccmixter · **nhaccuatui** · archive.org · deezer · radio paradise (FLAC) · somafm · podcast/RSS · vimeo · youtube music · mirror · song.link · radio-browser · http/icecast/HLS · local, plus TTS for idents |
 | **Automix** | loudness-matched, cue-trimmed, beatmatched seams; ten transitions chosen per seam; blends up to 30 s |
 | **DJ** | optional voice-tracking over the seam with a real sidechain duck |
-| **Console** | phone-first, shipped as a plugin — control room, stations, now playing with **word-synced lyrics**, a studio with a draggable queue, and a ten-view owner dock |
-| **Lyrics** | fetched **by the node**, never by the listener's browser, rendered with `<am-lyrics>` |
+| **Console** | phone-first, shipped as a plugin — overview, stations, station desk, search, words, seams, filters, training, node, plus the owner index |
+| **Lyrics** | fetched **by the node** from LRCLIB, never by the listener's browser; synced lines honour the file's `[offset:]`, and the console renders its own scroll |
 | **Memory** | a station comes back mid-song after a restart, out of MetroDB |
 | **Plugins** | drop-in `plugins/` folder — sources, transitions, routes and hooks, switchable per node or per station |
 
@@ -488,12 +490,43 @@ web/                         the console — a create-next-app export, served by
 server/owner/                index, plugins, system, models routes
 ```
 
+## Lyrics
+
+The node fetches lyrics so a listener's browser never has to: one lookup per
+song, cached with it. LRCLIB (no key, LRC in and out) is asked three ways before
+the answer is "none":
+
+1. artist + title + duration;
+2. the same with the duration dropped — `/get` only answers within ±2 s, and the
+   duration we have came from a provider's metadata, not the recording;
+3. a search, whose result must match the *duration* or the *title* exactly. A
+   listener reading another song's words is worse than reading none.
+
+An `[offset:…]` tag in the file is applied, because hand-tuned lyric files
+almost always carry one. A hit is cached for a week and a miss for six hours —
+lyrics are added to the database constantly, so a song without words today may
+have them tomorrow. `GET /api/v1/lyrics?station=main` answers with
+`{found, synced, lines[], plain, ttml, positionMs, serverTime, offsetMs,
+instrumental, provider, cached}`; the console's **Words** view follows that
+anchor with a local clock, and can nudge it when a listener hears otherwise.
+
 ## Sources
 
 `server/src/sources/` is a small registry. Each provider implements
 `canResolve(query)`, `resolve(query)` and `stream(track)`; the registry adds
 what one provider cannot know — parallel search and ranking, hi-res re-cloning,
 and a fallback chain so a dead link never silences a station.
+
+Two things keep a fan-out honest:
+
+- **A deadline, not a wait.** Every provider gets `searchTimeoutMs` (4 s) to
+  answer; one that does not is recorded as slow and left out of *this* search,
+  and the results that did arrive are returned. Before this, one dead catalogue
+  made every console search feel broken.
+- **A health row.** `GET /api/v1/sources` carries per-provider `calls`, `ok`,
+  `failed`, `avgMs`, `lastError` and a `healthy` flag (unknown until something
+  has been tried). The console's Search view prints it, so "SoundCloud is down"
+  and "SoundCloud took 3 s" stop looking the same.
 
 | Source | Notes |
 |---|---|
@@ -515,16 +548,18 @@ cd server && bun test test/seams.test.js   # one file at a time
 cd server && LIVY_DISABLE_METRO=1 bun test # the JavaScript engines only
 ```
 
-361 tests (three transcoder tests skip without a libmetro binary, and three
+374 tests (three transcoder tests skip without a libmetro binary, and three
 more run only there; six cover the PyTorch trainer and skip where torch is
 not installed).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
-air, the Android training budget, model presets, and private Hugging Face
-push/pull with a fake `fetch`. Source tests cover the NhacCuaTui
-detail/playlist/retry paths, and the API test drives a real listener pick onto
-a live station.
+air, the Android training budget, model presets, private Hugging Face push/pull
+with a fake `fetch`, recency weighting and the transition scoreboard. Source
+tests cover the NhacCuaTui detail/playlist/retry paths, the search deadline and
+the per-provider health rows; the lyrics tests stub `fetch` and exercise the
+LRC reader, the offset tag, the "not this song" rule and both cache TTLs. The
+API test drives a real listener pick onto a live station.
 
 ## Filters
 

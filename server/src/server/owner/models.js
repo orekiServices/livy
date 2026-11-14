@@ -39,7 +39,9 @@ export async function stationModels({ req, res, method, action, target, store, r
       auto: autoTrainer?.state?.() ?? null,
       registry: (await registryState({ store, cfg: hfConfig() })).models,
       // Whether a training run here can use PyTorch, and if not, why not.
-      torch: await torchStatus(),
+      // Answered from the cache (or "probing") so the console never waits on
+      // an interpreter start.
+      torch: await torchStatus({ wait: false }),
       backend: trainBackend()
     })
   }
@@ -118,7 +120,7 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
       enabled: modelSettings().enabled !== false,
       // PyTorch is optional: the console offers it when the probe finds an
       // interpreter with torch, and says what to install when it does not.
-      torch: await torchStatus(),
+      torch: await torchStatus({ wait: false }),
       backend: trainBackend()
     })
   }

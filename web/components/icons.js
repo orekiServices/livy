@@ -27,6 +27,13 @@ export const IconRadio = (props) => (
   </svg>
 )
 
+export const IconLyrics = (props) => (
+  <svg {...base(props)}>
+    <path d="M4 6h16M4 11h12M4 16h8" />
+    <path d="M17 20v-4.5l3-1.5V19" />
+  </svg>
+)
+
 export const IconSearch = (props) => (
   <svg {...base(props)}>
     <circle cx="11" cy="11" r="6" />

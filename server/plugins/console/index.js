@@ -143,7 +143,7 @@ export default function setup(ctx) {
       mount: handle.mount,
       built: handle.serving(),
       build,
-      pages: ['/', '/stations/', '/station/', '/search/', '/seams/', '/filters/', '/models/', '/ops/', '/owner/', '/listen/'],
+      pages: ['/', '/stations/', '/station/', '/search/', '/lyrics/', '/seams/', '/filters/', '/models/', '/ops/', '/owner/', '/listen/'],
       builtWith: 'next export',
       ...(handle.serving() ? {} : { hint: 'run `bun run build:web` in server/ — the node picks it up within a few seconds' }),
       note: 'switch this plugin off to run the node headless (API + MP3 only)'

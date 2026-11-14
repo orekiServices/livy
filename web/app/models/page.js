@@ -24,11 +24,15 @@ const percent = (value) => (value == null ? '—' : `${Math.round(value * 100)}%
 
 function TorchCard({ torch, backend }) {
   const ready = torch?.available
+  // `available: null` is the console's own doing: asking "is torch here?"
+  // starts an interpreter, which takes a second, so the node answers from the
+  // cache and probes in the background. The next poll has the real answer.
+  const probing = ready == null && Boolean(torch?.probing)
   return (
     <Panel
       title="Training backend"
       subtitle="PyTorch when it pays for itself; the JavaScript trainer otherwise. Both train the same network."
-      actions={<Badge tone={ready ? 'lime' : 'ink'}>{ready ? 'torch ready' : 'no torch'}</Badge>}
+      actions={<Badge tone={ready ? 'lime' : probing ? 'cyan' : 'ink'}>{ready ? 'torch ready' : probing ? 'probing…' : 'no torch'}</Badge>}
     >
       {ready ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -36,6 +40,11 @@ function TorchCard({ torch, backend }) {
           <Stat label="Device" value={torch.device ?? 'cpu'} hint={`${torch.threads ?? '—'} threads`} />
           <Stat label="Python" value={torch.python ?? '—'} />
           <Stat label="Default" value={backend ?? 'auto'} hint="per run below" />
+        </div>
+      ) : probing ? (
+        <div className="space-y-2 text-sm text-ink-300">
+          <p>The node is asking its Python interpreter whether torch is installed. This page will say so on the next poll.</p>
+          <p className="text-xs text-ink-500">{torch?.reason}</p>
         </div>
       ) : (
         <div className="space-y-2 text-sm text-ink-300">

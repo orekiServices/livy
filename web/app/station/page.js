@@ -376,6 +376,168 @@ function Say({ station }) {
   )
 }
 
+/**
+ * The station's own settings: what it is called, how it is described, and
+ * where its music comes from.
+ *
+ * Editing is a PATCH of the fields the manager accepts; playlists are provider
+ * strings (`local:/path`, `scsearch:…`), comma separated, exactly as the
+ * stations page sends them on create.
+ */
+function Settings({ station, refresh }) {
+  const [draft, setDraft] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [said, setSaid] = useState(null)
+  const form = draft ?? {
+    name: station.name ?? '',
+    genre: station.genre ?? '',
+    description: station.description ?? '',
+    playlists: (station.playlists ?? []).join(', '),
+    allowRequests: station.allowRequests !== false
+  }
+
+  const set = (key, value) => setDraft({ ...form, [key]: value })
+
+  const save = async (event) => {
+    event.preventDefault()
+    setBusy(true)
+    setSaid(null)
+    try {
+      await owner(`/stations/${station.id}`, {
+        method: 'PATCH',
+        body: {
+          name: form.name.trim() || station.name,
+          genre: form.genre.trim(),
+          description: form.description.trim(),
+          playlists: form.playlists.split(',').map((entry) => entry.trim()).filter(Boolean),
+          allowRequests: Boolean(form.allowRequests)
+        }
+      })
+      setDraft(null)
+      setSaid('Saved.')
+      await refresh()
+    } catch (problem) {
+      setSaid(problem.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel title="Settings" subtitle="What this station is, and where its music comes from.">
+      <form onSubmit={save} className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Name">
+            <input className={inputClass} value={form.name} onChange={(event) => set('name', event.target.value)} />
+          </Field>
+          <Field label="Genre">
+            <input className={inputClass} value={form.genre} onChange={(event) => set('genre', event.target.value)} placeholder="ambient" />
+          </Field>
+        </div>
+        <Field label="Description">
+          <input className={inputClass} value={form.description} onChange={(event) => set('description', event.target.value)} placeholder="one line for the station wall" />
+        </Field>
+        <Field label="Playlists" hint="Provider strings, comma separated: local:/music/ambient, scsearch:tycho awake">
+          <textarea className={cx(inputClass, 'min-h-[64px] font-mono text-xs')} value={form.playlists} onChange={(event) => set('playlists', event.target.value)} />
+        </Field>
+        <label className="flex items-center gap-2 text-xs text-ink-300">
+          <input type="checkbox" className="accent-amber" checked={Boolean(form.allowRequests)} onChange={(event) => set('allowRequests', event.target.checked)} />
+          Listeners may request songs
+        </label>
+        <div className="flex items-center gap-2">
+          <Button type="submit" variant="primary" disabled={busy || !draft}>{busy ? 'Saving…' : 'Save changes'}</Button>
+          {draft && <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>Discard</Button>}
+          {said && <span className="text-xs text-ink-300">{said}</span>}
+        </div>
+      </form>
+    </Panel>
+  )
+}
+
+/**
+ * The ban list.
+ *
+ * A listener is identified by the id their requests and votes carry; banning
+ * one stops requests and play-now from that line without touching the stream
+ * for everybody else. It is node-wide (the store keeps the table), which is
+ * what the owner wants: one troll, one entry.
+ */
+function Listeners({ station }) {
+  const [bans, setBans] = useState(null)
+  const [voter, setVoter] = useState('')
+  const [reason, setReason] = useState('')
+  const [said, setSaid] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const payload = await owner('/bans')
+      setBans(payload.bans ?? [])
+    } catch (problem) {
+      setBans({ error: problem.message })
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const ban = async (event) => {
+    event.preventDefault()
+    if (!voter.trim()) return
+    setBusy(true)
+    try {
+      await owner('/bans', { method: 'POST', body: { voter: voter.trim(), reason: reason.trim() } })
+      setVoter('')
+      setReason('')
+      setSaid('That line can no longer request or play.')
+      await load()
+    } catch (problem) {
+      setSaid(problem.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unban = async (id) => {
+    await owner(`/bans/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {})
+    await load()
+  }
+
+  return (
+    <Panel title="Listeners" subtitle="Lines that may not request or play. The stream itself stays open to everyone.">
+      <form onSubmit={ban} className="flex flex-wrap items-end gap-2">
+        <div className="min-w-[160px] flex-1">
+          <Field label="Listener id" hint="from a request row">
+            <input className={inputClass} value={voter} onChange={(event) => setVoter(event.target.value)} placeholder="voter id" />
+          </Field>
+        </div>
+        <div className="min-w-[160px] flex-1">
+          <Field label="Reason">
+            <input className={inputClass} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="spam" />
+          </Field>
+        </div>
+        <Button type="submit" variant="danger" size="sm" disabled={busy || !voter.trim()}>Restrict</Button>
+      </form>
+      {said && <p className="mt-2 text-xs text-ink-300">{said}</p>}
+      {Array.isArray(bans) && bans.length === 0 && <p className="mt-3 text-xs text-ink-300">Nobody is restricted.</p>}
+      {Array.isArray(bans) && bans.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {bans.map((entry) => (
+            <li key={entry.voter ?? entry.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-ink-800/60">
+              <span className="min-w-0 flex-1 truncate font-mono text-ink-200">{entry.voter ?? entry.id}</span>
+              <span className="truncate text-ink-500">{entry.reason || 'no reason given'}</span>
+              <button type="button" onClick={() => unban(entry.voter ?? entry.id)} className="text-[11px] text-ink-500 hover:text-lime">
+                allow
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  )
+}
+
 function StationBody() {
   const params = useSearchParams()
   const id = params.get('id')
@@ -400,6 +562,8 @@ function StationBody() {
           <FiltersSummary station={station} filters={filters} />
           <SeamPanel station={station} seam={seam} refresh={load} />
           <Say station={station} />
+          <Settings station={station} refresh={load} />
+          <Listeners station={station} />
         </div>
       </div>
       {model?.model && (
