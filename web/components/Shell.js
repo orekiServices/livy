@@ -55,7 +55,7 @@ function NavLink({ item, active }) {
 }
 
 function PlayerBar() {
-  const { stations, tuned, playing, toggle, volume, changeVolume, stationActions, key } = useRadio()
+  const { stations, tuned, playing, buffering, playerError, toggle, reconnect, volume, changeVolume, stationActions, key } = useRadio()
   const station = stations.find((row) => row.id === tuned) ?? null
   const track = station?.nowPlaying?.track ?? null
   if (!station) return null
@@ -66,10 +66,15 @@ function PlayerBar() {
         <button
           type="button"
           onClick={toggle}
-          className="grid h-9 w-9 place-items-center rounded-full bg-amber text-ink-950 transition hover:brightness-110"
-          aria-label={playing ? 'Pause' : 'Play'}
+          className={cx(
+            'grid h-9 w-9 place-items-center rounded-full transition hover:brightness-110',
+            playerError ? 'bg-rose text-ink-950' : 'bg-amber text-ink-950',
+            buffering && playing ? 'animate-pulse' : ''
+          )}
+          aria-label={playerError ? 'Retry' : playing ? 'Pause' : 'Play'}
+          title={playerError ?? undefined}
         >
-          {playing ? <IconPause size={16} /> : <IconPlay size={16} />}
+          {playing && !playerError ? <IconPause size={16} /> : <IconPlay size={16} />}
         </button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm text-ink-100">
@@ -80,6 +85,13 @@ function PlayerBar() {
             <span className="truncate">{station.name}</span>
             <span>·</span>
             <span>{station.listeners ?? 0} listening</span>
+            {playerError ? (
+              <button type="button" onClick={reconnect} className="truncate text-rose underline" title={playerError}>
+                stream lost — retry
+              </button>
+            ) : buffering && playing ? (
+              <span className="text-cyan">connecting…</span>
+            ) : null}
           </div>
         </div>
         <div className="hidden items-center gap-2 sm:flex">

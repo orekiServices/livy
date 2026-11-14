@@ -10,7 +10,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
-import { api, clearOwnerKey, owner, ownerKey, setOwnerKey as rememberKey } from '../lib/api.js'
+import { api, clearOwnerKey, owner, ownerKey, setOwnerKey as rememberKey, streamUrl } from '../lib/api.js'
 
 const Radio = createContext(null)
 
@@ -27,6 +27,20 @@ export function useStation(id) {
 }
 
 const POLL_MS = 4000
+const VOLUME_KEY = 'livy-volume'
+/** How many times a live stream is re-opened before the player admits defeat. */
+const MAX_RETRIES = 5
+/** Backoff between reconnects, in milliseconds. */
+const RETRY_MS = [800, 1500, 3000, 6000, 10_000]
+/**
+ * How long a stream may go without progress before it is treated as dead.
+ *
+ * `stalled` and `waiting` fire for perfectly healthy streams too — a slow
+ * network, a browser that paused the decoder — so acting on the event itself
+ * would reconnect in a loop. Silence is the signal: no `timeupdate`, no
+ * `playing`, no `canplay` for this long.
+ */
+const STALL_MS = 8000
 
 export default function RadioProvider({ children }) {
   const [info, setInfo] = useState(null)
@@ -39,7 +53,16 @@ export default function RadioProvider({ children }) {
   const [volume, setVolume] = useState(0.8)
   const [key, setKey] = useState(null)
   const [ownerName, setOwnerName] = useState(null)
+  // `buffering` is what the listener sees between pressing play and hearing
+  // something; `playerError` is what they see when it did not work.
+  const [buffering, setBuffering] = useState(false)
+  const [playerError, setPlayerError] = useState(null)
   const audio = useRef(null)
+  const wanted = useRef(null) // the station the listener asked to hear
+  const retries = useRef(0)
+  const retryTimer = useRef(null)
+  const stallTimer = useRef(null)
+  const reconnectRef = useRef(null)
 
   const refresh = useCallback(async ({ quiet = true } = {}) => {
     try {
@@ -113,23 +136,92 @@ export default function RadioProvider({ children }) {
     setOwnerName(null)
   }, [])
 
-  const play = useCallback(async (stationId) => {
+  /** Start the "is this stream still moving?" watchdog. */
+  const armStall = useCallback(() => {
+    if (stallTimer.current) return
+    stallTimer.current = setTimeout(() => {
+      stallTimer.current = null
+      reconnectRef.current?.()
+    }, STALL_MS)
+  }, [])
+
+  /** A heartbeat from the element: the stream is alive, stand the watchdog down. */
+  const disarmStall = useCallback(() => {
+    if (!stallTimer.current) return
+    clearTimeout(stallTimer.current)
+    stallTimer.current = null
+  }, [])
+
+  /**
+   * Open the station's stream.
+   *
+   * Three things matter here and all three were missing: the URL has to be the
+   * *node's*, not the console's origin (in development the console is on a
+   * different port, and a relative /stream URL 404s); a re-tune needs a cache
+   * buster, because the browser will otherwise serve the connection it already
+   * thinks it has; and a failure has to say so instead of silently doing
+   * nothing.
+   */
+  const open = useCallback(async (stationId, { fresh = true } = {}) => {
     const element = audio.current
-    if (!element) return
-    setTuned(stationId)
-    // A fresh `?t=` restarts the stream when the same station is retuned
-    // after a skip: the node's answer is a live stream, not a file.
-    element.src = `/stream/${encodeURIComponent(stationId)}.mp3?t=${Date.now()}`
-    element.volume = volume
+    if (!element) return false
     try {
+      const base = await streamUrl(stationId)
+      element.src = fresh ? `${base}?t=${Date.now()}` : base
+      element.volume = volume
       await element.play()
-      setPlaying(true)
-    } catch {
+      return true
+    } catch (problem) {
       setPlaying(false)
+      setBuffering(false)
+      setPlayerError(problem?.message ?? 'the browser refused to play the stream')
+      return false
     }
   }, [volume])
 
+  const play = useCallback(async (stationId) => {
+    wanted.current = stationId
+    retries.current = 0
+    setTuned(stationId)
+    setPlayerError(null)
+    setBuffering(true)
+    const ok = await open(stationId)
+    if (!ok) setBuffering(false)
+  }, [open])
+
+  /** Re-open the stream the listener asked for, with backoff. */
+  const reconnect = useCallback(() => {
+    disarmStall()
+    const stationId = wanted.current
+    if (!stationId) return
+    if (retryTimer.current) return
+    if (retries.current >= MAX_RETRIES) {
+      setBuffering(false)
+      setPlayerError('the stream stopped and would not come back — press play to retry')
+      return
+    }
+    const wait = RETRY_MS[Math.min(retries.current, RETRY_MS.length - 1)]
+    retries.current += 1
+    setBuffering(true)
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = null
+      if (wanted.current !== stationId) return
+      open(stationId).then((ok) => {
+        if (ok) setPlayerError(null)
+        else reconnect()
+      })
+    }, wait)
+  }, [disarmStall, open])
+  reconnectRef.current = reconnect
+
   const stop = useCallback(() => {
+    disarmStall()
+    wanted.current = null
+    retries.current = 0
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current)
+      retryTimer.current = null
+    }
     const element = audio.current
     if (element) {
       element.pause()
@@ -137,23 +229,55 @@ export default function RadioProvider({ children }) {
       element.load()
     }
     setPlaying(false)
-  }, [])
+    setBuffering(false)
+  }, [disarmStall])
 
   const toggle = useCallback(() => {
     const element = audio.current
     if (!element) return
     if (element.paused) {
-      if (!element.src && tuned) return play(tuned)
-      element.play().then(() => setPlaying(true)).catch(() => setPlaying(false))
+      // Paused with nothing loaded (or after an error): start it again from
+      // scratch rather than resuming a dead socket.
+      if (!element.src || playerError) {
+        if (!tuned) return
+        retries.current = 0
+        setPlayerError(null)
+        play(tuned)
+        return
+      }
+      setBuffering(true)
+      element.play().then(() => setPlaying(true)).catch(() => {
+        setBuffering(false)
+        reconnect()
+      })
     } else {
       element.pause()
       setPlaying(false)
+      setBuffering(false)
     }
-  }, [play, tuned])
+  }, [play, reconnect, tuned, playerError])
 
   const changeVolume = useCallback((value) => {
     setVolume(value)
     if (audio.current) audio.current.volume = value
+    try {
+      window.localStorage.setItem(VOLUME_KEY, String(value))
+    } catch {
+      /* private mode: the volume simply does not persist */
+    }
+  }, [])
+
+  // Remembered volume, so a listener does not reset it on every page load.
+  useEffect(() => {
+    try {
+      const saved = Number(window.localStorage.getItem(VOLUME_KEY))
+      if (Number.isFinite(saved) && saved >= 0 && saved <= 1) {
+        setVolume(saved)
+        if (audio.current) audio.current.volume = saved
+      }
+    } catch {
+      /* nothing stored */
+    }
   }, [])
 
   const value = useMemo(
@@ -166,11 +290,14 @@ export default function RadioProvider({ children }) {
       refresh,
       tuned,
       playing,
+      buffering,
+      playerError,
       volume,
       audio,
       play,
       stop,
       toggle,
+      reconnect,
       changeVolume,
       key,
       ownerName,
@@ -184,8 +311,59 @@ export default function RadioProvider({ children }) {
         reload: (id) => owner(`/stations/${id}/reload`, { method: 'POST' })
       }
     }),
-    [info, setup, stations, ready, problem, refresh, tuned, playing, volume, play, stop, toggle, changeVolume, key, ownerName, useKey, forgetKey]
+    [info, setup, stations, ready, problem, refresh, tuned, playing, buffering, playerError, volume, play, stop, toggle, reconnect, changeVolume, key, ownerName, useKey, forgetKey]
   )
 
-  return <Radio.Provider value={value}>{children}</Radio.Provider>
+  return (
+    <Radio.Provider value={value}>
+      {/*
+        One element for the whole console, rendered here and never unmounted:
+        a page change must not interrupt the stream, and a station change swaps
+        `src` on the same element. `preload="none"` keeps a console that is not
+        playing from opening a connection at all.
+      */}
+      <audio
+        ref={audio}
+        preload="none"
+        playsInline
+        onPlay={() => {
+          setPlaying(true)
+          setBuffering(false)
+          setPlayerError(null)
+          retries.current = 0
+          disarmStall()
+        }}
+        onPause={() => {
+          setPlaying(false)
+          setBuffering(false)
+        }}
+        // Progress: the stream is alive.
+        onTimeUpdate={disarmStall}
+        onCanPlay={disarmStall}
+        onProgress={disarmStall}
+        onWaiting={() => {
+          setBuffering(true)
+          armStall()
+        }}
+        onStalled={() => {
+          setBuffering(true)
+          armStall()
+        }}
+        onError={() => {
+          // `src` is cleared when the listener stops on purpose; that is not an
+          // error, and reconnecting to it would fight the user.
+          if (!wanted.current) return
+          setBuffering(true)
+          reconnect()
+        }}
+        onEnded={() => {
+          // A station stream does not end; the connection did. Forever mode
+          // makes a song long, not infinite from the socket's point of view.
+          if (wanted.current) reconnect()
+        }}
+        className="hidden"
+      />
+      {children}
+    </Radio.Provider>
+  )
 }
