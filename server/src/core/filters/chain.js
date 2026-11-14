@@ -183,6 +183,56 @@ export class FilterChain {
 }
 
 /**
+ * Move one block of audio from what the old chain made to what the new one
+ * makes.
+ *
+ * A fader moved while the station is on air changes a coefficient, and a
+ * coefficient that changes between one sample and the next is a click: the
+ * waveform steps, and the step is broadband, so the listener hears a tick on
+ * every move. Crossfading the two chains is the general answer — it works for
+ * a gain, for a filter switching on, for a reverb being replaced — and it is
+ * what happens here, over the whole block with a raised cosine so the join is
+ * smooth at both ends.
+ *
+ * `start` is how far into the ramp this block begins (0…1) and `span` is how
+ * much of the ramp the block covers, so a ramp longer or shorter than one
+ * block still lands exactly.
+ */
+export function crossfade(fromLeft, fromRight, toLeft, toRight, { start = 0, span = 1 } = {}) {
+  const n = Math.min(fromLeft.length, toLeft.length)
+  for (let i = 0; i < n; i += 1) {
+    const position = start + (i / n) * span
+    const p = position <= 0 ? 0 : position >= 1 ? 1 : position
+    const w = 0.5 - 0.5 * Math.cos(Math.PI * p)
+    fromLeft[i] = fromLeft[i] * (1 - w) + toLeft[i] * w
+    fromRight[i] = fromRight[i] * (1 - w) + toRight[i] * w
+  }
+  return { left: fromLeft, right: fromRight }
+}
+
+/**
+ * Run one block through the new chain and the one it replaced, and mix them.
+ *
+ * `startedAt` and `ms` describe the ramp; `now` is passed in so a caller can
+ * be tested without waiting. Returns whether the ramp is finished, so the
+ * caller knows when to let the old chain go.
+ */
+export function processWithMorph(current, outgoing, audio, { startedAt = 0, ms = 0, now = Date.now() } = {}) {
+  const length = Math.min(audio.left.length, audio.right.length)
+  if (!outgoing || ms <= 0) {
+    const out = current.process(audio.left, audio.right, length)
+    return { ...out, length, done: true }
+  }
+  const before = { left: audio.left.slice(0, length), right: audio.right.slice(0, length) }
+  const out = current.process(audio.left, audio.right, length)
+  outgoing.process(before.left, before.right, length)
+  const start = Math.max(0, (now - startedAt) / ms)
+  const span = (length / (current.sampleRate || 44_100)) / (ms / 1000)
+  crossfade(before.left, before.right, out.left, out.right, { start, span })
+  return { left: before.left, right: before.right, length, done: start + span >= 1 }
+}
+
+/**
  * Render a whole segment through the chain.
  *
  * Timescale is the reason this exists as a segment-level function: it needs

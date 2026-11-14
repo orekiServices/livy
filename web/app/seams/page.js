@@ -95,7 +95,7 @@ function Jukebox({ graph, forever, stationId, onRefreshed }) {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Armed" value={forever?.enabled ? 'yes' : 'no'} accent={forever?.enabled ? 'amber' : 'ink'} />
         <Stat label="Looping" value={forever?.active ? 'now' : '–'} hint={forever?.track ? String(forever.track).slice(0, 8) : 'nothing read yet'} />
-        <Stat label="Jumps" value={forever?.jumps ?? 0} />
+        <Stat label="Jumps" value={forever?.jumps ?? 0} hint={forever?.seams ? `${forever.seams} seams logged` : ''} />
         <Stat label="Position" value={forever?.positionMs != null ? clock(forever.positionMs) : '–'} hint={forever?.lastJump ? `last ${clock(forever.lastJump.atMs ?? 0)}` : ''} />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -106,6 +106,19 @@ function Jukebox({ graph, forever, stationId, onRefreshed }) {
           {forever?.enabled ? 'It stops on a skip, a request, an announcement, or this switch.' : 'Applies to the next song the station reads in full.'}
         </span>
       </div>
+      {forever?.api && (
+        <p className="mt-2 text-[11px] text-ink-300">
+          {forever.api.enabled ? (
+            <>
+              analyses from <span className="font-mono text-ink-200">{forever.api.baseUrl}</span>. {forever.api.cached} cached,{' '}
+              {forever.api.hits} used, {forever.api.misses} unknown, {forever.api.failures} failed
+              {forever.api.lastError ? `, last error: ${forever.api.lastError}` : ''}.
+            </>
+          ) : (
+            <>No Forever Jukebox instance: the node builds its own graph from the audio it decodes.</>
+          )}
+        </p>
+      )}
       {graph && (
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-ink-300">
           <dt>branching</dt>
@@ -118,6 +131,8 @@ function Jukebox({ graph, forever, stationId, onRefreshed }) {
           <dd className="font-mono text-ink-200">{Math.round((graph.longestBackward ?? 0) * 100)}%</dd>
           <dt>kernel</dt>
           <dd className="font-mono text-ink-200">{graph.engine ?? 'ts'}</dd>
+          <dt>analysis</dt>
+          <dd className="font-mono text-ink-200">{graph.source === 'forever-jukebox' ? 'forever jukebox' : 'local features'}</dd>
         </dl>
       )}
     </Panel>

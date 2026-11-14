@@ -405,7 +405,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         if (method === 'GET') return send(res, 200, target.foreverInfo())
         if (method === 'POST' || method === 'PATCH') {
           const body = await readJson(req)
-          const info = target.setForever(body.enabled !== false)
+          const info = target.setForever(body.enabled !== false, { apiBase: body.apiBase })
           store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
           log.info(`owner set forever on "${target.id}": ${info.enabled}`)
           return send(res, 200, info)

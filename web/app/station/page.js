@@ -313,7 +313,20 @@ function SeamPanel({ station, seam, refresh }) {
         <Stat label="Beats" value={seam?.beats ?? '–'} />
         <Stat label="Candidates" value={seam?.candidates ?? '–'} accent="cyan" />
         <Stat label="Branches" value={seam?.jukebox?.branching ?? '–'} hint={seam?.jukebox ? `threshold ${seam.jukebox.threshold}` : 'no graph yet'} />
-        <Stat label="Jumps" value={forever.jumps ?? 0} hint={forever.active ? 'looping' : forever.enabled ? 'armed' : 'off'} accent={forever.active ? 'amber' : 'ink'} />
+        <Stat
+          label="Jumps"
+          value={forever.jumps ?? 0}
+          hint={
+            forever.source === 'forever-jukebox'
+              ? 'forever jukebox analysis'
+              : forever.active
+                ? 'looping, local analysis'
+                : forever.enabled
+                  ? 'armed'
+                  : 'off'
+          }
+          accent={forever.active ? 'amber' : 'ink'}
+        />
       </div>
       <div className="flex flex-wrap items-center gap-2 pt-3">
         <label className="flex items-center gap-2 text-sm text-ink-200">

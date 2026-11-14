@@ -13,6 +13,10 @@ import { buildSilence } from '../src/util/mp3.js'
 import { encodeMp3 } from '../src/core/automix.js'
 import { configureLogging, resetLogging } from '../src/util/logger.js'
 
+// Hermetic: no test reaches foreverjukebox.com. A test that wants the API
+// points a client at a local stub instead.
+process.env.LIVY_FJ_API ??= 'off'
+
 /** Quiet by default; set TEST_LOGS=debug to watch a run. */
 export function quietLogs(level = process.env.TEST_LOGS ?? 'error') {
   configureLogging({ level, color: false, buffer: 50, file: { enabled: false } })

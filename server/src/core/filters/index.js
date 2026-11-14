@@ -18,7 +18,7 @@
 import { EQ_BANDS, SAMPLE_RATE, neutralValue } from './constants.js'
 import { FILTER_NAMES, FILTER_ORDER } from './registry.js'
 import { FILTER_SCHEMA, isActive, neutralSettings, defaultsFor, validate } from './schema.js'
-import { FilterChain, compile, makeFilter, render } from './chain.js'
+import { FilterChain, compile, crossfade, makeFilter, processWithMorph, render } from './chain.js'
 import { applyPitchShift, applyTempoStretch, resample, tempoStretch, wsola } from './stretch.js'
 import { BaseFilter } from './BaseFilter.js'
 import { AnimatableFilter, curveValue } from './AnimatableFilter.js'
@@ -122,6 +122,8 @@ export {
   applyPitchShift,
   applyTempoStretch,
   compile,
+  crossfade,
+  processWithMorph,
   defaultsFor,
   isActive,
   makeFilter,

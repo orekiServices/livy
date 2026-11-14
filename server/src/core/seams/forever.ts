@@ -37,6 +37,13 @@ export interface Jump {
   distance: number
   /** How far the exit moved to land on the frame grid, in samples. */
   nudge: number
+  /** How alike the two beats are, 0–100, on the graph's own scale. */
+  percent?: number
+  /** `good` when they share a bar position and sound close, down to `poor`. */
+  quality?: 'good' | 'fair' | 'poor'
+  /** Where each beat sat in its bar, when the analysis knows. */
+  fromBar?: number
+  toBar?: number
 }
 
 export interface Segment {
@@ -123,6 +130,9 @@ export class ForeverJukebox {
       }
     }
     if (best) return best
+    // Beats from a Forever Jukebox analysis carry their own segments, so there
+    // is no vector to fall back on: with no branch there is no way back.
+    if (!this.track.vectors?.length) return null
     for (let beat = first; beat < n; beat += 1) {
       const raw = bestBackward(this.track, beat)
       if (!raw) continue
@@ -228,9 +238,28 @@ export class ForeverJukebox {
         fromMs: Math.round((cut / this.sampleRate) * 1000),
         toMs: Math.round((entry / this.sampleRate) * 1000),
         distance: Number(plan.edge.distance.toFixed(2)),
-        nudge
+        nudge,
+        ...this.#describe(plan.at, plan.edge.to, plan.edge.distance)
       }
     }
+  }
+
+  /**
+   * What a jump was, in the terms the trainer wants.
+   *
+   * A cut between two beats is a seam like any other: two sides, a distance
+   * between them, a reason to think they belong together. The difference is
+   * that the jukebox's sides are the *same* song, which makes every jump a
+   * clean example of what "these two moments are interchangeable" sounds like.
+   */
+  #describe(from: number, to: number, distance: number) {
+    const positions = this.graph.positions
+    const fromBar = positions?.[from]
+    const toBar = positions?.[to]
+    const percent = Number.isFinite(distance) ? Math.round(Math.max(0, 1 - distance / Math.max(1, this.graph.threshold)) * 100) : 0
+    const sameBar = fromBar !== undefined && fromBar === toBar
+    const quality: 'good' | 'fair' | 'poor' = sameBar && percent >= 50 ? 'good' : sameBar && percent >= 25 ? 'fair' : 'poor'
+    return { percent, quality, fromBar, toBar }
   }
 
   #straight(until: number): Segment {

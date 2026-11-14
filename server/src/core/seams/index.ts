@@ -6,6 +6,7 @@
  *   detectors.ts   six opinions about where a seam belongs, and their fusion
  *   categories.ts  what kind of beat each one is
  *   jukebox.ts     which beats sound like which (the Infinite Jukebox graph)
+ *   fj.ts          the same graph on a Forever Jukebox analysis, and its client
  *   forever.ts     playing that graph as MP3 frames, without end
  *   scout.ts       all of the above, kept up to date behind a live stream
  */
@@ -20,5 +21,7 @@ export { buildGraph, beatDistance, nearestNeighbours, useNativeKernel, JukeboxWa
 export type { JukeboxGraph, Edge } from './jukebox.ts'
 export { ForeverJukebox } from './forever.ts'
 export type { Jump, Segment } from './forever.ts'
+export { FjClient, DEFAULT_FJ_API, normaliseFjAnalysis, graphFromFjAnalysis, beatTrackFromFj, beatPairDistance, matchPercent, fjClient } from './fj.ts'
+export type { FjAnalysis, FjQuantum, FjSegment, FjClientInfo } from './fj.ts'
 export { SeamScout } from './scout.ts'
 export type { Analysis, ScoutOptions } from './scout.ts'

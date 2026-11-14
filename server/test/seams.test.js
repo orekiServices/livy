@@ -9,7 +9,8 @@ import path from 'node:path'
 import { encodeMp3 } from '../src/core/automix.js'
 import { codec, decodeFrames } from '../src/util/codec.js'
 import { SeamScout, ForeverJukebox, JukeboxWalker, CATEGORIES, PROTOTYPES, fitCentroids, nearest, fuse } from '../src/core/seams/index.ts'
-import { boot, tone, toMp3 } from './helpers.js'
+import { boot, tone, toMp3, tmpdir } from './helpers.js'
+import { FEATURES, featuresFor } from '../src/core/models/features.js'
 import { chooseEffectWithModel, effectUsable } from '../src/core/automix/effects.js'
 import { split } from '../src/core/models/trainer/dataset.js'
 import { RLModel, rewardFor, rl, saveRL, trainRL, reloadRL } from '../src/core/models/rl.ts'
@@ -472,6 +473,91 @@ describe('on a station', () => {
       expect(live._scoutFor('relay')).toBeNull()
     } finally {
       await node.close()
+    }
+  }, 30_000)
+
+  test('Forever walks a real Forever Jukebox analysis, and logs every jump as a full seam', async () => {
+    const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dir, 'fixtures', 'fj-analysis.json'), 'utf8'))
+    // A stub instance: the same two routes, the same payload shape.
+    const stub = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url)
+        if (url.pathname === '/api/jobs/by-track') return Response.json({ id: 'job-1' })
+        if (url.pathname === '/api/analysis/job-1') return Response.json({ status: 'complete', result: fixture.analysis })
+        return new Response('not found', { status: 404 })
+      }
+    })
+    const dir = tmpdir('livy-fj-station-')
+    const seamLogFile = path.join(dir, 'seams.jsonl')
+    const { frames } = await analysed()
+    const node = await boot({
+      stations: [
+        {
+          id: 'fv',
+          name: 'FV',
+          autoStart: false,
+          sources: [],
+          forever: true,
+          foreverApiBase: `http://127.0.0.1:${stub.port}`,
+          seamLogFile,
+          automix: { enabled: false }
+        }
+      ]
+    })
+    try {
+      const live = node.manager.get('fv')
+      // The analysis is the fixture's, so the audio has to be long enough to
+      // hold its beats (64 at 125 BPM ≈ 31 s).
+      const track = { id: 'song', title: 'Song', artist: 'Test' }
+      for (let i = 0; i < frames.length; i += 10) live._air(frames.slice(i, i + 10).map((data) => ({ data, ms: 26.122, track })))
+      live._running = true
+      live._skipRequested = false
+      live._readingTrackId = 'song'
+      const jumps = []
+      const aired = []
+      live.on('jump', (jump) => jumps.push(jump))
+      const playing = live._playForever().catch(() => null)
+      const deadline = Date.now() + 20_000
+      // Forever retracts what has not aired, so the pacer must not be drained
+      // out from under it before it starts.
+      while (!live.foreverInfo().active && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+      while (jumps.length < 2 && Date.now() < deadline) {
+        drain(live, aired, 500)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      live.setForever(false)
+      await playing
+      live._running = false
+
+      expect(live.foreverInfo().source).toBe('forever-jukebox')
+      expect(jumps.length).toBeGreaterThanOrEqual(1)
+
+      const rows = fs
+        .readFileSync(seamLogFile, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((row) => row.kind === 'jukebox')
+      expect(rows.length).toBe(jumps.length)
+      const row = rows[0]
+      // A full seam: both sides, what they sound like, and what was done.
+      expect(row).toMatchObject({ kind: 'jukebox', transition: 'jukebox-jump', outcome: 'completed', matched: true, phraseAligned: expect.any(Boolean) })
+      expect(row.from.beat).toBeGreaterThanOrEqual(0)
+      expect(row.to.beat).not.toBe(row.from.beat)
+      expect(row.from.ms).toBeGreaterThanOrEqual(0)
+      expect(row.percent).toBeGreaterThanOrEqual(0)
+      expect(['good', 'fair', 'poor']).toContain(row.quality)
+      expect(row.fadeMs).toBeCloseTo(17.4, 0)
+      expect(row.bpmOut).toBeCloseTo(125, 0)
+      expect(row.bpmIn).toBe(row.bpmOut)
+      expect(row.energy).toBeGreaterThan(0)
+      expect(row.jukebox.source).toBe('forever-jukebox')
+      // The trainer reads these rows like any other seam.
+      const vector = featuresFor(row)
+      expect(vector.length).toBe(FEATURES.length)
+    } finally {
+      stub.stop(true)
     }
   }, 30_000)
 

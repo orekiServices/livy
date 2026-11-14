@@ -412,6 +412,65 @@ The all-pairs beat comparison is the one quadratic step; `native/libmetro/src/ju
 implements it for a libmetro built from this tree, and the TypeScript kernel
 in `core/seams/jukebox.ts` is the reference and the fallback.
 
+#### Where the beats come from
+
+Guessing at a song's structure from a live decode works, and it is what
+happens when nothing better is available. Something better is available: the
+[Forever Jukebox](https://foreverjukebox.com), the project that rebuilt the
+Infinite Jukebox after Spotify retired the Echo Nest analysis it depended on,
+generates exactly that analysis locally and serves it over a small REST API.
+
+`core/seams/fj.ts` speaks it:
+
+```
+GET /api/jobs/by-track?title=&artist=   the job for a track, if one exists
+GET /api/analysis/{job_id}              beats, bars, tatums and segments
+```
+
+The analysis is the Spotify shape, so the graph is the original's: a beat is
+compared through the segments it overlaps with the 2012 weights (timbre 1,
+pitch 10, loudness 1, duration 100), plus 100 for a different position in the
+bar, four neighbours under a threshold swept up from 10 until a sixth of the
+beats can branch, and a last branch point found by asking which beat can still
+reach back past itself. Because the analysis is real, so is the bar position,
+which the node's own tracker only ever guesses at.
+
+Three things keep this from being a dependency: an analysis of a different
+recording is refused (a live take, a radio edit, a video rip would put the
+seams where nobody can hear them, so the durations have to agree within a few
+seconds), the answer is cached on disk, and every failure falls back to the
+node's own analysis without a word to the listener.
+
+```bash
+LIVY_FJ_API=https://foreverjukebox.com bun src/index.js   # the default
+LIVY_FJ_API=off bun src/index.js                          # local analysis only
+```
+
+The console's Seams view says which of the two built the graph, and how the
+instance has behaved.
+
+#### Every jump is a seam the trainer sees
+
+A jukebox jump is a transition that aired: two moments of the same song that
+the graph says are interchangeable, joined with a 17 ms cross-fade. That is a
+supervised example, so it is written to the seam log with the same fields the
+automix writes — both sides, the tempo, the loudness gap, the energy either
+side, whether the jump landed on the same bar position, and what happened next
+— plus the graph's own verdict (`distance`, `percent`, `quality`) and
+`kind: "jukebox"`. The trainer, the RL chooser and the seam scoreboard read
+them like any other row.
+
+### A filter change is a fade, not a step
+
+An owner can move a fader while the station is on air, and a coefficient that
+changes between one sample and the next is a click: the waveform steps, and a
+step is broadband. The station therefore keeps the *old* chain alive for a
+fifth of a second and runs both, crossfading with a raised cosine
+(`processWithMorph` in `core/filters/chain.js`). It works for anything — a
+gain, a filter switching on, a reverb being replaced — and the old chain is
+destroyed when the ramp is done. `filterMorphMs` sets the length; 0 restores
+the old behaviour for a caller that wants it.
+
 ### Where the research is
 
 `docs/automix-research.md` summarises Apple Music AutoMix (on by default,
@@ -504,7 +563,7 @@ core/station/relay.js        listeners and live relays
 core/station/info.js         announcements and the public view
 core/station/seams.js        the scout, RL's advice, Forever mode
 core/automix/                analysis, voice, effects, renderers, engine
-core/seams/                  features, beats, detectors, categories, jukebox, forever, scout
+core/seams/                  features, beats, detectors, categories, jukebox, forever, scout, fj (the Forever Jukebox API)
 util/splice.ts               joining re-encoded MP3 to untouched frames (reservoir, delay)
 core/models/                 format, train (JS and PyTorch), registry, hub (HF), auto, settings
 python/train.py              the PyTorch trainer: same network, weights out as .bin

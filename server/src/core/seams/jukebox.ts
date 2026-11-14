@@ -56,6 +56,10 @@ export interface JukeboxGraph {
   /** The factor distances were multiplied by (see the note above). */
   scale: number
   engine: 'native' | 'typescript'
+  /** Where the graph came from: a real analysis, or the node's own features. */
+  source?: 'forever-jukebox' | 'local'
+  /** Each beat's position in its bar, when the analysis knows it. */
+  positions?: number[]
 }
 
 export interface JukeboxOptions {

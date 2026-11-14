@@ -5,6 +5,7 @@
  * Mixed into Station.prototype in ../station.js.
  */
 import { SeamScout, ForeverJukebox } from '../seams/index.ts'
+import { beatTrackFromFj, fjClient, graphFromFjAnalysis } from '../seams/fj.ts'
 import { rl } from '../models/rl.ts'
 import { effectUsable } from '../automix/effects.js'
 import { effectOutcomes, outcomeReport } from '../automix/outcomes.js'
@@ -14,6 +15,9 @@ import { readSeams } from '../models/trainer/dataset.js'
 const OUTCOME_TTL_MS = 60_000
 /** Seams considered: recent enough to describe the station as it is today. */
 const OUTCOME_ROWS = 4000
+
+/** The jukebox's crossfade at a jump: half of it either side of the cut. */
+const JUKEBOX_FADE_MS = Math.round(((384 * 2) / 44_100) * 1000)
 
 /** RL speaks once it has seen this many seams between two kinds of beat. */
 const MIN_EVIDENCE = 6
@@ -122,13 +126,121 @@ export const seamMethods = {
     return value
   },
 
-  /** Owner control: Forever mode on or off. Off lets the song finish. */
-  setForever(on = true) {
+  /**
+   * Owner control: Forever mode on or off, and where its analysis comes from.
+   *
+   * Off lets the song finish. `apiBase` points the jukebox at a Forever
+   * Jukebox instance (`off` to use only the node's own analysis); a new base
+   * replaces the client, so a console can switch instances without a restart.
+   */
+  setForever(on = true, { apiBase } = {}) {
     this.options.forever = Boolean(on)
+    if (typeof apiBase === 'string' && apiBase.trim()) {
+      this.options.foreverApiBase = apiBase.trim()
+      this._fj = fjClient({ baseUrl: this.options.foreverApiBase })
+    }
     if (!on && this._forever) this._forever.home = true
     this.emit('forever', this.foreverInfo())
-    this.log.info(`forever mode ${on ? 'on' : 'off'}`)
+    this.log.info(`forever mode ${on ? 'on' : 'off'}${this.options.foreverApiBase ? ` via ${this.options.foreverApiBase}` : ''}`)
     return this.foreverInfo()
+  },
+
+  /**
+   * The graph Forever should walk, and where it came from.
+   *
+   * A real Forever Jukebox analysis is better in every way that matters here:
+   * its beats come from the recording rather than from our own tracker, its
+   * segments carry the twelve-bin timbre and pitch vectors the distance is
+   * defined on, and it knows where the bar starts. It is also somebody else's
+   * uptime. So: ask, use it if it answers with a graph that can loop, and fall
+   * back to the node's own analysis without ceremony if it does not.
+   */
+  /** The station's client for a Forever Jukebox instance, built on first use. */
+  _foreverApi() {
+    this._fj ??= fjClient(this.options.foreverApiBase ? { baseUrl: this.options.foreverApiBase } : undefined)
+    return this._fj
+  },
+
+  async _foreverGraph(track) {
+    if (this.options.foreverApi === false) return null
+    try {
+      const api = this._foreverApi()
+      if (!api.enabled) return null
+      const analysis = await api.analysisFor({
+        title: track.title,
+        artist: track.artist,
+        durationMs: track.duration ? Math.round(track.duration * 1000) : undefined
+      })
+      if (!analysis) return null
+      const graph = graphFromFjAnalysis(analysis, this.options.jukebox ?? {})
+      if (graph.lastBranch < 0 || graph.branching === 0) {
+        this.log.info(`forever-jukebox: "${track.title}" has no usable branch`)
+        return null
+      }
+      return { graph, analysis, track: beatTrackFromFj(analysis), source: 'forever-jukebox' }
+    } catch (error) {
+      this.log.debug(`forever api: ${error.message}`)
+      return null
+    }
+  },
+
+  /**
+   * One jump, written as a complete seam.
+   *
+   * The trainer learns from rows, and a row is only useful if it says as much
+   * as the rows the automix writes: both sides described, the distance between
+   * them, and what happened next. A jukebox jump has one advantage over a
+   * track-to-track seam, which is that both sides are the same song at the
+   * same tempo, so anything the model learns from it is about *musical*
+   * similarity rather than about two different recordings agreeing.
+   */
+  _logForeverSeam(track, jump, graph) {
+    const scout = this._scoutFor(track?.id)
+    const exit = scout?.beatAt?.(jump.fromMs) ?? null
+    const entry = scout?.beatAt?.(jump.toMs) ?? null
+    const analysis = this._foreverAnalysis
+    const beat = (index) => analysis?.beats?.[index] ?? null
+    const loudness = (index) => {
+      const segments = beat(index)?.overlappingSegments
+      if (!segments?.length) return null
+      return segments.reduce((sum, segment) => sum + segment.loudness_max, 0) / segments.length
+    }
+    const energy = (db) => (db === null ? 0.5 : Math.max(0, Math.min(1, (db + 60) / 60)))
+    const outDb = loudness(jump.fromBeat)
+    const inDb = loudness(jump.toBeat)
+    const bpm = analysis?.track?.tempo ?? scout?.analysis?.()?.track?.bpm ?? 0
+    return this._logSeam({
+      at: Date.now(),
+      kind: 'jukebox',
+      transition: 'jukebox-jump',
+      track: track?.id ?? null,
+      outcome: 'completed',
+      // Same recording on both sides: the tempo is the same by construction.
+      bpmOut: bpm,
+      bpmIn: bpm,
+      matched: true,
+      correlation: 1,
+      loudnessGap: outDb !== null && inDb !== null ? outDb - inDb : 0,
+      energy: energy(outDb),
+      energyIn: energy(inDb),
+      vocalOut: exit ? 1 : 0,
+      vocalIn: entry ? 1 : 0,
+      fadeMs: JUKEBOX_FADE_MS,
+      phraseAligned: jump.fromBar !== undefined && jump.fromBar === jump.toBar,
+      talkover: false,
+      hour: new Date().getHours(),
+      from: { beat: jump.fromBeat, ms: jump.fromMs, bar: jump.fromBar ?? null },
+      to: { beat: jump.toBeat, ms: jump.toMs, bar: jump.toBar ?? null },
+      distance: jump.distance,
+      percent: jump.percent ?? null,
+      quality: jump.quality ?? null,
+      nudge: jump.nudge,
+      exitKind: exit?.category ?? null,
+      exitBeat: exit?.descriptor ?? null,
+      entryKind: entry?.category ?? null,
+      entryBeat: entry?.descriptor ?? null,
+      jukebox: graph ? { threshold: graph.threshold, branching: graph.branching, source: graph.source ?? 'local' } : null
+    })
   },
 
   foreverInfo() {
@@ -139,7 +251,11 @@ export const seamMethods = {
       track: jukebox ? (this._scout?.track?.id ?? null) : null,
       jumps: jukebox?.jumps ?? 0,
       positionMs: jukebox ? Math.round(jukebox.positionMs) : null,
-      lastJump: this._lastJump ?? null
+      lastJump: this._lastJump ?? null,
+      /** `forever-jukebox` when the jumps came from its analysis. */
+      source: this._foreverSource ?? null,
+      seams: this._foreverSeams ?? 0,
+      api: this.options.foreverApi === false ? null : this._foreverApi().info()
     }
   },
 
@@ -152,7 +268,16 @@ export const seamMethods = {
       track: this._scout?.track?.id ?? null,
       ...(scout?.info() ?? { ms: 0, beats: 0, candidates: 0 }),
       seams: analysis ? analysis.candidates.map((c) => ({ atMs: c.atMs, score: c.score, detectors: c.detectors, why: c.why })) : [],
-      jukebox: jukebox ? { branching: jukebox.branching, threshold: jukebox.threshold, lastBranch: jukebox.lastBranch, longestBackward: jukebox.longestBackward, engine: jukebox.engine } : null,
+      jukebox: jukebox
+        ? {
+            branching: jukebox.branching,
+            threshold: jukebox.threshold,
+            lastBranch: jukebox.lastBranch,
+            longestBackward: jukebox.longestBackward,
+            engine: jukebox.engine,
+            source: jukebox.source ?? 'local'
+          }
+        : null,
       forever: this.foreverInfo(),
       rl: rl().info(),
       // The scoreboard the automix uses: how each transition has done here.
@@ -180,8 +305,17 @@ export const seamMethods = {
     if (scout.full || scout.failed || scout.frames.length !== scout.seenFrames) return false
 
     await scout.settle()
-    const analysis = scout.analysis()
-    const graph = scout.graph()
+    const local = scout.analysis()
+    // A Forever Jukebox analysis first: its beats come from the recording, its
+    // segments are the vectors the graph's distance is defined on, and it
+    // knows where the bar starts. The node's own analysis is the fallback, and
+    // it is always there, so a third party being down never stops the station.
+    const remote = await this._foreverGraph(track).catch(() => null)
+    const analysis = remote ? { ...(local ?? {}), track: remote.track } : local
+    const graph = remote?.graph ?? scout.graph()
+    this._foreverAnalysis = remote?.analysis ?? null
+    this._foreverSource = remote ? remote.source : 'local'
+    this._foreverSeams = 0
     if (!analysis || !graph || graph.lastBranch < 0) {
       this.log.info(`forever: "${track.title}" has nowhere to loop back to`)
       return false
@@ -233,7 +367,9 @@ export const seamMethods = {
     }
 
     this._forever = jukebox
-    this.log.info(`forever: "${track.title}" — ${graph.branching} branching beats of ${analysis.track.beats.length}`)
+    this.log.info(
+      `forever: "${track.title}", ${graph.branching} branching beats of ${analysis.track.beats.length} (${this._foreverSource})`
+    )
     this.emit('forever', this.foreverInfo())
     try {
       while (this._running && !this._skipRequested) {
@@ -249,6 +385,11 @@ export const seamMethods = {
           this._lastJump = { ...segment.jump, at: Date.now() }
           this.stats.jumps = (this.stats.jumps ?? 0) + 1
           this.emit('jump', { track: track.id, ...segment.jump })
+          // Every jump is a seam the trainer can learn from, written in the
+          // same shape as the ones the automix logs.
+          this._logForeverSeam(track, segment.jump, graph)
+          this._foreverSeams += 1
+          this.emit('forever', this.foreverInfo())
         }
         if (segment.ended) break
         while (this._running && !this._skipRequested && !jukebox.home && this._bufferedMs > this.options.bufferAheadMs) await this._sleep(120)
@@ -257,6 +398,7 @@ export const seamMethods = {
       this.log.warn(`forever stopped: ${error.message}`)
     } finally {
       this._forever = null
+      this._foreverAnalysis = null
     }
     if (this._running && !this._skipRequested) await giveBack()
     this.emit('forever', this.foreverInfo())
