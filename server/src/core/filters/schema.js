@@ -24,7 +24,11 @@ export function defaultsFor(name) {
   const spec = FILTER_SCHEMA[name]
   if (!spec) return {}
   const out = {}
-  for (const [key, entry] of Object.entries(spec)) out[key] = neutralValue(entry)
+  // `default` is "on with no parameters" — NodeLink's documented value, which
+  // for karaoke and the compressor is not the neutral one.
+  for (const [key, entry] of Object.entries(spec)) {
+    out[key] = entry?.default !== undefined ? entry.default : neutralValue(entry)
+  }
   return out
 }
 
@@ -63,9 +67,10 @@ export function isActive(name, config = {}) {
         Math.abs((config.rate ?? 1) - 1) > 1e-4
       )
     case 'equalizer':
-      return (config.bands ?? []).some((band) => Math.abs((band.gain ?? 1) - 1) > 1e-3)
+      return (config.bands ?? []).some((band) => Math.abs(band.gain ?? 0) > 1e-3)
     case 'equalizerStandalone':
-      return Math.abs((config.gain ?? 1) - 1) > 1e-3
+      // `gain` is an offset from flat, as in NodeLink.
+      return Math.abs(config.gain ?? 0) > 1e-3
     case 'karaoke':
       return (config.level ?? 0) > 0 || (config.monoLevel ?? 0) > 0
     case 'channelMix':

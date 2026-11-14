@@ -119,7 +119,7 @@ test('the schema covers the NodeLink filter set', () => {
 test('validation clamps, refuses unknowns, and accepts NodeLink animation hints', () => {
   const { settings, unknown, clamped } = validate({
     tremolo: { frequency: 4, depth: 12, transition: { durationMs: 200 } },
-    equalizer: { bands: [{ band: 99, gain: 9 }, { band: 3, gain: 1.2 }] },
+    equalizer: { bands: [{ band: 99, gain: 9 }, { band: 3, gain: 0.2 }] },
     'not-a-filter': { x: 1 }
   })
 
@@ -130,15 +130,16 @@ test('validation clamps, refuses unknowns, and accepts NodeLink animation hints'
   assert.equal(settings.karaoke, undefined, 'an unmentioned filter is not invented')
   // Out-of-range band indexes become the nearest real band, gains are clamped.
   assert.equal(settings.equalizer.bands[0].band, EQ_BANDS.length - 1)
-  assert.equal(settings.equalizer.bands[0].gain, 3)
-  assert.deepEqual(settings.equalizer.bands[1], { band: 3, gain: 1.2 })
+  // EQ gain is an offset from flat, as in NodeLink, so the clamp is [-1, 1].
+  assert.equal(settings.equalizer.bands[0].gain, 1)
+  assert.deepEqual(settings.equalizer.bands[1], { band: 3, gain: 0.2 })
 })
 
 test('a neutral payload compiles to nothing at all', () => {
   const compiled = compile(neutralSettings())
   assert.deepEqual(compiled.active, [], 'nothing runs when nothing is asked for')
   assert.equal(new FilterChain({}).empty, true)
-  assert.equal(isActive('equalizer', { bands: [{ band: 1, gain: 1 }] }), false)
+  assert.equal(isActive('equalizer', { bands: [{ band: 1, gain: 0 }] }), false)
   assert.equal(isActive('lowpass', { cutoff: 20_000 }), false)
   assert.equal(isActive('reverb', { mix: 0 }), false)
 })
@@ -162,8 +163,9 @@ test('the equaliser cuts and boosts the band it is told to', () => {
   const at1k = tone(1000)
   const at100 = tone(100)
 
-  const cut = new FilterChain({ equalizer: { bands: [{ band: 8, gain: 0.25 }] } }, { sampleRate: SR })
-  const boosted = new FilterChain({ equalizer: { bands: [{ band: 8, gain: 3 }] } }, { sampleRate: SR })
+  // Offsets from flat: -0.75 is a quarter of the level, +1 is double.
+  const cut = new FilterChain({ equalizer: { bands: [{ band: 8, gain: -0.75 }] } }, { sampleRate: SR })
+  const boosted = new FilterChain({ equalizer: { bands: [{ band: 8, gain: 1 }] } }, { sampleRate: SR })
 
   const a = Float32Array.from(at1k.left)
   const b = Float32Array.from(at1k.left)
@@ -191,8 +193,9 @@ test('low-pass and high-pass really remove the band they name', () => {
   high.process(blocked, Float32Array.from(mix.right), blocked.length)
   assert.ok(energyAt(blocked, 300) < 0.02, '300 Hz does not survive a 4 kHz high-pass')
 
-  // The NodeLink `smoothing` dial: 1 is open, 30 is a closed door.
-  const smooth = new FilterChain({ lowpass: { smoothing: 30 } }, { sampleRate: SR })
+  // The NodeLink `smoothing` dial: 1 is open and the cutoff is 20 kHz over the
+  // dial, so 100 is the 200 Hz floor and closes the door on a 300 Hz tone.
+  const smooth = new FilterChain({ lowpass: { smoothing: 100 } }, { sampleRate: SR })
   const mellow = Float32Array.from(mix.left)
   smooth.process(mellow, Float32Array.from(mix.right), mellow.length)
   assert.ok(energyAt(mellow, 300) < energyAt(mix.left, 300) * 0.5, 'smoothing closes the filter down')
@@ -229,7 +232,12 @@ test('karaoke leaves the low end alone when it is band-limited to the voice', ()
     left[i] = bass + voice
     right[i] = bass + voice
   }
-  const chain = new FilterChain({ karaoke: { level: 0.95, filterBand: 10, filterWidth: 4 } }, { sampleRate: SR })
+  // `monoLevel: 0` keeps the mono fold out of the way; the split at 220 Hz is
+  // what decides which half of the spectrum survives.
+  const chain = new FilterChain(
+    { karaoke: { level: 0.95, monoLevel: 0, filterBand: 220, filterWidth: 100 } },
+    { sampleRate: SR }
+  )
   chain.process(left, right, n)
   assert.ok(energyAt(left, 50) > 0.1, 'the kick and bass survive')
   assert.ok(energyAt(left, 1000) < energyAt(left, 50), 'the voice does not')
@@ -271,7 +279,8 @@ test('echo repeats after the delay it was given', () => {
   const n = SR
   const impulse = new Float32Array(n)
   impulse[0] = 0.5
-  const chain = new FilterChain({ echo: { delay: 0.25, feedback: 0.4, mix: 1 } }, { sampleRate: SR })
+  // `delay` is milliseconds, as in NodeLink.
+  const chain = new FilterChain({ echo: { delay: 250, feedback: 0.4, mix: 1 } }, { sampleRate: SR })
   const L = Float32Array.from(impulse)
   chain.process(L, Float32Array.from(impulse), n)
 
@@ -494,7 +503,8 @@ test('compressor gain is input drive, not a dead knob', () => {
   }
   const run = (gain) => {
     const chain = new FilterChain(
-      { compressor: { threshold: 0.5, ratio: 8, attack: 0, release: 0.1, gain, makeupGain: 1 } },
+      // NodeLink units: -20 dB threshold, seconds for attack and release.
+      { compressor: { threshold: -20, ratio: 8, attack: 0.01, release: 0.1, gain, makeupGain: 0 } },
       { sampleRate: SR }
     )
     const left = make(0.4)

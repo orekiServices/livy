@@ -6,7 +6,7 @@ import { clamp, SAMPLE_RATE } from './constants.js'
 /**
  * Low-pass, with NodeLink's `smoothing` knob and a readable `cutoff`.
  *
- * `smoothing` is the NodeLink control: 0…100, where 1 is wide open and higher
+ * `smoothing` is the NodeLink control: 1…100, where 1 is wide open and higher
  * closes the filter down. It is not linear — the useful part of a low-pass
  * sweep is almost all in the last octave or two — so the mapping is
  * logarithmic, and `cutoff` (20 Hz…20 kHz) is offered for anyone who would
@@ -19,7 +19,7 @@ import { clamp, SAMPLE_RATE } from './constants.js'
  */
 export class LowpassFilter extends AnimatableFilter {
   static schema = {
-    smoothing: { range: [0, 100], default: 1 },
+    smoothing: { range: [1, 100], default: 1 },
     cutoff: { range: [20, 20_000], default: 20_000 },
     resonance: { range: [0, 10], default: 0 }
   }
@@ -50,9 +50,10 @@ export class LowpassFilter extends AnimatableFilter {
   cutoff() {
     const { cutoff, smoothing } = this.config
     if (cutoff !== undefined && cutoff < 19_900) return clamp(cutoff, 20, 20_000)
-    // smoothing 1 is open; each unit above it drops the corner by ~13 % — a
-    // factor of two every five, so 5 is 10 kHz and 30 lands around 500 Hz.
-    if (smoothing > 1) return clamp(20_000 * Math.pow(0.85, smoothing - 1), 20, 20_000)
+    // NodeLink's law: cutoff = 20 kHz / smoothing, so 2 is 10 kHz, 10 is
+    // 2 kHz, 40 is 500 Hz and the floor is 200 Hz. It is the same curve as
+    // their log-scaled slider, written without the log.
+    if (smoothing > 1) return clamp(20_000 / smoothing, 200, 20_000)
     return 20_000
   }
 

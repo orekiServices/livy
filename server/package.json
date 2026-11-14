@@ -1,7 +1,7 @@
 {
   "name": "livy",
   "version": "3.10.0",
-  "description": "Livy — Bun + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
+  "description": "Livy \u2014 Bun + Icecast-style multi-station internet radio: many sources, beatmatched automix, ICY metadata, REST + WebSocket API and its own web console. One process, no transcoding tools.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -16,6 +16,7 @@
     "dev": "bun --watch src/index.js",
     "test": "bun test",
     "test:js": "LIVY_DISABLE_METRO=1 bun test",
+    "verify:console": "bun scripts/verify-console.mjs",
     "build:web": "bun scripts/build-console.js",
     "db": "bun scripts/db.js",
     "db:info": "bun scripts/db.js info",

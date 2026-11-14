@@ -10,28 +10,36 @@ import { clamp, SAMPLE_RATE } from './constants.js'
  * instruments are panned apart. Subtract one channel from the other and the
  * centre disappears — vocal gone, and so is the bass, the kick and the snare,
  * which are also centred. That is why every karaoke implementation has the
- * same two extra knobs, and why this one has them too:
+ * same two extra knobs, and why this one has them too.
  *
- *   `level`     how much of the centre to cancel (0…1)
- *   `monoLevel` how much of the *result* to fold back to mono, which undoes
- *               some of the stereo collapse the subtraction causes
- *   `filterBand`/`filterWidth`  re-inject the low end that the subtraction
- *               took with it, from a band-passed copy of the centred signal
+ * The law is NodeLink's, and it is a band split rather than a subtraction:
  *
- * NodeLink's exact law: `left' = left − right·level`, then the mono fold, then
- * the band reinjection with the band gain clamped so the re-added bass cannot
- * push the output past full scale. That clamp (`MAX_OUTPUT_GAIN = 0.98`) is
- * the difference between a karaoke filter and a karaoke filter that clips on
- * every chorus.
+ *   below `filterBand`  the low end is passed through **per channel**, so the
+ *                       kick and the bass stay where they were panned
+ *   above `filterBand`  the high band is replaced by its side signal
+ *                       (`highL − highR`) scaled by `level`
+ *   `monoLevel`         subtracts the mid from both channels first, which is
+ *                       NodeLink's separate "mono the centre" control
+ *
+ * Writing it this way is the difference between a karaoke filter that leaves a
+ * hole where the bass was and one that only removes the voice: the old version
+ * cancelled the whole spectrum and then tried to put a band back.
+ *
+ * `filterBand` is the split frequency in hertz and `filterWidth` sets the
+ * filter's Q as `filterBand / filterWidth` — NodeLink's units, which is why
+ * the defaults are 220 and 100 rather than a pair of octave counts. A zero in
+ * either one turns the split off, exactly as it does there.
  */
 const MAX_OUTPUT_GAIN = 0.98
 
 export class KaraokeFilter extends AnimatableFilter {
   static schema = {
-    level: { range: [0, 1], default: 0 },
-    monoLevel: { range: [0, 1], default: 0 },
-    filterBand: { range: [0, 20], default: 0 },
-    filterWidth: { range: [0, 20], default: 0 }
+    // NodeLink's defaults: full centre cancel over a 220 Hz / 100 Hz split,
+    // plus the mono fold. Zeroing the levels is what makes it neutral.
+    level: { range: [0, 1], default: 1, neutral: 0 },
+    monoLevel: { range: [0, 1], default: 1, neutral: 0 },
+    filterBand: { range: [0, 20_000], default: 220 },
+    filterWidth: { range: [0, 5_000], default: 100 }
   }
 
   name = 'karaoke'
@@ -56,30 +64,26 @@ export class KaraokeFilter extends AnimatableFilter {
   }
 
   /**
-   * The reinstated bass band.
-   *
-   * `filterBand` selects a centre on a log scale from 40 Hz to 400 Hz — the
-   * range where the kick and bass live — and `filterWidth` widens it from a
-   * third of an octave to two. A first-order band-pass is enough: this is a
-   * hint of low end under the vocal-less mix, not a crossover.
+   * The band split: a low-pass and a high-pass per channel, both at the split
+   * frequency, both with Q = `filterBand / filterWidth`.
    */
   #rebuild() {
-    const band = clamp(this.config.filterBand ?? 0, 0, 20)
-    const width = clamp(this.config.filterWidth ?? 0, 0, 20)
+    const band = clamp(this.config.filterBand ?? 220, 0, this.#sampleRate * 0.49)
+    const width = clamp(this.config.filterWidth ?? 100, 0, 5_000)
     this.#filterKey = `${band}:${width}`
-    if (band === 0 && width === 0) {
+    if (!band || !width) {
       this.#filter = null
       return
     }
-    const centre = 40 * Math.pow(10, band / 20 + 0.05)
-    const q = 0.5 + width / 8
-    this.#filter = {
-      centre,
-      high: new Biquad(),
-      low: new Biquad()
+    const q = clamp(band / width, 1e-4, 20)
+    const make = () => {
+      const low = new Biquad()
+      const high = new Biquad()
+      low.lowpass(band, this.#sampleRate, q)
+      high.highpass(band, this.#sampleRate, q)
+      return { low, high }
     }
-    this.#filter.high.highpass(centre / (1 + q), this.#sampleRate, q)
-    this.#filter.low.lowpass(Math.min(centre * (1 + q), 4000), this.#sampleRate, q)
+    this.#filter = { left: make(), right: make() }
   }
 
   active() {
@@ -87,48 +91,47 @@ export class KaraokeFilter extends AnimatableFilter {
   }
 
   process(left, right, length) {
+    this.processAnimation(length)
     const level = clamp(this.config.level ?? 0, 0, 1)
     const mono = clamp(this.config.monoLevel ?? 0, 0, 1)
     if (level === 0 && mono === 0) return
+    const filter = level > 0 ? this.#filter : null
 
-    const filter = this.#filter
     for (let i = 0; i < length; i += 1) {
-      const l = left[i]
-      const r = right[i]
+      let l = left[i]
+      let r = right[i]
 
-      // Cancel the centre: the vocal is `l === r`, so it is what disappears.
-      let outL = l - r * level
-      let outR = r - l * level
-
-      // Fold towards mono — the subtraction leaves the sides, and the sides
-      // alone read as a hole in the middle of the mix.
+      // NodeLink's mono control: take the centre out of both channels before
+      // the band split, so the split only ever sees what is left.
       if (mono > 0) {
-        const mid = (outL + outR) * 0.5
-        outL = outL * (1 - mono) + mid * mono
-        outR = outR * (1 - mono) + mid * mono
+        const sub = ((l + r) * 0.5) * mono
+        l -= sub
+        r -= sub
       }
 
-      // Put the low end back, from the original centre, band-limited. The
-      // reinjection is what stops the mix sounding like a phone call, and
-      // `MAX_OUTPUT_GAIN` is what stops it clipping: the band is scaled down
-      // until the louder channel plus the band still fits inside full scale.
       if (filter) {
-        const centreBand = (l + r) * 0.5
-        const bass = filter.low.run(filter.high.run(centreBand))
-        const headroom = Math.max(0, MAX_OUTPUT_GAIN - Math.max(Math.abs(outL), Math.abs(outR)))
-        const allowed = Math.max(0, Math.min(1, headroom / Math.max(1e-4, Math.abs(bass))))
-        outL += bass * allowed
-        outR += bass * allowed
+        const lowL = filter.left.low.run(l)
+        const lowR = filter.right.low.run(r)
+        const highL = filter.left.high.run(l)
+        const highR = filter.right.high.run(r)
+        // The side signal, scaled by how much of the centre to remove. With
+        // `level: 1` the high band *is* the sides; with `level: 0.5` it is
+        // half sides and half original.
+        const cancelled = (highL - highR) * level
+        l = lowL + cancelled
+        r = lowR - cancelled
       }
 
-      left[i] = clamp(outL, -1, 1)
-      right[i] = clamp(outR, -1, 1)
+      left[i] = clamp(l, -MAX_OUTPUT_GAIN, MAX_OUTPUT_GAIN)
+      right[i] = clamp(r, -MAX_OUTPUT_GAIN, MAX_OUTPUT_GAIN)
     }
   }
 
   reset() {
-    this.#filter?.high.reset()
-    this.#filter?.low.reset()
+    this.#filter?.left.low.reset()
+    this.#filter?.left.high.reset()
+    this.#filter?.right.low.reset()
+    this.#filter?.right.high.reset()
   }
 }
 

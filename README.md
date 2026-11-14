@@ -629,9 +629,9 @@ cd server && bun test test/seams.test.js   # one file at a time
 cd server && LIVY_DISABLE_METRO=1 bun test # the JavaScript engines only
 ```
 
-374 tests (three transcoder tests skip without a libmetro binary, and three
+404 tests (three transcoder tests skip without a libmetro binary, and three
 more run only there; six cover the PyTorch trainer and skip where torch is
-not installed).
+not installed; twelve are the NodeLink parity table described above).
 Sources are stubbed at the transport rather than at the module, so no
 suite reaches the network, and the DSP is asserted against synthesised audio.
 The model tests cover multi-train, the MetroDB registry, auto-train while on
@@ -642,11 +642,78 @@ the per-provider health rows; the lyrics tests stub `fetch` and exercise the
 LRC reader, the offset tag, the "not this song" rule and both cache TTLs. The
 API test drives a real listener pick onto a live station.
 
+### The console, checked twice
+
+Two harnesses cover the web UI, and they do different jobs:
+
+```bash
+cd server && bun run verify:console      # against a node on :3000
+cd web && bun run test:e2e               # Playwright, needs a browser
+```
+
+`scripts/verify-console.mjs` is the browser-free half. It asks the node for
+every route the console exports, follows one of the page's `_next/static`
+script tags to prove the bundle is actually served, then sends the exact
+payloads the filter rack sends — all nineteen switches and all eight presets —
+and fails if any of them lands on the node but does not engage. A rack that
+renders but cannot reach the DSP is the failure that looks fine in a
+screenshot.
+
+`web/e2e/console.spec.js` is the same intent with a real browser: every route
+loads with no uncaught error and no React complaint in the console, the seams
+page shows the jukebox panel and its analysis source, the station page shows
+the jumps, a filter change round-trips through the API and the rack's badge
+agrees with it, and the `<audio>` element survives a page change because it
+lives in the shell. It needs a browser once:
+
+```bash
+cd web && bunx playwright install chromium
+```
+
+The suite is not part of `bun install`, so a machine without a browser can
+still install the repo.
+
 ## Filters
 
 The chain is a fixed order of small DSP objects (`server/src/core/filters/`),
 each with the same four-method contract, so a station can stack EQ, compression,
 reverb, distortion and the modulation effects without special cases.
+
+### The rack is NodeLink's rack, in NodeLink's units
+
+[NodeLink](https://github.com/PerformanC/NodeLink) is the reference: the same
+nineteen filters, the same payload keys, the same parameter names — and, this
+matters more than the names, the same **units**. A station configured by a
+NodeLink client should sound the same on Livy, which is only true if
+`echo.delay` means the same number in both.
+
+| Filter | Parameter | Unit, as in NodeLink |
+|---|---|---|
+| `equalizer` | `bands[].gain` | offset from flat, −1 … +1; the multiplier is `1 + gain`, clamped to 0 … 2 |
+| `echo` | `delay` | milliseconds, 0 … 2000 |
+| `chorus` | `delay` | milliseconds, 1 … 995, default 25 |
+| `compressor` | `threshold`, `makeupGain` | dB, threshold default −24, makeup default 0 |
+| `compressor` | `attack`, `release` | seconds, floors of 1 ms and 10 ms |
+| `karaoke` | `filterBand`, `filterWidth` | hertz, defaults 220 and 100; Q is `filterBand / filterWidth` |
+| `lowpass` | `smoothing` | 1 … 100, where the corner is `20 kHz / smoothing` and 1 is open |
+| `phaser` | `stages` | 2 … 8, default 4; sweep window 100 Hz … 2.5 kHz |
+| `reverb` | `mix` | default 0.5 |
+| `vibrato` | `depth` | 0 … 2, twice what the tremolo allows |
+
+Two of those are not just relabelled numbers. Karaoke is a **band split**, not a
+subtraction: below the split frequency the low end passes through per channel,
+so the kick and the bass stay where they were panned, and above it the high band
+becomes its side signal scaled by `level`. The old version cancelled the whole
+spectrum and then put a band back, which is why it left a hole where the bass
+had been. And a modulation effect needs a rate *and* a depth before it engages,
+so `{ chorus: { mix: 0.4 } }` is a switch that is on and silent — the console
+sends real values for both.
+
+Neutral is not the same as "on with no parameters": `{ karaoke: true }` means
+NodeLink's defaults (full cancel, 220 Hz split), while a station that has never
+touched karaoke must get none of it. The schema carries both, as `default` and
+`neutral`, and `server/test/nodelink-parity.test.js` asserts the table above
+against the numbers in NodeLink's own `src/playback/filters/*.ts`.
 
 | | What it does |
 |---|---|

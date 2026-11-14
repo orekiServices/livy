@@ -31,12 +31,16 @@ const KNEE_DB = 6
 
 export class CompressorFilter extends BaseFilter {
   static schema = {
-    threshold: { range: [0, 1], default: 1 },
-    ratio: { range: [1, 20], default: 1 },
-    attack: { range: [0, 1], default: 0 },
-    release: { range: [0, 10], default: 0 },
+    // NodeLink's units: threshold and makeup in dB, attack and release in
+    // seconds. `ratio: 1` is the neutral state, so a station that has never
+    // touched the compressor keeps the documented defaults and still hears
+    // nothing compressed.
+    threshold: { range: [-60, 0], default: -24, neutral: -60 },
+    ratio: { range: [1, 20], default: 4, neutral: 1 },
+    attack: { range: [0.001, 1], default: 0.01 },
+    release: { range: [0.01, 10], default: 0.1 },
     gain: { range: [0, 5], default: 1 },
-    makeupGain: { range: [0, 5], default: 1 }
+    makeupGain: { range: [-24, 24], default: 0 }
   }
 
   name = 'compressor'
@@ -64,17 +68,18 @@ export class CompressorFilter extends BaseFilter {
 
   update(settings = {}) {
     const config = settings.compressor ?? settings
-    this.#threshold = clamp(config.threshold ?? 1, 0, 1)
-    this.#ratio = clamp(config.ratio ?? 1, 1, 20)
-    this.#attack = clamp(config.attack ?? 0, 0, 1)
-    this.#release = clamp(config.release ?? 0, 0, 10)
+    const thresholdDb = clamp(config.threshold ?? -24, -60, 0)
+    this.#threshold = 10 ** (thresholdDb / 20)
+    this.#ratio = clamp(config.ratio ?? 4, 1, 20)
+    this.#attack = clamp(config.attack ?? 0.01, 0.001, 1)
+    this.#release = clamp(config.release ?? 0.1, 0.01, 10)
     this.#gain = clamp(config.gain ?? 1, 0, 5)
-    this.#makeup = clamp(config.makeupGain ?? 1, 0, 5)
+    this.#makeup = 10 ** (clamp(config.makeupGain ?? 0, -24, 24) / 20)
 
-    // 0 s attack would be a compressor that clicks; 1 ms is the floor. Same
-    // for release, at 5 ms. The schema's 0 is "as fast as this allows".
-    const attackSeconds = 0.001 + this.#attack * 0.2
-    const releaseSeconds = 0.005 + this.#release
+    // NodeLink's attack and release are already seconds, and their floors
+    // (1 ms and 10 ms) are what stop the gain ramp from clicking.
+    const attackSeconds = this.#attack
+    const releaseSeconds = this.#release
     this.#attackCoefficient = Math.exp(-1 / (attackSeconds * this.#sampleRate))
     this.#releaseCoefficient = Math.exp(-1 / (releaseSeconds * this.#sampleRate))
     // One sample at a time, so the gain ramp is smooth across block edges.

@@ -76,7 +76,9 @@ export class ReverbFilter extends AnimatableFilter {
     wetLevel: { range: [0, 1], default: 0 },
     dryLevel: { range: [0, 1], default: 1 },
     width: { range: [0, 1], default: 0 },
-    mix: { range: [0, 1], default: 0 }
+    // NodeLink defaults the mix to half wet, and a station that has never
+    // asked for reverb must not get any, so the neutral value is zero.
+    mix: { range: [0, 1], default: 0.5, neutral: 0 }
   }
 
   name = 'reverb'

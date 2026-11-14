@@ -8,8 +8,12 @@ import { clamp, EQ_BANDS, EQ_GAIN, SAMPLE_RATE } from './constants.js'
  *
  * One peaking biquad per band per channel, all bypassed when flat — a station
  * that has never touched the EQ should not pay for 30 biquads on every sample.
- * `gain` is a multiplier, as in NodeLink: 0 is silence, 1 is flat, 3 is about
- * +9.5 dB, so `{ band: 5, gain: 1.5 }` is a +3.5 dB lift at 250 Hz.
+ *
+ * `gain` is an **offset from flat**, which is NodeLink's convention: their
+ * payload gain is added to a unity multiplier and clamped to [0, 2]. So
+ * `{ band: 5, gain: 0.5 }` is a +3.5 dB lift at 250 Hz and `gain: -1` is a
+ * kill. Internally the class keeps the multiplier (`1 + gain`), because that is
+ * what the biquad wants; only the edge speaks offsets.
  *
  * Q is 1.41 — a little over an octave per band, which with these fifteen
  * centres leaves no holes between them and no more overlap than a third of an
@@ -21,13 +25,13 @@ import { clamp, EQ_BANDS, EQ_GAIN, SAMPLE_RATE } from './constants.js'
  */
 export class EqualizerFilter extends AnimatableFilter {
   static schema = {
-    bands: { list: { band: { range: [0, EQ_BANDS.length - 1], integer: true }, gain: { range: [0, 3] } } }
+    bands: { list: { band: { range: [0, EQ_BANDS.length - 1], integer: true }, gain: { range: [-1, 1] } } }
   }
 
   /** A single band, for automation and for a console's fader strip. */
   static standaloneSchema = {
     band: { range: [0, EQ_BANDS.length - 1], integer: true },
-    gain: { range: [0, 3], default: 1 }
+    gain: { range: [-1, 1], default: 0 }
   }
 
   name = 'equalizer'
@@ -61,20 +65,23 @@ export class EqualizerFilter extends AnimatableFilter {
     this.update(config)
   }
 
-  /** The current band gains, 1 = flat. */
+  /** The current band multipliers, 1 = flat. */
   get gains() {
     return [...this.#gains]
   }
 
   update(settings = {}) {
     const config = this.#single
-      ? { bands: [{ band: settings.band ?? settings[this.#key]?.band ?? 0, gain: settings.gain ?? settings[this.#key]?.gain ?? 1 }] }
+      ? { bands: [{ band: settings.band ?? settings[this.#key]?.band ?? 0, gain: settings.gain ?? settings[this.#key]?.gain ?? 0 }] }
       : (settings[this.#key] ?? settings)
 
     const requested = new Float32Array(EQ_BANDS.length).fill(EQ_GAIN.neutral)
     for (const band of config?.bands ?? []) {
       const index = clamp(Math.round(Number(band.band) || 0), 0, EQ_BANDS.length - 1)
-      requested[index] = clamp(Number(band.gain ?? EQ_GAIN.neutral) || 0, EQ_GAIN.min, EQ_GAIN.max)
+      // NodeLink: multiplier = 1 + gain, clamped to [0, 2]. A band at -1 is a
+      // kill rather than a phase inversion, which is why the floor is zero.
+      const offset = Number(band.gain ?? 0)
+      requested[index] = clamp(1 + (Number.isFinite(offset) ? offset : 0), EQ_GAIN.min, EQ_GAIN.max)
     }
 
     // Retune only the bands that moved: a biquad recompute is a handful of
@@ -130,9 +137,9 @@ export class EqualizerFilter extends AnimatableFilter {
 /**
  * Multiplier to decibels.
  *
- * The schema's 0…3 gain range means 0 (−∞ dB) is a kill, 1 is unity and 3 is
- * +9.54 dB — a gain of 10^(db/20) inverted, with the floor at −40 dB rather
- * than −∞ so a "killed" band does not produce `-Infinity` coefficients.
+ * The multiplier spans 0…2 — offset −1 is a kill, 1 is unity and 2 is
+ * +6 dB — a gain of 10^(db/20) inverted, with the floor at −40 dB rather than
+ * −∞ so a "killed" band does not produce `-Infinity` coefficients.
  */
 export function gainToDb(gain) {
   if (gain <= 0) return -40

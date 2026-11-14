@@ -26,19 +26,24 @@ import { owner } from '../../lib/api.js'
 const ENGAGE = {
   timescale: { speed: 1, pitch: 1, rate: 1 },
   karaoke: { level: 1, monoLevel: 0.4, filterBand: 220, filterWidth: 100 },
-  channelMix: { leftToLeft: 1, leftToRight: 0, rightToLeft: 0, rightToRight: 1 },
-  compressor: { threshold: 0.5, ratio: 4, attack: 0.01, release: 0.25, gain: 1, makeupGain: 1.2 },
+  // Narrowing the image, so the switch does something audible: neutral
+  // channel mix is the identity matrix, which is the same as off.
+  channelMix: { leftToLeft: 0.8, leftToRight: 0.2, rightToLeft: 0.2, rightToRight: 0.8 },
+  compressor: { threshold: -18, ratio: 4, attack: 0.01, release: 0.25, gain: 1, makeupGain: 1.2 },
   lowpass: { cutoff: 6000, smoothing: 1, resonance: 0 },
-  highpass: { cutoff: 80, smoothing: 0, resonance: 0 },
+  highpass: { cutoff: 80, smoothing: 1, resonance: 0 },
   rotation: { rotationHz: 0.2 },
   tesseract: { rotationHz: 0.15 },
   spatial: { x: 1, y: 0, z: 0, depth: 0.5 },
   tremolo: { frequency: 5, depth: 0.5 },
   vibrato: { frequency: 5, depth: 0.3 },
-  chorus: { mix: 0.4 },
-  phaser: { mix: 0.4 },
-  flanger: { mix: 0.4 },
-  echo: { delay: 0.35, feedback: 0.35, mix: 0.25 },
+  // A modulation unit needs a rate and a depth before it does anything, which
+  // is NodeLink's `active()` gate, so a bare `{ mix: 0.4 }` would sit there
+  // switched on and silent.
+  chorus: { delay: 25, rate: 1.5, depth: 0.3, feedback: 0.15, mix: 0.4 },
+  phaser: { rate: 0.6, depth: 0.7, feedback: 0.3, mix: 0.5 },
+  flanger: { rate: 0.4, depth: 0.5, feedback: 0.2, mix: 0.4 },
+  echo: { delay: 350, feedback: 0.35, mix: 0.25 },
   reverb: { roomSize: 0.6, damping: 0.4, wetLevel: 0.35, dryLevel: 0.9, width: 0.6, mix: 0.35 },
   distortion: { scale: 1.5, offset: 0.1 },
   phonograph: { frequency: 1, depth: 0.5, crackle: 0.2, flutter: 0.1, room: 0.2, micAgc: 0, drive: 0.2 }
@@ -70,13 +75,19 @@ const LABELS = {
 
 const HIDDEN = new Set(['equalizerStandalone'])
 
-/** dB from the NodeLink gain multiplier: 1 is flat, 0 is silence. */
-const gainDb = (gain) => (gain <= 0.0001 ? -60 : 20 * Math.log10(gain))
+/**
+ * dB from a NodeLink gain offset: the offset is added to a unity multiplier
+ * and clamped to [0, 2], so -1 is silence, 0 is flat and +1 is +6 dB.
+ */
+const gainDb = (gain) => (gain <= -0.9999 ? -60 : 20 * Math.log10(1 + gain))
+
+/** The inverse, for presets that are written in dB because people think in dB. */
+const dbToOffset = (db) => Math.max(-1, Math.min(1, 10 ** (db / 20) - 1))
 
 function buildPreset(id) {
   const eq = (map) => {
     const bands = []
-    for (const [band, db] of Object.entries(map)) bands.push({ band: Number(band), gain: Math.pow(10, db / 20) })
+    for (const [band, db] of Object.entries(map)) bands.push({ band: Number(band), gain: dbToOffset(db) })
     return { bands }
   }
   switch (id) {
@@ -85,17 +96,17 @@ function buildPreset(id) {
     case 'bright':
       return { equalizer: eq({ 8: 1, 10: 2, 12: 2.5, 13: 2 }) }
     case 'club':
-      return { equalizer: eq({ 0: 3, 1: 3, 2: 2, 11: 1, 13: 1.5 }), compressor: { threshold: 0.6, ratio: 3, attack: 0.02, release: 0.2, gain: 1, makeupGain: 1.15 } }
+      return { equalizer: eq({ 0: 3, 1: 3, 2: 2, 11: 1, 13: 1.5 }), compressor: { threshold: -12, ratio: 3, attack: 0.02, release: 0.2, gain: 1, makeupGain: 1.2 } }
     case 'lofi':
-      return { lowpass: { cutoff: 4200, smoothing: 1 }, highpass: { cutoff: 120 }, phonograph: { crackle: 0.18, flutter: 0.08, room: 0.2, drive: 0.25, depth: 0.4 } }
+      return { lowpass: { cutoff: 4200, smoothing: 1 }, highpass: { cutoff: 120, smoothing: 1 }, phonograph: { crackle: 0.18, flutter: 0.08, room: 0.2, drive: 0.25, depth: 0.4 } }
     case 'night':
-      return { lowpass: { cutoff: 9000 }, compressor: { threshold: 0.45, ratio: 5, attack: 0.01, release: 0.3, gain: 1, makeupGain: 1.2 }, equalizer: eq({ 13: -1.5, 14: -2 }) }
+      return { lowpass: { cutoff: 9000 }, compressor: { threshold: -20, ratio: 5, attack: 0.01, release: 0.3, gain: 1, makeupGain: 1.5 }, equalizer: eq({ 13: -1.5, 14: -2 }) }
     case 'karaoke':
       return { karaoke: { level: 1, monoLevel: 0.6, filterBand: 220, filterWidth: 120 } }
     case 'space':
-      return { reverb: { mix: 0.45, roomSize: 0.7, damping: 0.35, wetLevel: 0.4, dryLevel: 0.9, width: 0.7 }, echo: { mix: 0.2, delay: 0.42, feedback: 0.3 } }
+      return { reverb: { mix: 0.45, roomSize: 0.7, damping: 0.35, wetLevel: 0.4, dryLevel: 0.9, width: 0.7 }, echo: { mix: 0.2, delay: 420, feedback: 0.3 } }
     case 'phone':
-      return { highpass: { cutoff: 380 }, lowpass: { cutoff: 3400 }, distortion: { scale: 1.3 } }
+      return { highpass: { cutoff: 380, smoothing: 1 }, lowpass: { cutoff: 3400 }, distortion: { scale: 1.3 } }
     default:
       return {}
   }
@@ -121,8 +132,8 @@ function Fader({ frequency, gain, onChange }) {
       <input
         type="range"
         className="fader accent-amber"
-        min={0}
-        max={3}
+        min={-1}
+        max={1}
         step={0.01}
         value={gain}
         onChange={(event) => onChange(Number(event.target.value))}
@@ -253,9 +264,9 @@ function RackPage() {
   const frequencies = setup?.filters?.bands ?? []
   const gains = useMemo(() => {
     const map = new Map((settings.equalizer?.bands ?? []).map((entry) => [entry.band, entry.gain]))
-    return frequencies.map((_, band) => map.get(band) ?? 1)
+    return frequencies.map((_, band) => map.get(band) ?? 0)
   }, [settings, frequencies])
-  const flat = gains.every((gain) => Math.abs(gain - 1) < 0.005)
+  const flat = gains.every((gain) => Math.abs(gain) < 0.005)
 
   if (!stations.length) {
     return (

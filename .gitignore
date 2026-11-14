@@ -26,6 +26,12 @@ __pycache__/
 coverage/
 .tmp/
 
+# Playwright writes traces and screenshots into the project by default; they are
+# artefacts of a run, not source.
+web/e2e/test-results/
+web/playwright-report/
+web/test-results/
+
 # Editors and OS noise
 .DS_Store
 .idea/

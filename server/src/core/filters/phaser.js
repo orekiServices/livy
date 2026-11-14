@@ -21,12 +21,13 @@ export class PhaserFilter extends AnimatableFilter {
   static schema = {
     delay: { range: [0, 1], default: 0 },
     rate: { range: [0, 10], default: 0 },
-    depth: { range: [0, 1], default: 0 },
-    feedback: { range: [0, 1], default: 0 },
-    mix: { range: [0, 1], default: 0 },
-    stages: { range: [1, 8], default: 4, integer: true },
-    minFrequency: { range: [20, 20_000], default: 200 },
-    maxFrequency: { range: [20, 20_000], default: 2000 }
+    depth: { range: [0, 1], default: 1, neutral: 0 },
+    feedback: { range: [0, 0.9], default: 0 },
+    mix: { range: [0, 1], default: 0.5, neutral: 0 },
+    // NodeLink's floor of two stages and its 100 Hz → 2.5 kHz sweep window.
+    stages: { range: [2, 8], default: 4, integer: true },
+    minFrequency: { range: [20, 20_000], default: 100 },
+    maxFrequency: { range: [20, 20_000], default: 2500 }
   }
 
   name = 'phaser'
@@ -50,7 +51,8 @@ export class PhaserFilter extends AnimatableFilter {
   update(settings = {}) {
     this.applyAnimatedUpdate(settings, PhaserFilter.schema, {
       coerce: (key, value) => {
-        if (key === 'stages') return clamp(Math.round(value), 1, 8)
+        if (key === 'stages') return clamp(Math.round(value), 2, 8)
+        if (key === 'feedback') return clamp(value, 0, 0.9)
         if (key === 'minFrequency' || key === 'maxFrequency') return clamp(value, 20, 20_000)
         return clamp(value, 0, key === 'rate' ? 10 : 1)
       }
@@ -68,7 +70,8 @@ export class PhaserFilter extends AnimatableFilter {
   }
 
   active() {
-    return (this.config.mix ?? 0) > 0.001
+    const { mix, depth, rate } = this.config
+    return (mix ?? 0) > 0.001 && (depth ?? 0) > 0.001 && (rate ?? 0) > 0.001
   }
 
   process(left, right, length) {

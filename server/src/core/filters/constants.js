@@ -14,7 +14,12 @@ export const SAMPLE_RATE = 44_100
  */
 export const EQ_BANDS = [25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10_000, 16_000]
 
-/** Equaliser gain range: 0 is a cut to silence, 1 is flat, 3 is +9.5 dB. */
+/**
+ * Equaliser gain range, in multipliers: 0 is a cut to silence, 1 is flat,
+ * 2 is +6 dB. NodeLink's request gain is an offset from flat clamped to
+ * [0, 2] after adding the unity multiplier, so the payload's own range is
+ * [-1, 1]; the equaliser converts at the edge.
+ */
 export const EQ_GAIN = { min: 0, max: 3, neutral: 1 }
 
 /** Clamp a number, the one helper every filter needs. */
@@ -31,6 +36,10 @@ export const num = (value, fallback) => (Number.isFinite(Number(value)) ? Number
  * that ESM resolves by handing one side an uninitialised binding.
  */
 export function neutralValue(spec) {
+  // `neutral` is the "never configured" value, `default` is "on with no
+  // parameters". They differ: NodeLink's karaoke defaults to level 1, which is
+  // right for `{karaoke: true}` and wrong for a station that never asked.
+  if (spec?.neutral !== undefined) return spec.neutral
   if (spec?.default !== undefined) return spec.default
   if (spec?.range) return spec.range[0] === 1 ? 1 : 0
   if (spec?.list) return []
