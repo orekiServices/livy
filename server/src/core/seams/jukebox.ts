@@ -315,10 +315,13 @@ export class JukeboxWalker {
   branches = 0
   steps = 0
 
+  readonly graph: JukeboxGraph
+
   constructor(
-    readonly graph: JukeboxGraph,
+    graph: JukeboxGraph,
     { random = Math.random, minChance = 0.18, maxChance = 0.5, chanceDelta = 0.02, minGap = 8 }: { random?: () => number; minChance?: number; maxChance?: number; chanceDelta?: number; minGap?: number } = {}
   ) {
+    this.graph = graph
     this.minGap = minGap
     this.#random = random
     this.minChance = minChance

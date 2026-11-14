@@ -28,9 +28,11 @@ export const CHROMA = 12
 
 /** Growable Float32 storage, `width` values per row. */
 export class Rows {
+  width: number
   data: Float32Array
   length = 0
-  constructor(public width = 1, capacity = 4096) {
+  constructor(width = 1, capacity = 4096) {
+    this.width = width
     this.data = new Float32Array(capacity * width)
   }
   push(row: ArrayLike<number> | number) {
@@ -125,7 +127,9 @@ export class FeatureStream {
   #timbreRow = new Float32Array(TIMBRE)
   #chromaRow = new Float32Array(CHROMA)
 
-  constructor(readonly sampleRate: number) {
+  readonly sampleRate: number
+  constructor(sampleRate: number) {
+    this.sampleRate = sampleRate
     this.#decimate = sampleRate >= 32_000 ? 2 : 1
     this.rate = sampleRate / this.#decimate
     this.fps = this.rate / HOP

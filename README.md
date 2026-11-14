@@ -4,20 +4,17 @@
 
 Livy pulls music from seventeen sources, mixes the seams like a DJ — real
 beatmatching, not a fade — and streams each station as one continuous MP3 with
-ICY metadata. Two web front ends ship in the same process: **`/listen`**, a minimalist
-player that shows what is on air and lets anyone play a song, and **`/owner`**,
-the control room. Both are *plugins of the node, not a second service*, served
-from the same port. Switch the plugin off and you have a headless broadcast
-API.
+ICY metadata. Its Next.js TypeScript web console ships as a *plugin of the node,
+not a second service*, served from the same port. Switch the plugin off and you
+have a headless broadcast API.
 
-Bun + Rust. No ffmpeg, no database server, no external mixer.
+Bun + TypeScript + Rust. No ffmpeg, no database server, no external mixer.
 
 ```
-server/   the node — sources, automix, filters, REST + ICY
-web/      the owner console — Next.js, exported to static files or served
-client/   the listener player — created with create-next-app, exported to /listen
+server/   the node — TypeScript sources, automix, filters, REST + ICY
+web/      the web console — Next.js 16 (TypeScript, create-next-app@latest), exported to static files or served
 native/   MetroS (reframing/transcoding), MetroDB (SQLite), MetroFX (DSP), in Rust
-api/      the Vercel function entry point
+api/      the Vercel function entry point (TypeScript)
 docs/     research notes, including Apple Music AutoMix
 ```
 
@@ -29,9 +26,9 @@ One command, from a fresh clone:
 ./livy
 ```
 
-It installs dependencies, builds **both** web apps into
-`server/plugins/console/public` (console at `/`, listener at `/listen/`), and
-starts the node on <http://localhost:2333>. Equivalent one-liner:
+It installs dependencies, builds the web console into
+`server/plugins/console/public` (mounted at `/`), and starts the node on
+<http://localhost:2333>. Equivalent one-liner:
 
 ```bash
 cd server && bun install && bun run build:web && bun start
@@ -70,8 +67,8 @@ Then point anything at the stream, using the id your station got:
 mpv http://localhost:2333/stream/night-drive-fm.mp3
 ```
 
-Listen at <http://localhost:2333/listen/>, manage at
-<http://localhost:2333/owner/>, and point any player at
+Open the console at <http://localhost:2333/> (owner settings at
+<http://localhost:2333/owner/>), and point any player at
 `/stream/<id>.mp3` — the only stream address. Asked for anything else, the node
 answers with a spoken 404 rather than silence.
 
@@ -91,7 +88,7 @@ bash livy-termux        # one command: installs JS deps, starts on :2333
 ```
 
 `./livy` detects Termux and runs the same path. No compiler, no Python, no
-root: dependencies are pure JavaScript and the console/listener are already
+root: dependencies are pure TypeScript/JS and the console is already
 built into the repo. Data lives in `~/.livy` (override with `LIVY_DATA_DIR`).
 Livy runs on **Bun** everywhere; Android's libc is not one Bun is built for,
 so on Termux it runs under glibc-runner (`pkg install glibc-repo && pkg
@@ -121,36 +118,12 @@ changing the UI:
 bun run build:web
 ```
 
-## Listening — `/listen`
-
-The listener app is one screen: the record that is playing, a station switcher,
-and a search field. It is built like a YouTube Music client rather than a radio
-directory.
-
-- **Now playing only.** Artwork drives the whole palette; title, artist, a live
-  progress line, and the two things you can do: play/pause, or pick a song.
-- **Search → play.** Type anything; results come from all 17 sources in
-  parallel. Tapping one asks the node for a direct file (`/api/v1/track-url`)
-  and plays it in the browser — scrubbable, no station interruption.
-- **Fallback to the station.** If a provider has no direct file (metadata-only
-  services, DRM, a live relay), the client asks the station to put the song on
-  air next (`POST /api/v1/stations/:id/play`) and plays the live stream.
-- **Per station.** The chosen station is remembered, each station has its own
-  listener count and on-air state, and “Manage stations” goes to `/owner/`.
-- **Mobile first.** The bottom player bar, safe-area padding and a single
-  column on a phone are the primary layout, not an afterthought.
-
-The app lives in `client/`, scaffolded with
-`bunx create-next-app@latest client --js --app` and exported with
-`basePath: '/listen'`. The owner console remains the place to create and
-programme stations.
-
 ## The console
 
-The console is a static Next.js export (`web/`) built with `create-next-app`
-and served by the node itself, so there is one process, one origin and no
-server-side environment to leak. It is organised around what a radio actually
-does:
+The console is a static Next.js TypeScript export (`web/`) scaffolded with
+`bunx create-next-app@latest` and served by the node itself, so there is one
+process, one origin and no server-side environment to leak. It is organised
+around what a radio actually does:
 
 | View | What it is for |
 |---|---|
@@ -233,7 +206,7 @@ LIVY_NODE=https://radio.example bun run start
 
 `LIVY_CONSOLE_SERVER=1` switches the config: no `output: 'export'`, a separate
 `web/.next-server` build directory so the two shapes do not overwrite each
-other, and rewrites that carry `/api`, `/stream` and `/listen` to the node in
+other, and rewrites that carry `/api` and `/stream` to the node in
 `LIVY_NODE`. That last one matters for audio: the browser talks to the console
 origin, the console asks the node, and the player in `RadioProvider` is
 same-origin either way — no CORS, no mixed content, no second URL to
@@ -791,7 +764,7 @@ forces the reference path; the test suite passes both ways.
 `POST /api/v1/setup/password` (first-run claim) ·
 `POST /api/v1/owner/password` (change, owner-gated) ·
 `GET /api/v1/events` (WebSocket) · `GET /stream/<id>.mp3` (ICY) ·
-`GET /health` · `/listen/` · `/owner/`
+`GET /health` · `/owner/`
 
 `/api/v1/info` is worth reading first: it reports version, sources, models,
 auto-train state, and what this particular deployment can actually do —

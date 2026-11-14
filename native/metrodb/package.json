@@ -3,6 +3,7 @@
   "version": "0.3.0",
   "description": "MetroDB — embedded SQLite for Livy, in Rust, with a better-sqlite3-shaped JavaScript face.",
   "main": "index.js",
+  "types": "index.d.ts",
   "type": "commonjs",
   "license": "MIT",
   "engines": {

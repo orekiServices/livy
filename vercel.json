@@ -6,13 +6,13 @@
   "buildCommand": "",
   "outputDirectory": null,
   "functions": {
-    "api/index.js": {
+    "api/index.ts": {
       "maxDuration": 300,
       "memory": 2048,
       "includeFiles": "{server/src/**,server/plugins/**,native/**}"
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }],
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.ts" }],
   "headers": [
     {
       "source": "/api/(.*)",

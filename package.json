@@ -5,15 +5,15 @@
   "type": "module",
   "packageManager": "bun@1.4.4",
   "scripts": {
-    "livy": "cd server && bun install && bun run build:web && bun src/index.js",
+    "livy": "cd server && bun install && bun run build:web && bun src/index.ts",
     "setup": "cd server && bun install && bun run build:web",
-    "start": "cd server && bun src/index.js",
+    "start": "cd server && bun src/index.ts",
     "livy:termux": "bash livy-termux",
-    "dev": "cd server && bun --watch src/index.js",
+    "dev": "cd server && bun --watch src/index.ts",
     "build:web": "cd server && bun run build:web",
     "build": "cd web && bun run build",
+    "typecheck": "cd server && bun run typecheck && cd ../web && bun run typecheck",
     "test": "cd server && bun test",
-    "build:listen": "cd client && bun run build",
     "build:fx": "cd native/metrofx && bun install && bun run build"
   },
   "engines": {

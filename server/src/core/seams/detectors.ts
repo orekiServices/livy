@@ -114,7 +114,7 @@ export function detectEnergy({ track }: DetectorContext): Opinion[] {
 }
 
 /** Foote novelty on the beat-synchronous self-similarity matrix. */
-export function detectNovelty({ track }: DetectorContext, { kernel = 8 } = {}): Opinion[] {
+export function detectNovelty({ track }: DetectorContext, { kernel = 8 }: any = {}): Opinion[] {
   const { beats, vectors } = track
   const n = beats.length
   const out: Opinion[] = []

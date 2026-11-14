@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Speaks the time and the station name on the hour. Ships disabled because it talks on air.",
   "author": "livy",
-  "main": "index.js",
+  "main": "index.ts",
   "enabled": false,
   "settings": {
     "onlyWhenPlaying": true,
