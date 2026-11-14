@@ -35,10 +35,10 @@ const RETRY_MS = [800, 1500, 3000, 6000, 10_000]
 /**
  * How long a stream may go without progress before it is treated as dead.
  *
- * `stalled` and `waiting` fire for perfectly healthy streams too — a slow
- * network, a browser that paused the decoder — so acting on the event itself
- * would reconnect in a loop. Silence is the signal: no `timeupdate`, no
- * `playing`, no `canplay` for this long.
+ * `stalled` and `waiting` fire for perfectly healthy streams too, on a slow
+ * network or with a browser that paused the decoder, so acting on the event
+ * itself would reconnect in a loop. Silence is the signal: no `timeupdate`,
+ * no `playing`, no `canplay` for this long.
  */
 const STALL_MS = 8000
 
@@ -193,7 +193,7 @@ export default function RadioProvider({ children }) {
     if (retryTimer.current) return
     if (retries.current >= MAX_RETRIES) {
       setBuffering(false)
-      setPlayerError('the stream stopped and would not come back — press play to retry')
+      setPlayerError('the stream stopped and would not come back. Press play to retry.')
       return
     }
     const wait = RETRY_MS[Math.min(retries.current, RETRY_MS.length - 1)]

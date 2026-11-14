@@ -27,6 +27,46 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+@layer base {
+  /*
+   * Every control says it can be used: a pointer cursor on anything enabled,
+   * a bar on anything disabled, and a focus ring warm enough to see on
+   * charcoal. Set once here so no component has to remember.
+   */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='tab'],
+  [role='switch'],
+  summary,
+  select,
+  label[for] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 2px;
+  }
+}
+
+/*
+ * The motion is atmosphere, not information. Anyone who asked their system
+ * for less of it gets a still console: the on-air bars hold their shape and
+ * the pulse dot becomes a plain dot.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .live-bars i,
+  .pulse-dot {
+    animation: none;
+  }
+  .live-bars i {
+    transform: scaleY(0.7);
+  }
+}
+
 html,
 body {
   height: 100%;

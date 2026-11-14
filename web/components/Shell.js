@@ -3,7 +3,7 @@
 /**
  * The frame: a rail of destinations, the page, and the player that follows you
  * around. The <audio> element lives here so a page change never interrupts the
- * stream — the same reason a radio has a knob and not a page.
+ * stream, the same reason a radio has a knob and not a page.
  */
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -69,7 +69,7 @@ function PlayerBar() {
           className={cx(
             'grid h-9 w-9 place-items-center rounded-full transition hover:brightness-110',
             playerError ? 'bg-rose text-ink-950' : 'bg-amber text-ink-950',
-            buffering && playing ? 'animate-pulse' : ''
+            buffering && playing ? 'animate-pulse motion-reduce:animate-none' : ''
           )}
           aria-label={playerError ? 'Retry' : playing ? 'Pause' : 'Play'}
           title={playerError ?? undefined}
@@ -87,7 +87,7 @@ function PlayerBar() {
             <span>{station.listeners ?? 0} listening</span>
             {playerError ? (
               <button type="button" onClick={reconnect} className="truncate text-rose underline" title={playerError}>
-                stream lost — retry
+                stream lost, retry
               </button>
             ) : buffering && playing ? (
               <span className="text-cyan">connecting…</span>
@@ -164,7 +164,11 @@ export default function Shell({ children }) {
           {children}
         </main>
       </div>
-      <PlayerBar />
+      {/* The player is the bottom bar of the whole console: a landmark, so a
+          screen reader can jump to it from anywhere. */}
+      <footer>
+        <PlayerBar />
+      </footer>
     </div>
   )
 }

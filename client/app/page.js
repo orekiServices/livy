@@ -201,7 +201,7 @@ export default function ListenPage() {
     if (!streamUrl || mode !== 'radio') return
     if (retry.current.timer) return
     if (retry.current.count >= 5) {
-      toast('The stream stopped and would not come back — press play to retry')
+      toast('The stream stopped and would not come back. Press play to retry.')
       return
     }
     const wait = [800, 1500, 3000, 6000, 10_000][Math.min(retry.current.count, 4)]
