@@ -11,7 +11,7 @@
  *
  * The backend is not a preference hidden in an env var. PyTorch is faster when
  * there is a GPU or a big log to batch, and slower than the JS loop on a small
- * CPU — so the page says which one ran, why, and how long it took.
+ * CPU, so the page says which one ran, why, and how long it took.
  */
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
@@ -20,7 +20,7 @@ import { useRadio } from '../../components/RadioProvider.js'
 import { Badge, Button, Empty, Field, KeyGate, Panel, Slider, Stat, Switch, ago, cx, inputClass } from '../../components/ui.js'
 import { owner } from '../../lib/api.js'
 
-const percent = (value) => (value == null ? '—' : `${Math.round(value * 100)}%`)
+const percent = (value) => (value == null ? '–' : `${Math.round(value * 100)}%`)
 
 function TorchCard({ torch, backend }) {
   const ready = torch?.available
@@ -36,9 +36,9 @@ function TorchCard({ torch, backend }) {
     >
       {ready ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label="Torch" value={torch.torch?.split('+')[0] ?? '—'} hint={torch.cuda ? 'CUDA wheel' : 'CPU'} accent="lime" />
-          <Stat label="Device" value={torch.device ?? 'cpu'} hint={`${torch.threads ?? '—'} threads`} />
-          <Stat label="Python" value={torch.python ?? '—'} />
+          <Stat label="Torch" value={torch.torch?.split('+')[0] ?? '–'} hint={torch.cuda ? 'CUDA wheel' : 'CPU'} accent="lime" />
+          <Stat label="Device" value={torch.device ?? 'cpu'} hint={`${torch.threads ?? '–'} threads`} />
+          <Stat label="Python" value={torch.python ?? '–'} />
           <Stat label="Default" value={backend ?? 'auto'} hint="per run below" />
         </div>
       ) : probing ? (
@@ -49,7 +49,7 @@ function TorchCard({ torch, backend }) {
       ) : (
         <div className="space-y-2 text-sm text-ink-300">
           <p>
-            This node trains in JavaScript. PyTorch is optional and is used only where it is faster — a GPU, a wide
+            This node trains in JavaScript. PyTorch is optional and is used only where it is faster, a GPU, a wide
             model, or a log big enough to batch.
           </p>
           <p className="text-xs text-ink-300">
@@ -60,7 +60,7 @@ function TorchCard({ torch, backend }) {
 python3 -m venv .venv
 .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu`}
           </pre>
-          <p className="text-xs text-ink-300">Then reload this page — the probe runs once per node, and the directory is watched for changes on the next training run.</p>
+          <p className="text-xs text-ink-300">Then reload this page. The probe runs once per node, and the directory is watched for changes on the next training run.</p>
         </div>
       )}
     </Panel>
@@ -139,7 +139,7 @@ function TrainForm({ stations, presets, torch, defaultStation, onTrained }) {
         </Field>
       </div>
       <div className="mt-1 divide-y divide-ink-700/60">
-        <Switch label="Fast" hint="smaller candidates, fewer epochs — the everyday choice" checked={form.fast} onChange={(value) => setForm({ ...form, fast: value })} />
+        <Switch label="Fast" hint="smaller candidates, fewer epochs: the everyday choice" checked={form.fast} onChange={(value) => setForm({ ...form, fast: value })} />
         <Switch label="Activate" hint="replace the model on air only if it actually scores better" checked={form.activate} onChange={(value) => setForm({ ...form, activate: value })} />
       </div>
       <div className="mt-3 flex items-center gap-2">
@@ -179,14 +179,14 @@ function Report({ report }) {
       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat
           label="Skill"
-          value={report.eval?.skill == null ? '—' : `${Math.round(report.eval.skill * 100)}%`}
+          value={report.eval?.skill == null ? '–' : `${Math.round(report.eval.skill * 100)}%`}
           hint={report.eval ? `vs a uniform guess · Brier ${report.eval.brier}` : 'not scored'}
           accent={report.eval?.skill > 0.2 ? 'lime' : 'ink'}
         />
-        <Stat label="Confidence" value={report.eval?.confidence == null ? '—' : `${Math.round(report.eval.confidence * 100)}%`} hint="on its own first choice" />
+        <Stat label="Confidence" value={report.eval?.confidence == null ? '–' : `${Math.round(report.eval.confidence * 100)}%`} hint="on its own first choice" />
         <Stat
           label="Recency"
-          value={`${report.recency?.halfLifeDays ?? '—'} d`}
+          value={`${report.recency?.halfLifeDays ?? '–'} d`}
           hint={report.recency ? `mean weight ${Math.round((report.recency.mean ?? 0) * 100)}% · ${report.recency.faded} faded` : 'unweighted'}
         />
         <Stat
@@ -221,7 +221,7 @@ function Report({ report }) {
       {report.rl && (
         <p className="mt-1 text-xs text-ink-300">
           RL refitted from {report.rl.seams ?? report.seams} seams
-          {report.rl.trained === false ? ` (${report.rl.reason})` : ' — it learns from far less data than the network'}.
+          {report.rl.trained === false ? ` (${report.rl.reason})` : ', it learns from far less data than the network'}.
         </p>
       )}
     </Panel>
@@ -252,9 +252,9 @@ function Registry({ models, onActivate, onForget }) {
                   {model.name} {model.active && <Badge tone="amber">on air</Badge>}
                 </td>
                 <td className="py-1.5 font-mono text-ink-300">{(model.shape ?? []).join('·')}</td>
-                <td className="py-1.5 font-mono text-ink-300">{model.backend ?? '—'}</td>
+                <td className="py-1.5 font-mono text-ink-300">{model.backend ?? '–'}</td>
                 <td className="py-1.5 text-right font-mono text-ink-200">{percent(model.accuracy)}</td>
-                <td className="py-1.5 text-right text-ink-300">{model.createdAt ? ago(model.createdAt) : '—'}</td>
+                <td className="py-1.5 text-right text-ink-300">{model.createdAt ? ago(model.createdAt) : '–'}</td>
                 <td className="py-1.5 text-right">
                   {!model.active && (
                     <button type="button" onClick={() => onActivate(model.name)} className="text-[11px] text-ink-300 hover:text-amber">

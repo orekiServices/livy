@@ -40,7 +40,7 @@ function Timeline({ analysis }) {
           </div>
         ))}
         {analysis.seams.length === 0 && (
-          <div className="grid h-full place-items-center text-xs text-ink-500">no candidates yet — the scout is still listening</div>
+          <div className="grid h-full place-items-center text-xs text-ink-500">no candidates yet: the scout is still listening</div>
         )}
       </div>
       <div className="mt-1 flex justify-between font-mono text-[10px] text-ink-500">
@@ -94,9 +94,9 @@ function Jukebox({ graph, forever, stationId, onRefreshed }) {
     <Panel title="Forever" subtitle="The song does not end: the graph decides what plays next, through real seams.">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Armed" value={forever?.enabled ? 'yes' : 'no'} accent={forever?.enabled ? 'amber' : 'ink'} />
-        <Stat label="Looping" value={forever?.active ? 'now' : '—'} hint={forever?.track ? String(forever.track).slice(0, 8) : 'nothing read yet'} />
+        <Stat label="Looping" value={forever?.active ? 'now' : '–'} hint={forever?.track ? String(forever.track).slice(0, 8) : 'nothing read yet'} />
         <Stat label="Jumps" value={forever?.jumps ?? 0} />
-        <Stat label="Position" value={forever?.positionMs != null ? clock(forever.positionMs) : '—'} hint={forever?.lastJump ? `last ${clock(forever.lastJump.atMs ?? 0)}` : ''} />
+        <Stat label="Position" value={forever?.positionMs != null ? clock(forever.positionMs) : '–'} hint={forever?.lastJump ? `last ${clock(forever.lastJump.atMs ?? 0)}` : ''} />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button variant={forever?.enabled ? 'default' : 'primary'} size="sm" onClick={toggle} disabled={busy}>
@@ -171,7 +171,7 @@ function RLPanel({ rl }) {
 /**
  * The scoreboard: what each transition has actually done on this station.
  *
- * It is the automix's memory, and it is deliberately a small panel — the
+ * It is the automix's memory, and it is deliberately a small panel, the
  * numbers that matter are the rate (did listeners stay?) and whether the
  * effect has enough plays to be trusted at all.
  */
@@ -215,7 +215,7 @@ function Scoreboard({ outcomes }) {
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-ink-300">
-        These numbers nudge the choice — at most ±6 % of a score — and are smoothed, so one bad night does not retire a transition.
+        These numbers nudge the choice, at most ±6 % of a score, and are smoothed, so one bad night does not retire a transition.
       </p>
     </Panel>
   )

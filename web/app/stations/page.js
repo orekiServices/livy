@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Stations — the wall, and the form that makes another one.
+ * Stations, the wall, and the form that makes another one.
  *
  * A station in Livy is a queue, a filter chain and a policy, so the card shows
  * exactly those three things plus who is listening.
@@ -40,7 +40,7 @@ function StationCard({ station }) {
           </div>
           <div className="mt-0.5 truncate text-xs text-ink-300">{station.genre ?? 'no genre'} · {station.listeners ?? 0} listening · {station.queueLength ?? 0} queued</div>
           <div className="mt-1 truncate text-xs text-ink-200">
-            {track ? `${track.artist ? `${track.artist} — ` : ''}${track.title}` : 'nothing playing'}
+            {track ? `${track.artist ? `${track.artist}, ` : ''}${track.title}` : 'nothing playing'}
           </div>
         </div>
       </div>
@@ -98,7 +98,7 @@ function CreateStation({ onCreated }) {
 
   return (
     <KeyGate>
-      <Panel title="New station" subtitle="The source is a provider prefix — local:/path, scsearch:, audius:… — or another station's mount.">
+      <Panel title="New station" subtitle="The source is a provider prefix: local:/path, scsearch:, audius:…, or another station's mount.">
         <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
           <Field label="Name">
             <input className={inputClass} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Night Shift" required />
@@ -109,7 +109,7 @@ function CreateStation({ onCreated }) {
           <Field label="Genre">
             <input className={inputClass} value={form.genre} onChange={(event) => setForm({ ...form, genre: event.target.value })} placeholder="ambient" />
           </Field>
-          <Field label="Sources" hint="optional, comma separated — a station can also start empty and be filled from the queue">
+          <Field label="Sources" hint="optional, comma separated. A station can also start empty and be filled from the queue">
             <input className={inputClass} value={form.source} onChange={(event) => setForm({ ...form, source: event.target.value })} placeholder="local:/music" />
           </Field>
           <div className="sm:col-span-2 flex items-center gap-2">
@@ -119,7 +119,7 @@ function CreateStation({ onCreated }) {
             {error && <span className="text-xs text-rose">{error}</span>}
             {result && (
               <span className="text-xs text-lime">
-                “{result.name}” is up —{' '}
+                “{result.name}” is up , {' '}
                 <Link href={`/station/?id=${encodeURIComponent(result.id)}`} className="underline">
                   open it
                 </Link>
@@ -156,7 +156,7 @@ export default function StationsPage() {
           ))}
         </div>
       ) : stations.length === 0 ? (
-        <Panel title="Nothing on air yet" subtitle="Create a station below — it starts playing as soon as it has a queue.">
+        <Panel title="Nothing on air yet" subtitle="Create a station below. It starts playing as soon as it has a queue.">
           <p className="text-sm text-ink-300">
             A fresh node is in {info?.setup?.protected ? 'protected' : 'open'} mode. The owner key from the boot log unlocks creation; the
             new console stores it in this tab only.

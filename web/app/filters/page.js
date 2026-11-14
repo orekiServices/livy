@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Radio filters — the DSP rack, live.
+ * Radio filters, the DSP rack, live.
  *
  * Two halves. The equaliser is a fader strip, because that is the shape of an
  * equaliser. Everything else is the station's filter *chain*: eighteen units
@@ -260,7 +260,7 @@ function RackPage() {
   if (!stations.length) {
     return (
       <Panel title="Radio filters">
-        <Empty>No stations yet — a filter chain belongs to a station. <Link href="/stations/" className="underline">Create one</Link>.</Empty>
+        <Empty>No stations yet: a filter chain belongs to a station. <Link href="/stations/" className="underline">Create one</Link>.</Empty>
       </Panel>
     )
   }
@@ -270,7 +270,7 @@ function RackPage() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Radio filters</h1>
-          <p className="mt-1 text-sm text-ink-300">Live DSP chain for one station — before the stream, and before the automix.</p>
+          <p className="mt-1 text-sm text-ink-300">Live DSP chain for one station: before the stream, and before the automix.</p>
         </div>
         <div className="flex items-center gap-2">
           <select className={cx(inputClass, 'w-44')} value={stationId} onChange={(event) => setStationId(event.target.value)}>
@@ -288,7 +288,7 @@ function RackPage() {
 
       <KeyGate>
         <div className="space-y-4">
-          <Panel title="Presets" subtitle="A preset replaces the whole chain — nothing from the last one lingers.">
+          <Panel title="Presets" subtitle="A preset replaces the whole chain. Nothing from the last one lingers.">
             <div className="flex flex-wrap gap-1.5">
               {PRESET_LIST.map((entry) => (
                 <Button key={entry.id} size="sm" variant={entry.id === 'off' ? 'ghost' : 'default'} onClick={() => preset(entry.id)}>
@@ -309,7 +309,7 @@ function RackPage() {
 
           <Panel
             title="Equaliser"
-            subtitle={flat ? 'Flat — every band at unity.' : 'Fifteen bands, an octave wide, aligned with the NodeLink centres.'}
+            subtitle={flat ? 'Flat, every band at unity.' : 'Fifteen bands, an octave wide, aligned with the NodeLink centres.'}
             actions={<Button size="sm" variant="ghost" onClick={() => setFilter('equalizer', null)}>Flat</Button>}
           >
             <div className="flex items-end justify-between gap-1 overflow-x-auto pb-1">

@@ -5,7 +5,7 @@
  * at the next seam, and the switches that change any of that.
  *
  * The id comes from `?id=` rather than a path segment because the console is a
- * static export — there is no server to render `/station/night-shift` at
+ * static export, there is no server to render `/station/night-shift` at
  * request time, and a query string keeps every station one file.
  */
 import Link from 'next/link'
@@ -130,13 +130,13 @@ function NowPlaying({ station }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm text-ink-100">{track ? track.title : 'Nothing playing'}</div>
-          <div className="truncate text-xs text-ink-300">{track?.artist ?? '—'}</div>
+          <div className="truncate text-xs text-ink-300">{track?.artist ?? '–'}</div>
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-ink-700">
             <div className="h-full rounded-full bg-amber transition-all" style={{ width: `${progress * 100}%` }} />
           </div>
           <div className="mt-1 flex justify-between font-mono text-[11px] text-ink-300">
             <span>{clock(station.nowPlaying?.positionMs ?? 0)}</span>
-            <span>{track?.duration ? clock(track.duration * 1000) : '—'}</span>
+            <span>{track?.duration ? clock(track.duration * 1000) : '–'}</span>
           </div>
         </div>
       </div>
@@ -201,7 +201,7 @@ function Queue({ station, queue, refresh }) {
             <span className="w-5 shrink-0 text-right font-mono text-[11px] text-ink-500">{index + 1}</span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-ink-100">{track.title}</span>
-              <span className="block truncate text-[11px] text-ink-300">{track.artist ?? '—'} {track.duration ? `· ${clock(track.duration * 1000)}` : ''}</span>
+              <span className="block truncate text-[11px] text-ink-300">{track.artist ?? '–'} {track.duration ? `· ${clock(track.duration * 1000)}` : ''}</span>
             </span>
             <button type="button" onClick={() => remove(index)} className="text-[11px] text-ink-500 hover:text-rose">
               remove
@@ -310,9 +310,9 @@ function SeamPanel({ station, seam, refresh }) {
       actions={<Link href={`/seams/?id=${encodeURIComponent(station.id)}`}><Button size="sm" variant="ghost">Open →</Button></Link>}
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="Beats" value={seam?.beats ?? '—'} />
-        <Stat label="Candidates" value={seam?.candidates ?? '—'} accent="cyan" />
-        <Stat label="Branches" value={seam?.jukebox?.branching ?? '—'} hint={seam?.jukebox ? `threshold ${seam.jukebox.threshold}` : 'no graph yet'} />
+        <Stat label="Beats" value={seam?.beats ?? '–'} />
+        <Stat label="Candidates" value={seam?.candidates ?? '–'} accent="cyan" />
+        <Stat label="Branches" value={seam?.jukebox?.branching ?? '–'} hint={seam?.jukebox ? `threshold ${seam.jukebox.threshold}` : 'no graph yet'} />
         <Stat label="Jumps" value={forever.jumps ?? 0} hint={forever.active ? 'looping' : forever.enabled ? 'armed' : 'off'} accent={forever.active ? 'amber' : 'ink'} />
       </div>
       <div className="flex flex-wrap items-center gap-2 pt-3">

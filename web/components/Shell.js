@@ -78,7 +78,7 @@ function PlayerBar() {
         </button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm text-ink-100">
-            {track ? `${track.artist ?? ''}${track.artist ? ' — ' : ''}${track.title ?? ''}` : station.name}
+            {track ? `${track.artist ?? ''}${track.artist ? ', ' : ''}${track.title ?? ''}` : station.name}
           </div>
           <div className="flex items-center gap-2 text-[11px] text-ink-300">
             <span className={cx('h-1.5 w-1.5 rounded-full', station.state === 'playing' ? 'bg-amber pulse-dot' : 'bg-ink-500')} />
@@ -146,7 +146,7 @@ export default function Shell({ children }) {
               <span className="uppercase tracking-wider">Node</span>
               <Badge tone={info?.deployment?.serverless ? 'rose' : 'lime'}>{info?.deployment?.serverless ? 'serverless' : 'live'}</Badge>
             </div>
-            <div className="mt-2 font-mono text-ink-200">v{info?.version ?? '—'}</div>
+            <div className="mt-2 font-mono text-ink-200">v{info?.version ?? '–'}</div>
             <div className="mt-1 truncate">{info?.sources?.length ?? 0} sources · {info?.stations ?? 0} stations</div>
             <div className="mt-2 flex items-center gap-1.5">
               <IconKey size={12} className={key && ownerName ? 'text-lime' : 'text-ink-500'} />

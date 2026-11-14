@@ -1,8 +1,8 @@
 /**
  * The only file in the console that knows the node exists.
  *
- * Everything is same-origin in production — the console is served by the
- * radio node itself — so there is no base URL to configure, nothing to leak
+ * Everything is same-origin in production, the console is served by the
+ * radio node itself, so there is no base URL to configure, nothing to leak
  * and no CORS. In development (`bun run dev` on :3000) it probes the usual
  * ports once, or takes `?node=http://host:2333`.
  */
@@ -105,7 +105,7 @@ export async function socketUrl() {
   return `${origin.replace(/^http/, 'ws')}/ws`
 }
 
-/** Owner credential helpers — the secret lives in this tab only, never in a URL. */
+/** Owner credential helpers, the secret lives in this tab only, never in a URL. */
 const KEY_STORE = 'livy-owner-key'
 const KEY_STORE_LEGACY = 'nodecast-owner-key'
 // A key (or password) entered before the rename is still the right secret, so

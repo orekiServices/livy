@@ -54,7 +54,7 @@ export default function OwnerPage() {
         <KeyGate title="Unlock the node" />
       ) : (
         <KeyGate title="Unlock the node">
-          <Panel title="Credential" subtitle="The key is stored in this tab only — never in a URL, never in the build.">
+          <Panel title="Credential" subtitle="The key is stored in this tab only, never in a URL, never in the build.">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="lime">{ownerName ?? 'owner'}</Badge>
               <span className="text-xs text-ink-300">

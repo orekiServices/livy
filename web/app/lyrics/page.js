@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Words — the lyrics for whatever the station is playing, in time.
+ * Words, the lyrics for whatever the station is playing, in time.
  *
  * The node does the fetching (see `core/lyrics.js`): this page asks
  * `/api/v1/lyrics?station=…` and gets lines, a sync anchor and the provider's
@@ -10,7 +10,7 @@
  *
  * The clock is the interesting part. The server says "line 14 was at 1:32.400,
  * and it is now 12:04:01.220"; the page keeps its own position from that
- * anchor, ticks it locally, and re-anchors on every poll — so the highlight
+ * anchor, ticks it locally, and re-anchors on every poll, so the highlight
  * moves smoothly instead of jumping once every four seconds, and it never
  * drifts more than one poll away from the station.
  */
@@ -142,7 +142,7 @@ export default function LyricsPage() {
             </>
           }
         >
-          {data.found === false && <Empty>{data.track?.title ? 'No words for this one — not every song has lyrics.' : 'Nothing is playing.'}</Empty>}
+          {data.found === false && <Empty>{data.track?.title ? 'No words for this one, not every song has lyrics.' : 'Nothing is playing.'}</Empty>}
 
           {data.instrumental && <Empty>Marked as an instrumental. There is nothing to sing, which is the point.</Empty>}
 
@@ -167,7 +167,7 @@ export default function LyricsPage() {
                   </p>
                 ))}
                 <p className="mt-6 text-center text-[11px] text-ink-500">
-                  {index >= 0 ? clock(lines[index].at) : '—'} / {clock(data.durationMs ?? 0)}
+                  {index >= 0 ? clock(lines[index].at) : '–'} / {clock(data.durationMs ?? 0)}
                   {data.offsetMs ? ` · file offset ${data.offsetMs} ms` : ''}
                 </p>
               </div>
@@ -191,7 +191,7 @@ export default function LyricsPage() {
                   {line || '♪'}
                 </p>
               ))}
-              <p className="mt-4 text-center text-[11px] text-ink-500">No timings in this file, so there is nothing to follow — the words are just here.</p>
+              <p className="mt-4 text-center text-[11px] text-ink-500">No timings in this file, so there is nothing to follow. The words are just here.</p>
             </div>
           )}
         </Panel>

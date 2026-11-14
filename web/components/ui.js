@@ -2,7 +2,7 @@
 
 /**
  * The console's small kit: panels, labels, buttons, switches, sliders and the
- * key gate. Nothing here knows what a radio is — pages compose these.
+ * key gate. Nothing here knows what a radio is, pages compose these.
  */
 import { useEffect, useState } from 'react'
 
@@ -160,7 +160,7 @@ export function Empty({ children, icon = '○' }) {
 
 /** Formatting that every page needs and none should re-implement. */
 export const clock = (ms) => {
-  if (!Number.isFinite(ms) || ms < 0) return '—'
+  if (!Number.isFinite(ms) || ms < 0) return '–'
   const total = Math.floor(ms / 1000)
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
@@ -216,7 +216,7 @@ export function KeyGate({ children, title = 'Owner key required' }) {
           <Button type="submit" variant="primary" disabled={busy || value.trim().length < 4}>
             {busy ? 'Checking…' : 'Unlock'}
           </Button>
-          {open && <span className="text-xs text-ink-300">This node is in open mode — press Enter with any key.</span>}
+          {open && <span className="text-xs text-ink-300">This node is in open mode, so press Enter with any key.</span>}
         </div>
         {error && <p className="text-sm text-rose">{error}</p>}
       </form>

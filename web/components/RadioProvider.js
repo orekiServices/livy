@@ -140,8 +140,8 @@ export default function RadioProvider({ children }) {
    * A heartbeat from the element: audio moved, so the stream is alive.
    *
    * The watchdog is a *clock*, not a timer on an event. A stream can die
-   * without firing anything — a wifi network that goes away, a proxy that
-   * stops writing — and a player waiting for `error` waits forever. Watching
+   * without firing anything, a wifi network that goes away, a proxy that
+   * stops writing, and a player waiting for `error` waits forever. Watching
    * the heartbeat catches both the loud failure and the silent one.
    */
   const beat = useCallback(() => {

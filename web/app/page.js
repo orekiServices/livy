@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Overview — the node at a glance.
+ * Overview, the node at a glance.
  *
  * What is on air, what the node is doing with it, and the three things that
  * are new enough to be worth surfacing: the scout hearing seams, the learned
@@ -51,12 +51,12 @@ function OnAir({ station }) {
             <Badge tone={live ? 'amber' : 'ink'}>{live ? 'on air' : station.state}</Badge>
           </div>
           <div className="mt-0.5 truncate text-xs text-ink-200">
-            {track ? `${track.artist ? `${track.artist} — ` : ''}${track.title}` : station.genre ?? 'nothing playing'}
+            {track ? `${track.artist ? `${track.artist}, ` : ''}${track.title}` : station.genre ?? 'nothing playing'}
           </div>
           <div className="mt-1 flex items-center gap-3 text-[11px] text-ink-300">
             <span>{station.listeners ?? 0} listening</span>
             <span>{station.queueLength ?? 0} queued</span>
-            <span className="truncate">{station.automix?.effect ?? '—'} · {Math.round((station.automix?.crossfadeMs ?? 0) / 100) / 10}s</span>
+            <span className="truncate">{station.automix?.effect ?? '–'} · {Math.round((station.automix?.crossfadeMs ?? 0) / 100) / 10}s</span>
           </div>
         </div>
         <div className="flex flex-col items-end gap-1.5">
@@ -113,7 +113,7 @@ export default function Overview() {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Stations" value={stations.length} hint={`${playing} on air`} accent="amber" />
         <Stat label="Listeners" value={listeners} hint="across the node" />
-        <Stat label="Seams logged" value={seams || '—'} hint={auto?.enabled ? `auto-train every ${auto.everySeams}` : 'training off'} accent="cyan" />
+        <Stat label="Seams logged" value={seams || '–'} hint={auto?.enabled ? `auto-train every ${auto.everySeams}` : 'training off'} accent="cyan" />
         <Stat label="Trainer" value={torch?.available ? 'PyTorch' : 'JS'} hint={torch?.available ? `${torch.torch} · ${torch.device}` : torch ? 'torch not installed' : 'no key'} accent={torch?.available ? 'lime' : 'ink'} />
       </div>
 
@@ -134,7 +134,7 @@ export default function Overview() {
         ) : stations.length === 0 ? (
           <Empty icon={<IconRadio size={22} />}>
             <p className="text-ink-200">This node has no stations yet.</p>
-            <p className="mt-1 text-xs">A station is a queue, a filter chain and a learned policy — create one and it starts playing.</p>
+            <p className="mt-1 text-xs">A station is a queue, a filter chain and a learned policy. Create one and it starts playing.</p>
             <Link href="/stations/" className="mt-3 inline-block">
               <Button variant="primary" size="sm">Create the first station</Button>
             </Link>
@@ -156,9 +156,9 @@ export default function Overview() {
         >
           <div className="grid grid-cols-2 gap-2">
             <Stat label="Policy" value={model ? model.name?.slice(0, 14) ?? 'active' : 'heuristic'} hint={model ? `${Math.round((model.parameters ?? 0) / 1) } params` : 'no model trained yet'} />
-            <Stat label="Candidates" value={registry.length || '—'} hint="in the registry" />
+            <Stat label="Candidates" value={registry.length || '–'} hint="in the registry" />
             <Stat label="Auto-train" value={auto?.enabled ? 'on' : 'off'} hint={auto?.running ? 'running now' : `${auto?.seams ?? 0} seams`} accent={auto?.enabled ? 'lime' : 'ink'} />
-            <Stat label="Last run" value={auto?.lastRunAt ? ago(auto.lastRunAt) : 'never'} hint={auto?.last?.accuracy ? `${Math.round(auto.last.accuracy * 100)}% held-out` : '—'} />
+            <Stat label="Last run" value={auto?.lastRunAt ? ago(auto.lastRunAt) : 'never'} hint={auto?.last?.accuracy ? `${Math.round(auto.last.accuracy * 100)}% held-out` : '–'} />
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link href="/seams/"><Button size="sm"><IconSeams size={13} /> Scout & Forever</Button></Link>
@@ -170,15 +170,15 @@ export default function Overview() {
         <Panel title="This node" subtitle="Engine, sources and where it keeps its state.">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <dt className="text-ink-300">DSP</dt>
-            <dd className="truncate text-ink-100">{info?.fx?.engine ?? '—'} {info?.fx?.version ? `v${info.fx.version}` : ''}</dd>
+            <dd className="truncate text-ink-100">{info?.fx?.engine ?? '–'} {info?.fx?.version ? `v${info.fx.version}` : ''}</dd>
             <dt className="text-ink-300">Storage</dt>
-            <dd className="truncate text-ink-100">{info?.deployment?.storage ?? '—'}</dd>
+            <dd className="truncate text-ink-100">{info?.deployment?.storage ?? '–'}</dd>
             <dt className="text-ink-300">Device</dt>
-            <dd className="truncate text-ink-100">{info?.device?.profile ?? '—'} · {info?.device?.cpus ?? '—'} cpus</dd>
+            <dd className="truncate text-ink-100">{info?.device?.profile ?? '–'} · {info?.device?.cpus ?? '–'} cpus</dd>
             <dt className="text-ink-300">Sources</dt>
-            <dd className="truncate text-ink-100">{info?.sources?.join(', ') ?? '—'}</dd>
+            <dd className="truncate text-ink-100">{info?.sources?.join(', ') ?? '–'}</dd>
             <dt className="text-ink-300">Lang</dt>
-            <dd className="truncate text-ink-100">{info?.language ?? '—'}</dd>
+            <dd className="truncate text-ink-100">{info?.language ?? '–'}</dd>
             <dt className="text-ink-300">Transitions</dt>
             <dd className="truncate text-ink-100">{info?.transitions?.length ?? 0} built in</dd>
           </dl>

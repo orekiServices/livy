@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Node — the operator's page: the key, the password, the plugins, the log.
+ * Node, the operator's page: the key, the password, the plugins, the log.
  *
  * Not a settings screen for the music. Everything here is about the process:
  * who may change it, what is loaded into it, and what it has been saying.
@@ -45,7 +45,7 @@ function KeyPanel() {
   }
 
   return (
-    <Panel title="Owner" subtitle={info?.setup?.open ? 'This node is in open mode — anyone who can reach it can change it.' : 'One credential guards every write.'}>
+    <Panel title="Owner" subtitle={info?.setup?.open ? 'This node is in open mode, anyone who can reach it can change it.' : 'One credential guards every write.'}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge tone="lime">key accepted</Badge>
         <span className="text-ink-200">{ownerName ?? 'owner'}</span>
@@ -202,22 +202,22 @@ function NodeCard() {
   return (
     <Panel title="Process" subtitle="What this node is, and what it is costing.">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="Uptime" value={info?.uptime ? `${Math.round(info.uptime / 3_600_000)}h` : '—'} />
-        <Stat label="RSS" value={stats?.rssMb ? `${stats.rssMb} MB` : '—'} hint={stats?.heapMb ? `heap ${stats.heapMb} MB` : ''} />
+        <Stat label="Uptime" value={info?.uptime ? `${Math.round(info.uptime / 3_600_000)}h` : '–'} />
+        <Stat label="RSS" value={stats?.rssMb ? `${stats.rssMb} MB` : '–'} hint={stats?.heapMb ? `heap ${stats.heapMb} MB` : ''} />
         <Stat label="Stations" value={info?.stations ?? 0} hint={`${info?.sources?.length ?? 0} sources`} />
-        <Stat label="DSP" value={info?.fx?.engine ?? '—'} hint={info?.fx?.version ? `v${info.fx.version}` : ''} accent="cyan" />
+        <Stat label="DSP" value={info?.fx?.engine ?? '–'} hint={info?.fx?.version ? `v${info.fx.version}` : ''} accent="cyan" />
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <dt className="text-ink-300">Version</dt>
-        <dd className="font-mono text-ink-100">{info?.version ?? '—'}</dd>
+        <dd className="font-mono text-ink-100">{info?.version ?? '–'}</dd>
         <dt className="text-ink-300">Deployment</dt>
         <dd className="font-mono text-ink-100">{info?.deployment?.serverless ? 'serverless' : 'server'}</dd>
         <dt className="text-ink-300">Storage</dt>
-        <dd className="font-mono text-ink-100">{info?.deployment?.storage ?? '—'}</dd>
+        <dd className="font-mono text-ink-100">{info?.deployment?.storage ?? '–'}</dd>
         <dt className="text-ink-300">Device</dt>
-        <dd className="font-mono text-ink-100">{info?.device?.profile ?? '—'} · {info?.device?.cpus ?? '—'} cpus</dd>
+        <dd className="font-mono text-ink-100">{info?.device?.profile ?? '–'} · {info?.device?.cpus ?? '–'} cpus</dd>
         <dt className="text-ink-300">Language</dt>
-        <dd className="font-mono text-ink-100">{info?.language ?? '—'}</dd>
+        <dd className="font-mono text-ink-100">{info?.language ?? '–'}</dd>
       </dl>
     </Panel>
   )

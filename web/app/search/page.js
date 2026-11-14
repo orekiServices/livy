@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Search — find a song, then put it somewhere.
+ * Search, find a song, then put it somewhere.
  *
  * Results come from the node's own sources, so a local folder, SoundCloud,
  * Audius and the rest are one list. "Play now" goes through the listener route
@@ -13,7 +13,7 @@ import { useRadio } from '../../components/RadioProvider.js'
 import { Badge, Button, Empty, Field, Panel, clock, cx, inputClass } from '../../components/ui.js'
 import { api, owner } from '../../lib/api.js'
 
-/** What each provider has done lately — the registry keeps the numbers. */
+/** What each provider has done lately, the registry keeps the numbers. */
 function Sources() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -73,11 +73,11 @@ function Sources() {
                     {row.metadataOnly && <span className="ml-1 text-[10px] text-ink-500">metadata</span>}
                   </td>
                   <td className="px-2 py-1.5 text-[11px] text-ink-400">
-                    {[row.canSearch ? 'search' : null, row.metadataOnly ? '' : 'play', row.live ? 'live' : null].filter(Boolean).join(' · ') || '—'}
+                    {[row.canSearch ? 'search' : null, row.metadataOnly ? '' : 'play', row.live ? 'live' : null].filter(Boolean).join(' · ') || '–'}
                   </td>
                   <td className="px-2 py-1.5 text-right">{health.calls ?? 0}</td>
                   <td className={cx('px-2 py-1.5 text-right', health.failed ? 'text-rose' : 'text-ink-500')}>{health.failed ?? 0}</td>
-                  <td className="px-2 py-1.5 text-right text-ink-300">{health.avgMs == null ? '—' : `${health.avgMs} ms`}</td>
+                  <td className="px-2 py-1.5 text-right text-ink-300">{health.avgMs == null ? '–' : `${health.avgMs} ms`}</td>
                   <td className="max-w-[220px] truncate px-4 py-1.5 text-[11px] text-ink-500" title={health.lastError ?? ''}>
                     {health.lastError ?? (health.lastAt ? 'ok' : 'not tried yet')}
                   </td>
@@ -195,7 +195,7 @@ export default function SearchPage() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm text-ink-100">{track.title}</span>
                     <span className="block truncate text-[11px] text-ink-300">
-                      {track.artist ?? '—'} {track.duration ? `· ${clock(track.duration * 1000)}` : ''}
+                      {track.artist ?? '–'} {track.duration ? `· ${clock(track.duration * 1000)}` : ''}
                     </span>
                   </span>
                   <Badge tone="ink">{track.source ?? '?'}</Badge>

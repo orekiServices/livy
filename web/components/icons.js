@@ -1,4 +1,4 @@
-/** Small, plain line icons — one path each, no icon font, no dependency. */
+/** Small, plain line icons, one path each, no icon font, no dependency. */
 const base = (props) => ({
   width: props.size ?? 18,
   height: props.size ?? 18,
