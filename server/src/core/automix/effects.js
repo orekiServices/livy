@@ -4,6 +4,7 @@
  */
 import { clamp } from '../dsp.js'
 import { DEFAULT_AUTOMIX, EFFECTS } from './defaults.js'
+import { effectNudge } from './outcomes.js'
 
 /**
  * How long should *this* blend be?
@@ -146,6 +147,7 @@ export const EFFECT_TRAITS = {
  * @param {number}  seam.energy      0…1 loudness of the incoming song's entry
  * @param {boolean} seam.talkover    the DJ is speaking over this seam
  * @param {string}  [seam.previous]  what the last seam used
+ * @param {object}  [seam.outcomes]  the station's scoreboard (see ./outcomes.js)
  * @param {string[]} [pool]          allowed effects (empty = all)
  */
 /**
@@ -178,25 +180,64 @@ export function chooseEffectWithModel(seam = {}, pool = [], model = null) {
   const ranked = model.order.filter((name) => allowed.has(name))
   if (ranked.length === 0) return { effect: baseline, source: 'heuristic', margin: 0, baseline }
 
-  // A transition the heuristic would refuse on this seam (no beat to roll on,
-  // a fade too short for a spindown) is not a candidate, however much the
-  // model likes it: the renderers assume those preconditions.
-  const traits = EFFECT_TRAITS[ranked[0]]
-  const usable = !traits?.needsBeat || seam.beat
-  const matched = !traits?.needsMatch || Boolean(seam.matched)
-  const long = !traits || (seam.fadeMs ?? 6000) >= traits.length
-  const drift = seam.matched ? 0 : (seam.tempoDelta ?? 99)
-  const tempoOk = traits?.maxTempoDelta == null || drift <= traits.maxTempoDelta
-  if (!usable || !matched || !long || !tempoOk) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
-
   // `margin` is the model's own separation between first and second choice.
   // Below it, the model has no opinion worth acting on.
   if (model.margin < 0.05) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
-  if (ranked[0] === baseline) return { effect: baseline, source: 'model', margin: model.margin, baseline, agreed: true }
-  return { effect: ranked[0], source: 'model', margin: model.margin, baseline, model: model.model }
+
+  // A transition the heuristic would refuse on this seam (no beat to roll on,
+  // a fade too short for a spindown) is not a candidate, however much the
+  // model likes it: the renderers assume those preconditions. The model's
+  // *next* choice still is — a ranking with its first entry struck out is a
+  // ranking, and throwing the rest away made the model mute on exactly the
+  // seams (no beat, short fade) where the rules have least to go on.
+  const top = ranked.find((name) => effectUsable(name, seam))
+  if (!top) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+  if (top === baseline) return { effect: baseline, source: 'model', margin: model.margin, baseline, agreed: true }
+  // The margin was measured between the model's first and second choices. A
+  // fallback further down the list has not earned it.
+  if (top !== ranked[0]) {
+    const scores = model.scores ?? null
+    const own = scores && typeof scores[top] === 'number' && typeof scores[baseline] === 'number' ? scores[top] - scores[baseline] : 0
+    if (!(own >= 0.05)) return { effect: baseline, source: 'heuristic', margin: model.margin, baseline }
+  }
+  return { effect: top, source: 'model', margin: model.margin, baseline, model: model.model }
+}
+
+/** Can `name` be rendered on this seam? (The renderers' preconditions.) */
+export function effectUsable(name, seam = {}) {
+  const traits = EFFECT_TRAITS[name]
+  if (!traits) return true
+  if (traits.needsBeat && !seam.beat) return false
+  if (traits.needsMatch && !seam.matched) return false
+  if ((seam.fadeMs ?? 6000) < traits.length) return false
+  const drift = seam.matched ? 0 : (seam.tempoDelta ?? 99)
+  if (traits.maxTempoDelta != null && drift > traits.maxTempoDelta) return false
+  return true
 }
 
 export function chooseEffect(seam = {}, pool = []) {
+  const scored = rankEffects(seam, pool)
+  if (scored.length === 0) return 'crossfade'
+
+  // Among the near-best, choose at random so two identical-looking seams do
+  // not always resolve the same way.
+  const best = scored[0].score
+  const shortlist = scored.filter((entry) => entry.score >= best - 0.08)
+  return shortlist[Math.floor(Math.random() * shortlist.length)].name
+}
+
+/**
+ * Every transition the seam can carry, scored best first.
+ *
+ * Exported because the console and the tests want the ranking, not just the
+ * winner: a decision that cannot be explained is a decision an owner has to
+ * take on faith, and the seam report shows this list.
+ *
+ * @param {object} seam see `chooseEffect`
+ * @param {string[]} [pool]
+ * @returns {{name: string, score: number}[]}
+ */
+export function rankEffects(seam = {}, pool = []) {
   const {
     beat = false,
     matched = false,
@@ -211,7 +252,7 @@ export function chooseEffect(seam = {}, pool = []) {
   } = seam
 
   const allowed = (pool.length ? pool : EFFECTS).filter((name) => EFFECT_TRAITS[name])
-  if (allowed.length === 0) return 'crossfade'
+  if (allowed.length === 0) return []
 
   // How dramatic this seam wants to be: a tight tempo match and a hot entry
   // can carry a big move; a mismatched pair of ballads cannot.
@@ -230,48 +271,46 @@ export function chooseEffect(seam = {}, pool = []) {
   if (vocalClash) want -= 0.12
   want = clamp(want, 0, 1)
 
-  const scored = allowed
-    .filter((name) => {
-      const traits = EFFECT_TRAITS[name]
-      if (traits.needsBeat && !beat) return false
-      if (traits.needsMatch && !matched) return false
-      // Only an unmatched gap disqualifies: a folded match has already
-      // reconciled the two grids, whatever their raw BPM difference was.
-      if (!matched && traits.maxTempoDelta != null && tempoDelta > traits.maxTempoDelta) return false
-      return fadeMs >= traits.length
-    })
-    .map((name) => {
-      const traits = EFFECT_TRAITS[name]
-      // Closeness to what the seam is asking for, plus a nudge for the
-      // transitions that suit this particular pair.
-      let score = 1 - Math.abs(traits.energy - want)
-      if (matched && name === 'bass-swap') score += 0.15
-      if (!beat && (name === 'wash' || name === 'filter')) score += 0.08
-      if (correlation < -0.2 && name === 'crossfade') score -= 0.25 // phasey
-      // Under a voice link the music should get out of the way, so anything
-      // dramatic is actively penalised rather than merely unlikely.
-      if (talkover) score -= traits.energy * 0.35
-      if (talkover && (name === 'crossfade' || name === 'filter' || name === 'wash')) score += 0.15
-      // Two lyrics at once: prefer a transition that masks or filters one of
-      // them. A bass-swap keeps both vocals untouched and is the worst case.
-      if (vocalClash) {
-        if (name === 'bass-swap' || name === 'drop' || name === 'slam' || name === 'roll') score -= 0.22
-        if (name === 'filter' || name === 'echo') score += 0.12
-      } else if (vocalSolo && (name === 'drop' || name === 'slam')) {
-        score -= 0.1
-      }
-      if (name === previous) score -= 0.35 // vary, unless nothing else fits
-      return { name, score }
-    })
-    .sort((a, b) => b.score - a.score)
-
-  if (scored.length === 0) return 'crossfade'
-
-  // Among the near-best, choose at random so two identical-looking seams do
-  // not always resolve the same way.
-  const best = scored[0].score
-  const shortlist = scored.filter((entry) => entry.score >= best - 0.08)
-  return shortlist[Math.floor(Math.random() * shortlist.length)].name
+  return (
+    allowed
+      .filter((name) => {
+        const traits = EFFECT_TRAITS[name]
+        if (traits.needsBeat && !beat) return false
+        if (traits.needsMatch && !matched) return false
+        // Only an unmatched gap disqualifies: a folded match has already
+        // reconciled the two grids, whatever their raw BPM difference was.
+        if (!matched && traits.maxTempoDelta != null && tempoDelta > traits.maxTempoDelta) return false
+        return fadeMs >= traits.length
+      })
+      .map((name) => {
+        const traits = EFFECT_TRAITS[name]
+        // Closeness to what the seam is asking for, plus a nudge for the
+        // transitions that suit this particular pair.
+        let score = 1 - Math.abs(traits.energy - want)
+        if (matched && name === 'bass-swap') score += 0.15
+        if (!beat && (name === 'wash' || name === 'filter')) score += 0.08
+        if (correlation < -0.2 && name === 'crossfade') score -= 0.25 // phasey
+        // Under a voice link the music should get out of the way, so anything
+        // dramatic is actively penalised rather than merely unlikely.
+        if (talkover) score -= traits.energy * 0.35
+        if (talkover && (name === 'crossfade' || name === 'filter' || name === 'wash')) score += 0.15
+        // Two lyrics at once: prefer a transition that masks or filters one of
+        // them. A bass-swap keeps both vocals untouched and is the worst case.
+        if (vocalClash) {
+          if (name === 'bass-swap' || name === 'drop' || name === 'slam' || name === 'roll') score -= 0.22
+          if (name === 'filter' || name === 'echo') score += 0.12
+        } else if (vocalSolo && (name === 'drop' || name === 'slam')) {
+          score -= 0.1
+        }
+        if (name === previous) score -= 0.35 // vary, unless nothing else fits
+        // What this transition has actually done on this station recently. A
+        // nudge, not a verdict: ±0.06 against terms worth 0.15–0.35. See
+        // ./outcomes.js for why it is smoothed and why it is this small.
+        score += effectNudge(name, seam.outcomes)
+        return { name, score }
+      })
+      .sort((a, b) => b.score - a.score)
+  )
 }
 
 /**
@@ -304,6 +343,8 @@ export function smoothEdges(left, right, sampleRate, { fadeMs = 2, dcBlock = tru
     }
   }
 
+  // `fadeMs: 0` is the DC blocker alone — the engine joins the edges itself.
+  if (!(fadeMs > 0)) return
   const ramp = Math.max(1, Math.min(Math.round((fadeMs / 1000) * sampleRate), Math.floor(n / 2)))
   for (let i = 0; i < ramp; i += 1) {
     // Raised cosine, not linear: a linear ramp still steps in the derivative.

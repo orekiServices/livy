@@ -69,10 +69,30 @@ export function splitArtistTitle(track = {}) {
 }
 
 /**
+ * The tuning the file asks for: `[offset:+250]` means the words are a quarter
+ * of a second late in the timestamps and should be shown 250 ms earlier.
+ *
+ * Real LRC files carry it — hand-tuned lyric files almost always do — and
+ * ignoring it is the difference between lyrics that sit on the beat and lyrics
+ * that are visibly a line behind for the whole song.
+ */
+export function lrcOffset(lrc = '') {
+  const match = String(lrc).match(/\[offset:\s*([+-]?\d+)\]/i)
+  if (!match) return 0
+  const value = Number(match[1])
+  return Number.isFinite(value) ? value : 0
+}
+
+/**
  * Parse an LRC into lines the UI can scroll.
  * `[00:12.34] words` → `{ at: 12340, text: 'words' }`, in order.
+ *
+ * `[offset:…]` is applied (and clamped at zero, because a negative timestamp is
+ * not a time). `[ar:]`, `[ti:]` and the other ID tags are not times and are
+ * skipped by the timestamp match itself.
  */
 export function parseLrc(lrc = '') {
+  const offset = lrcOffset(lrc)
   const lines = []
   for (const raw of String(lrc).split(/\r?\n/)) {
     const stamps = [...raw.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)]
@@ -82,10 +102,25 @@ export function parseLrc(lrc = '') {
       const minutes = Number(stamp[1])
       const seconds = Number(stamp[2])
       const fraction = stamp[3] ? Number(stamp[3].padEnd(3, '0')) : 0
-      lines.push({ at: minutes * 60_000 + seconds * 1000 + fraction, text })
+      lines.push({ at: Math.max(0, minutes * 60_000 + seconds * 1000 + fraction - offset), text })
     }
   }
   return lines.sort((a, b) => a.at - b.at)
+}
+
+/**
+ * Do two titles name the same song?
+ *
+ * Used to refuse a search result: LRCLIB's search happily returns a different
+ * song by the same artist, and handing a listener the wrong words is worse
+ * than handing them none. Normalised equality on the *bare* title (both sides
+ * stripped of brackets and `feat.`), so "Song (Remastered)" still matches.
+ */
+export function titlesMatch(a = '', b = '') {
+  const left = bareTitle(a)
+  const right = bareTitle(b)
+  if (!left || !right) return false
+  return left === right
 }
 
 /**
@@ -170,9 +205,13 @@ const near = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= 4
 
 export class Lyrics {
   /** @param {{store?: object, ttlMs?: number, enabled?: boolean, timeoutMs?: number}} options */
-  constructor({ store = null, ttlMs = 7 * 24 * 3600_000, enabled = true, timeoutMs = 6000 } = {}) {
+  constructor({ store = null, ttlMs = 7 * 24 * 3600_000, missTtlMs = 6 * 3600_000, enabled = true, timeoutMs = 6000 } = {}) {
     this.store = store
     this.ttlMs = ttlMs
+    // A miss is a fact about *now*, not a fact about the song: lyrics get added
+    // to LRCLIB constantly, and a week-long negative cache means a song that
+    // appears on Tuesday still shows nothing on Sunday.
+    this.missTtlMs = missTtlMs
     this.enabled = enabled !== false
     this.timeoutMs = timeoutMs
     this.memory = new Map() // id → record
@@ -182,23 +221,33 @@ export class Lyrics {
   }
 
   #remember(id, record) {
-    this.memory.set(id, record)
+    // Both caches need the timestamp: it is what makes a miss expire sooner
+    // than a hit, and a record without one never goes stale.
+    const entry = { ...record, at: Date.now() }
+    this.memory.set(id, entry)
     // Keep the in-memory table small; SQLite is the real cache.
     if (this.memory.size > 256) this.memory.delete(this.memory.keys().next().value)
     try {
-      this.store?.set?.(`lyrics:${id}`, { ...record, at: Date.now() })
+      this.store?.set?.(`lyrics:${id}`, entry)
     } catch (error) {
       log.debug(`could not cache lyrics: ${error.message}`)
     }
-    return record
+    return entry
   }
 
   #cached(id) {
+    const fresh = (record) => {
+      if (!record?.at) return true
+      const ttl = record.found === false ? this.missTtlMs : this.ttlMs
+      // `<` and not `<=`: a TTL of zero means "do not cache this", which is how
+      // a node that wants to retry a miss on the very next play configures it.
+      return Date.now() - record.at < ttl
+    }
     const hot = this.memory.get(id)
-    if (hot) return hot
+    if (hot) return fresh(hot) ? hot : (this.memory.delete(id), null)
     const stored = this.store?.get?.(`lyrics:${id}`)
     if (!stored) return null
-    if (stored.at && Date.now() - stored.at > this.ttlMs) return null
+    if (!fresh(stored)) return null
     this.memory.set(id, stored)
     return stored
   }
@@ -239,6 +288,7 @@ export class Lyrics {
       plain: null,
       lines: [],
       provider: 'lrclib',
+      offsetMs: 0,
       instrumental: false,
       artist,
       title,
@@ -275,6 +325,17 @@ export class Lyrics {
           hit = await this.#get(`/get?${retry}`)
         }
 
+        // Third try without a duration: `/get` only answers within ±2 s of the
+        // number it was given, and the duration we have came from a provider's
+        // metadata, not from the recording. The commonest reason for "no
+        // lyrics for a song that obviously has them" was a duration that was
+        // three seconds out.
+        if (!hit && durationSec) {
+          const loose = new URLSearchParams({ artist_name: artist || title, track_name: title })
+          if (track.album) loose.set('album_name', track.album)
+          hit = await this.#get(`/get?${loose}`)
+        }
+
         // Still nothing: search, then take the closest duration that has
         // synced words. A remix of the right length beats an exact title.
         if (!hit) {
@@ -287,20 +348,31 @@ export class Lyrics {
               if (durationSec) return Math.abs(a.duration - durationSec) - Math.abs(b.duration - durationSec)
               return 0
             })
-          hit = scored.find((entry) => !durationSec || near(entry.duration, durationSec)) ?? scored[0] ?? null
+          // Right length, or — when the lengths disagree, which they often do —
+          // the exact same title. Never merely "the first result": a listener
+          // reading another song's words is worse than reading none.
+          // Right length when there is a length to compare, otherwise the exact
+          // same title. Never merely "the first result": a listener reading
+          // another song's words is worse than reading none.
+          const sameLength = durationSec ? scored.find((entry) => near(entry.duration, durationSec)) : null
+          hit = sameLength ?? scored.find((entry) => titlesMatch(entry.trackName, bare || title)) ?? null
         }
 
         if (!hit) return this.#remember(id, empty)
 
         const lrc = hit.syncedLyrics ?? null
+        // Parsed once: the lines, the offset and the TTML all come from the
+        // same reading of the file.
+        const lines = lrc ? parseLrc(lrc) : []
         const record = {
           ...empty,
           found: Boolean(lrc || hit.plainLyrics || hit.instrumental),
           synced: Boolean(lrc),
           lrc,
           plain: hit.plainLyrics ?? null,
-          lines: lrc ? parseLrc(lrc) : [],
-          ttml: lrc ? toTtml(parseLrc(lrc), { durationMs: hit.duration ? hit.duration * 1000 : null }) : null,
+          lines,
+          offsetMs: lrc ? lrcOffset(lrc) : 0,
+          ttml: lines.length ? toTtml(lines, { durationMs: hit.duration ? hit.duration * 1000 : null }) : null,
           instrumental: Boolean(hit.instrumental),
           artist: hit.artistName ?? artist,
           title: hit.trackName ?? title,

@@ -127,7 +127,7 @@ test('REST works on a serverless deployment; a socket-only route explains itself
   const events = await get('/api/v1/events')
   assert.equal(events.status, 501)
   assert.match(events.body, /long-lived connection/i)
-  assert.match(events.body, /npm start/)
+  assert.match(events.body, /bun start/)
 })
 
 test('a bare Vercel deployment writes to /tmp, and says so', async () => {

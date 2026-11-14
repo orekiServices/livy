@@ -28,6 +28,7 @@
 //!   • `sniff(buf)`                    — what is this? (mp3/aac/mpeg-ts/…)
 //!   • `analyseBeat(pcm)` / `Async`    — tempo, grid and confidence
 //!   • `timeStretch(pcm, ratio)` / `Async` — WSOLA, pitch untouched
+//!   • `jukeboxNeighbours(vectors, …)` — which beats sound like which
 
 #![deny(clippy::all)]
 
@@ -39,6 +40,7 @@ mod decode;
 mod dsp;
 mod encode;
 mod framer;
+mod jukebox;
 mod stream_source;
 mod transcode;
 mod ts;
@@ -872,5 +874,29 @@ impl Task for StretchTask {
       right: Float32Array::new(out.right),
       length: out.length as u32
     })
+  }
+}
+
+/// What `jukeboxNeighbours` hands back.
+#[napi(object)]
+pub struct JukeboxNeighbours {
+  /// `[from, to, distance]` triples, nearest first, `limit` per beat at most.
+  pub triples: Float32Array,
+  /// Median of a thinned sample of same-position distances (the scale).
+  pub median: f64,
+}
+
+/// The Infinite Jukebox kernel: every beat's nearest beats in the same bar
+/// position. `vectors` is row-major with `width` values per beat. An error
+/// (rather than a wrong answer) when the shapes disagree; the caller falls
+/// back to its own implementation.
+#[napi]
+pub fn jukebox_neighbours(vectors: Float32Array, width: u32, bars: Uint8Array, limit: u32) -> Result<JukeboxNeighbours> {
+  match jukebox::neighbours(&vectors, width as usize, &bars, limit as usize) {
+    Some(out) => Ok(JukeboxNeighbours { triples: Float32Array::new(out.triples), median: out.median }),
+    None => Err(Error::from_reason(format!(
+      "jukebox vectors must be {} wide and cover every beat",
+      jukebox::VECTOR
+    ))),
   }
 }

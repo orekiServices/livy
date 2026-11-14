@@ -3,9 +3,9 @@
  *
  * One engine, SQLite, opened through **MetroDB** — our Rust addon with SQLite
  * compiled in, so there is no node-gyp, no Python and no compiler at install
- * time. `bun:sqlite` and `better-sqlite3` remain last-resort bindings for a
- * platform with no MetroDB binary; they read the same file with the same SQL,
- * so nothing above this file knows which one answered.
+ * time. `bun:sqlite`, which Bun carries, is the binding for a platform with no
+ * MetroDB binary; it reads the same file with the same SQL, so nothing above
+ * this file knows which one answered.
  *
  * There is deliberately no Postgres driver. The node ships as one process with
  * one file to copy, back up and inspect; a second server to operate would buy
@@ -20,7 +20,7 @@ const log = createLogger('store')
 
 export const disabled = (...names) => names.some((name) => process.env[name] === '1')
 
-/** node:sqlite rejects `undefined`/booleans; every other binding normalises. */
+/** `undefined` binds as NULL and booleans as 0/1, whichever binding answers. */
 const bindParam = (value) => (value === undefined ? null : typeof value === 'boolean' ? (value ? 1 : 0) : value)
 const bindAll = (params) => params.map(bindParam)
 
@@ -65,89 +65,29 @@ export async function openDatabase(file) {
     }
   }
 
-  if (typeof globalThis.Bun !== 'undefined') {
-    const { Database } = await import('bun:sqlite')
-    const db = new Database(file, { create: true })
-    pragmas((sql) => db.exec(sql))
-    return {
-      driver: 'bun:sqlite',
-      raw: db,
-      exec: (sql) => db.exec(sql),
-      run: (sql, params = []) => db.prepare(sql).run(...params),
-      get: (sql, params = []) => db.prepare(sql).get(...params),
-      all: (sql, params = []) => db.prepare(sql).all(...params),
-      transaction: (fn) => db.transaction(fn)(),
-      close: () => db.close()
-    }
-  }
-
-  // Node's built-in SQLite. This is what makes Termux work: no node-gyp, no
-  // compiler, no native package — the Node binary already carries SQLite.
-  // It is experimental, so any failure falls through to better-sqlite3.
-  try {
-    return await openNodeSqlite(file)
-  } catch (error) {
-    log.debug(`node:sqlite unavailable (${error.message}); trying better-sqlite3`)
-  }
-
+  // Bun's built-in SQLite: no native package, nothing to compile.
   let Database
   try {
-    ;({ default: Database } = await import('better-sqlite3'))
+    ;({ Database } = await import('bun:sqlite'))
   } catch (error) {
     throw new Error(
       `SQLite is required but no binding is available (${error.message}). ` +
-        'Use Node 22.13+ (node:sqlite) or Bun, build MetroDB with ' +
-        '`cd native/metrodb && cargo build --release && node scripts/link-local.js`, ' +
+        'Livy runs on Bun (bun:sqlite is built in); build MetroDB with ' +
+        '`cd native/metrodb && cargo build --release && bun scripts/link-local.js`, ' +
         'or start with `store.enabled: false` to run without persistence.'
     )
   }
-
-  const db = new Database(file)
+  const db = new Database(file, { create: true })
   pragmas((sql) => db.exec(sql))
   return {
-    driver: 'better-sqlite3',
+    driver: 'bun:sqlite',
     raw: db,
     exec: (sql) => db.exec(sql),
-    run: (sql, params = []) => db.prepare(sql).run(...params),
-    get: (sql, params = []) => db.prepare(sql).get(...params),
-    all: (sql, params = []) => db.prepare(sql).all(...params),
+    run: (sql, params = []) => db.prepare(sql).run(...bindAll(params)),
+    get: (sql, params = []) => db.prepare(sql).get(...bindAll(params)),
+    all: (sql, params = []) => db.prepare(sql).all(...bindAll(params)),
     transaction: (fn) => db.transaction(fn)(),
     close: () => db.close()
-  }
-}
-
-/** `node:sqlite` behind the better-sqlite3-ish interface the store expects. */
-async function openNodeSqlite(file) {
-  const { DatabaseSync } = await import('node:sqlite')
-  const raw = new DatabaseSync(file)
-  pragmas((sql) => raw.exec(sql))
-  // node:sqlite is stricter than better-sqlite3 about types it cannot bind:
-  // `undefined` and booleans must become NULL and 0/1. Every other driver
-  // accepts them (MetroDB normalises too), so the conversion lives here.
-  const bind = bindAll
-  return {
-    driver: 'node:sqlite',
-    raw,
-    exec: (sql) => raw.exec(sql),
-    run: (sql, params = []) => raw.prepare(sql).run(...bind(params)),
-    get: (sql, params = []) => raw.prepare(sql).get(...bind(params)) ?? undefined,
-    all: (sql, params = []) => raw.prepare(sql).all(...bind(params)),
-    transaction: (fn) => {
-      raw.exec('BEGIN IMMEDIATE;')
-      try {
-        const result = fn()
-        raw.exec('COMMIT;')
-        return result
-      } catch (error) {
-        try {
-          raw.exec('ROLLBACK;')
-        } catch {
-          /* the transaction was already gone */
-        }
-        throw error
-      }
-    },
-    close: () => raw.close()
   }
 }
 
@@ -187,23 +127,9 @@ export async function openMemoryDatabase() {
     }
   }
 
-  if (typeof globalThis.Bun !== 'undefined') {
+  try {
     const { Database } = await import('bun:sqlite')
-    const raw = new Database(':memory:', { create: true })
-    const db = make(raw, 'memory (ephemeral, bun:sqlite)')
-    return db
-  }
-
-  try {
-    const { DatabaseSync } = await import('node:sqlite')
-    return make(new DatabaseSync(':memory:'), 'memory (ephemeral, node:sqlite)')
-  } catch {
-    // fall through to the binding
-  }
-
-  try {
-    const { default: Database } = await import('better-sqlite3')
-    return make(new Database(':memory:'), 'memory (ephemeral, better-sqlite3)')
+    return make(new Database(':memory:', { create: true }), 'memory (ephemeral, bun:sqlite)')
   } catch (error) {
     throw new Error(`an in-memory SQLite driver is required (${error.message})`)
   }

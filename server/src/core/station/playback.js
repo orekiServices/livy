@@ -20,10 +20,21 @@ import {
   decodeMp3,
   encodeMp3,
   FilterChain,
+  processWithMorph,
   DEFAULTS,
   clampBitrate,
   publicTrack
 } from './deps.js'
+
+/**
+ * How long a filter change takes to fade in, in milliseconds.
+ *
+ * Shorter than a block is a step; longer than a third of a second and moving
+ * a fader feels laggy on the console. A fifth of a second is under the
+ * threshold where a listener hears a "fade" and over the one where they hear a
+ * click.
+ */
+const FILTER_MORPH_MS = 220
 
 export const playbackMethods = {
   async _readLoop() {
@@ -94,6 +105,9 @@ export const playbackMethods = {
         }
 
         await this._readTrack(track)
+        // Forever mode: the song that was just read loops on itself until
+        // something else wants the air.
+        await this._playForever().catch((error) => this.log.warn(`forever: ${error.message}`))
         // The reader's last block left one encoded frame in hand. It belongs
         // on air before the next track's first frame, not spliced behind it.
         await this._flushFilterFrames()
@@ -121,7 +135,7 @@ export const playbackMethods = {
     // renderer produces already-encoded MP3 — filtering after it would mean
     // decoding audio that was just encoded. Unfiltered, this is one property
     // read per batch.
-    if (this.filters && !this.filters.empty) {
+    if (this.filters && (!this.filters.empty || this._filterMorph)) {
       try {
         ready = await this._filterThrough(ready)
       } catch (error) {
@@ -129,12 +143,20 @@ export const playbackMethods = {
       }
     }
 
+    // The scout hears what will air (so its frames are the station's frames)
+    // before the automix decides anything about them.
+    const filtered = ready
+    this._scoutPush(filtered)
+
     if (this.automix?.enabled) {
       try {
-        ready = await this.automix.push(batch)
+        // The *filtered* frames: handing the automix the reader's batch here
+        // threw the filters' output away, and a station with automix on (the
+        // default) aired none of its filters.
+        ready = await this.automix.push(filtered)
       } catch (error) {
         this.log.warn(`automix bypassed: ${error.message}`)
-        ready = batch
+        ready = filtered
       }
     }
     for (const frame of ready) {
@@ -189,6 +211,8 @@ export const playbackMethods = {
       this._filterCache.held = []
       this._filterCache.heldMs = 0
       this.filters.reset()
+      this._filterMorph?.outgoing?.destroy?.()
+      this._filterMorph = null
     }
 
     const held = this._filterCache.held
@@ -199,7 +223,17 @@ export const playbackMethods = {
     const pcm = await decodeMp3(Buffer.concat(frames))
     if (!pcm) return batch
 
-    const out = this.filters.process(pcm.left, pcm.right, Math.min(pcm.left.length, pcm.right.length))
+    // A chain that was just replaced is still running alongside this block, so
+    // the change is a fade rather than a step.
+    const morph = this._filterMorph
+    const out = processWithMorph(this.filters, morph?.outgoing ?? null, pcm, {
+      startedAt: morph?.startedAt ?? 0,
+      ms: morph?.ms ?? 0
+    })
+    if (morph && out.done) {
+      morph.outgoing.destroy?.()
+      this._filterMorph = null
+    }
     const mp3 = await encodeMp3({ left: out.left, right: out.right, sampleRate: pcm.sampleRate, bitrate })
     const parsed = new MetroFramer().push(mp3)
     if (parsed.frames.length === 0) return batch
@@ -255,8 +289,12 @@ export const playbackMethods = {
    * only resets the ones that switch off.
    */
   setFilters(payload = {}) {
-    const next = this.filters ? this.filters.update(payload) : new FilterChain(payload, { sampleRate: 44_100 })
+    // A *new* chain rather than an in-place update: the old one keeps its
+    // delay lines and its biquad memory, and the two run side by side for a
+    // fifth of a second while the audio crossfades from one to the other.
+    // Moving a fader on air is then a fade, not a step.
     const previous = this.filters
+    const next = new FilterChain(payload, { sampleRate: previous?.sampleRate ?? 44_100 })
     this.filters = next
     // The held frame was encoded by the previous chain, but it is still the
     // audio of the track that is playing: keep it, and keep the track so the
@@ -267,8 +305,17 @@ export const playbackMethods = {
     // pretend the station has a chorus. The previous chain keeps running.
     if (info.unknown.length && payload?.strict !== false && Object.keys(payload ?? {}).length && info.active.length === 0) {
       this.filters = previous
+      next.destroy?.()
       throw new Error(`unknown filter(s): ${info.unknown.join(', ')}`)
     }
+    // Start the ramp. A chain that is being replaced mid-ramp is finished
+    // first: two ramps at once would average three chains, which is a mistake
+    // nobody has asked to hear.
+    this._filterMorph?.outgoing?.destroy?.()
+    const morphMs = this.options.filterMorphMs ?? FILTER_MORPH_MS
+    this._filterMorph = morphMs > 0 && previous && (previous.compiled?.active.length || info.active.length)
+      ? { outgoing: previous, startedAt: Date.now(), ms: morphMs }
+      : (previous?.destroy?.(), null)
     this.emit('filters', { active: info.active, unknown: info.unknown, clamped: info.clamped, configured: true })
     this.log.info(info.active.length ? `filters: ${info.active.join(', ')}` : 'filters cleared')
     return { active: info.active, skipped: info.skipped, unknown: info.unknown, clamped: info.clamped }

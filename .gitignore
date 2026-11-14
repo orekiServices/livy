@@ -1,10 +1,11 @@
 # Dependencies
 node_modules/
 
-# The console's build output. `npm run build:web` regenerates it and installs
+# The console's build output. `bun run build:web` regenerates it and installs
 # it into server/plugins/console/public (which *is* committed, because it is
 # what a fresh clone serves).
 web/.next/
+web/.next-server/
 web/out/
 
 # Runtime state: the database, its WAL files, the owner key, logs, caches.
@@ -16,9 +17,20 @@ server/media/tts/fallback-tone.mp3
 server/models/*.bin
 *.log
 
+# A virtualenv for the optional PyTorch trainer (server/python/README.md).
+.venv/
+venv/
+__pycache__/
+
 # Test scratch
 coverage/
 .tmp/
+
+# Playwright writes traces and screenshots into the project by default; they are
+# artefacts of a run, not source.
+web/e2e/test-results/
+web/playwright-report/
+web/test-results/
 
 # Editors and OS noise
 .DS_Store

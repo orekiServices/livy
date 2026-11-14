@@ -31,9 +31,11 @@ export {
   readSeams,
   recordSeam,
   seamCount,
+  trainBackend,
   trainInBackground,
   trainModel,
-  trainModels
+  trainModels,
+  torchStatus
 } from './trainer/index.js'
 export { ACTIONS, FEATURES, featuresFor } from './features.js'
 export { Network } from './network.js'

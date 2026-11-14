@@ -72,7 +72,7 @@ code above a database should own all of those.
 ## Building
 
 ```sh
-cargo build --release && node scripts/link-local.js   # this machine
+cargo build --release && bun scripts/link-local.js   # this machine
 ./scripts/build-linux-universal.sh                    # every Linux arch
 ```
 

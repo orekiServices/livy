@@ -96,6 +96,7 @@ export default function ListenPage() {
   const audio = useRef(null)
   const abort = useRef(null)
   const searchInput = useRef(null)
+  const retry = useRef({ timer: null, count: 0 })
 
   const toast = useCallback((message) => {
     setError(message)
@@ -178,14 +179,47 @@ export default function ListenPage() {
     const element = audio.current
     setMode('radio')
     setSong(null)
-    if (element.src !== new URL(streamUrl, window.location.href).href) element.src = streamUrl
+    // A fresh `?t=` restarts the stream: the node's answer is a live socket,
+    // not a file, and the browser would otherwise keep the connection it
+    // thinks it already has.
+    element.src = `${streamUrl}?t=${Date.now()}`
     try {
       await element.play()
       setPlaying(true)
+      retry.current.count = 0
     } catch (problem) {
       toast(problem.message)
     }
   }, [streamUrl, toast])
+
+  /**
+   * The station restarted, the phone slept, the wifi moved: a live stream that
+   * ends or errors is a dead socket, and nothing reopens it unless we do.
+   * Backs off, gives up after five, and says so.
+   */
+  const reconnectRadio = useCallback(() => {
+    if (!streamUrl || mode !== 'radio') return
+    if (retry.current.timer) return
+    if (retry.current.count >= 5) {
+      toast('The stream stopped and would not come back. Press play to retry.')
+      return
+    }
+    const wait = [800, 1500, 3000, 6000, 10_000][Math.min(retry.current.count, 4)]
+    retry.current.count += 1
+    retry.current.timer = window.setTimeout(async () => {
+      retry.current.timer = null
+      const element = audio.current
+      if (!element || mode !== 'radio') return
+      element.src = `${streamUrl}?t=${Date.now()}`
+      try {
+        await element.play()
+        setPlaying(true)
+        retry.current.count = 0
+      } catch {
+        reconnectRadio()
+      }
+    }, wait)
+  }, [streamUrl, mode, toast])
 
   const playOnStation = useCallback(
     async (track, message) => {
@@ -451,8 +485,20 @@ export default function ListenPage() {
         preload="none"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false)
+          if (mode === 'radio') reconnectRadio()
+        }}
+        onStalled={() => {
+          // Only the live stream: a song is a file and the browser owns it.
+          if (mode === 'radio' && playing) reconnectRadio()
+        }}
         onError={() => {
           setPlaying(false)
+          if (mode === 'radio') {
+            reconnectRadio()
+            return
+          }
           if (mode === 'song' && song) {
             // The provider's file is not playable in this browser (expired,
             // referer-locked, DRM). The node can still stream it, so put it

@@ -13,6 +13,19 @@ import { buildSilence } from '../src/util/mp3.js'
 import { encodeMp3 } from '../src/core/automix.js'
 import { configureLogging, resetLogging } from '../src/util/logger.js'
 
+// Hermetic: no test reaches foreverjukebox.com. A test that wants the API
+// points a client at a local stub instead.
+process.env.LIVY_FJ_API ??= 'off'
+
+// A developer's node keeps its seam log, models and owner key in `data/` next
+// to the source. A test that trains a model reads the seam log, so without
+// this a suite would pass on a clean checkout and fail on the machine of
+// anyone who has actually run the radio. Each test file gets its own
+// directory; `boot()` still puts its own state under `_dir`.
+if (!process.env.LIVY_DATA_DIR) {
+  process.env.LIVY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'livy-test-data-'))
+}
+
 /** Quiet by default; set TEST_LOGS=debug to watch a run. */
 export function quietLogs(level = process.env.TEST_LOGS ?? 'error') {
   configureLogging({ level, color: false, buffer: 50, file: { enabled: false } })

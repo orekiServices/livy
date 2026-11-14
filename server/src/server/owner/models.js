@@ -18,6 +18,8 @@ import {
   pullModels,
   pushModels,
   registryState,
+  torchStatus,
+  trainBackend,
   trainModels,
   updateModelSettings
 } from '../../core/models/index.js'
@@ -35,7 +37,12 @@ export async function stationModels({ req, res, method, action, target, store, r
       last: target.automix?.last?.decision ?? null,
       explain: models.explain(seam),
       auto: autoTrainer?.state?.() ?? null,
-      registry: (await registryState({ store, cfg: hfConfig() })).models
+      registry: (await registryState({ store, cfg: hfConfig() })).models,
+      // Whether a training run here can use PyTorch, and if not, why not.
+      // Answered from the cache (or "probing") so the console never waits on
+      // an interpreter start.
+      torch: await torchStatus({ wait: false }),
+      backend: trainBackend()
     })
   }
 
@@ -79,7 +86,8 @@ export async function trainForStation({ req = null, res, target = null, stationI
     learningRate: body.learningRate ? Math.max(0.0001, Math.min(0.5, Number(body.learningRate))) : 0.01,
     gpu: body.gpu === true ? true : body.gpu === false ? false : 'auto',
     activate: body.activate !== false,
-    warm: body.warm !== false
+    warm: body.warm !== false,
+    backend: body.backend === 'js' || body.backend === 'torch' ? body.backend : null
   })
   if (report.trained) {
     store?.saveTrainingRun?.({
@@ -109,7 +117,11 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
       presets: modelPresets(),
       settings: modelSettings(),
       auto: autoTrainer?.state?.() ?? null,
-      enabled: modelSettings().enabled !== false
+      enabled: modelSettings().enabled !== false,
+      // PyTorch is optional: the console offers it when the probe finds an
+      // interpreter with torch, and says what to install when it does not.
+      torch: await torchStatus({ wait: false }),
+      backend: trainBackend()
     })
   }
 

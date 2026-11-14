@@ -2,8 +2,8 @@
 /**
  * MetroS benchmark: native libmetro vs the JavaScript fallback.
  *
- *     npm run bench:metro            # generated tone, 60 s
- *     npm run bench:metro -- file.mp3
+ *     bun run bench:metro            # generated tone, 60 s
+ *     bun run bench:metro -- file.mp3
  *
  * Both engines run in the same process on the same bytes, and the output is
  * compared byte for byte before anything is timed — a faster answer that is

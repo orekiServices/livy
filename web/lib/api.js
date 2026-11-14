@@ -1,9 +1,9 @@
 /**
- * The only file in the web app that knows the node exists.
+ * The only file in the console that knows the node exists.
  *
- * Everything is same-origin in production — the console is served by the
- * radio node itself — so there is no base URL to configure, nothing to leak
- * and no CORS. In development (`npm run dev` on :3000) it probes the usual
+ * Everything is same-origin in production, the console is served by the
+ * radio node itself, so there is no base URL to configure, nothing to leak
+ * and no CORS. In development (`bun run dev` on :3000) it probes the usual
  * ports once, or takes `?node=http://host:2333`.
  */
 const REMEMBERED = 'livy-node'
@@ -105,7 +105,7 @@ export async function socketUrl() {
   return `${origin.replace(/^http/, 'ws')}/ws`
 }
 
-/** Owner credential helpers — the secret lives in this tab only, never in a URL. */
+/** Owner credential helpers, the secret lives in this tab only, never in a URL. */
 const KEY_STORE = 'livy-owner-key'
 const KEY_STORE_LEGACY = 'nodecast-owner-key'
 // A key (or password) entered before the rename is still the right secret, so
@@ -126,3 +126,15 @@ export const clearOwnerKey = () => {
 }
 
 export const owner = (path, options = {}) => api(`/api/v1/owner${path}`, { ...options, key: options.key ?? ownerKey() })
+
+/**
+ * The stream for the player, and whether this deployment can stream at all.
+ * A serverless node answers 501 on /stream, and the console says so rather
+ * than leaving a player spinning.
+ */
+export async function stationStream(stationId) {
+  return streamUrl(stationId)
+}
+
+/** A listenable URL straight from a station row, if it has one. */
+export const streamOf = (station) => (station?.stream ? station.stream : `/stream/${encodeURIComponent(station?.id ?? '')}.mp3`)

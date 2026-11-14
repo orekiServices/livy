@@ -131,15 +131,13 @@ test('the trainer runs the Android budget and reports it', async () => {
   assert.ok(fs.existsSync(report.best.file), 'the winning candidate was written')
 })
 
-test('node:sqlite is a usable store backend where Node provides it', async (t) => {
-  const available = await import('node:sqlite').then(() => true).catch(() => false)
-  if (!available || typeof globalThis.Bun !== 'undefined') return t.skip('node:sqlite is not the selected backend here')
+test('bun:sqlite is a usable store backend when there is no MetroDB binary', async () => {
 
   const previous = process.env.LIVY_DISABLE_METRODB
   process.env.LIVY_DISABLE_METRODB = '1'
   try {
     const db = await openMemoryDatabase()
-    assert.match(db.driver, /node:sqlite/)
+    assert.match(db.driver, /bun:sqlite/)
     db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, value TEXT)')
     db.run('INSERT INTO t (value) VALUES (?)', [undefined])
     db.run('INSERT INTO t (value) VALUES (?)', [true])

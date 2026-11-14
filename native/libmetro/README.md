@@ -61,7 +61,7 @@ still perfectly listenable.
 ## What it buys
 
 Measured on one machine against 44 s of 128 kbps stereo
-(`npm run bench:metro` in `server/`, so you can check it on yours):
+(`bun run bench:metro` in `server/`, so you can check it on yours):
 
 | | JavaScript | MetroS |
 | --- | --- | --- |
@@ -126,8 +126,8 @@ headers are dropped rather than broadcast.
 ## Building
 
 ```sh
-cargo build --release && node scripts/link-local.js   # just Rust + Node
-npm install && npm run build                          # via @napi-rs/cli
+cargo build --release && bun scripts/link-local.js   # just Rust + Node
+bun install && bun run build                          # via @napi-rs/cli
 ./scripts/build-linux-universal.sh                    # every Linux arch, from one box
 ```
 

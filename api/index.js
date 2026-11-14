@@ -20,7 +20,7 @@
  *   ✗ persistence — the bundle is read-only and /tmp is per-instance
  *
  * For the real thing — a station that stays on air — run the node on a
- * container or a VM: `npm start` in `server/`.
+ * container or a VM: `bun start` in `server/`.
  */
 module.exports = async function handler(request, response) {
   const { handleRequest } = await import('../server/src/index.js')

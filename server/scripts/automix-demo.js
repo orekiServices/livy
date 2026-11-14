@@ -2,7 +2,7 @@
  * Render one seam per transition effect into a single MP3, so the automix can
  * be listened to rather than read about.
  *
- *   node scripts/automix-demo.js [outfile]
+ *   bun scripts/automix-demo.js [outfile]
  *
  * Two synthetic "songs" are used because they are deterministic and because
  * they make the analysis audible: A is 124 BPM and loud, B is 128 BPM, 10 dB

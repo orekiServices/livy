@@ -34,7 +34,7 @@ async function node(t) {
   return { ...server, base: `http://127.0.0.1:${server.port}`, dir }
 }
 
-test('the console plugin mounts the build on the node it runs in', { skip: built ? false : 'no console build — run `npm run build:web`' }, async (t) => {
+test('the console plugin mounts the build on the node it runs in', { skip: built ? false : 'no console build — run `bun run build:web`' }, async (t) => {
   const { base, plugins } = await node(t)
 
   const record = plugins.list().find((p) => p.id === 'console')
@@ -50,13 +50,17 @@ test('the console plugin mounts the build on the node it runs in', { skip: built
   const meta = await api(base, '/api/v1/x/console/')
   assert.equal(meta.mount, '/')
   assert.ok(meta.build.files > 0 && meta.build.kb > 0)
-  assert.deepEqual(meta.pages, ['/', '/listen/', '/station/', '/owner/'], 'the console knows which pages it ships')
+  assert.deepEqual(
+    meta.pages,
+    ['/', '/stations/', '/station/', '/search/', '/lyrics/', '/seams/', '/filters/', '/models/', '/ops/', '/owner/', '/listen/'],
+    'the console knows which pages it ships'
+  )
 })
 
 test('client-side routes survive a refresh, but a missing asset is still missing', { skip: built ? false : 'no console build' }, async (t) => {
   const { base } = await node(t)
 
-  for (const route of ['/owner/', '/station/']) {
+  for (const route of ['/owner/', '/station/', '/filters/', '/seams/', '/search/', '/lyrics/']) {
     const res = await fetch(`${base}${route}`)
     assert.equal(res.status, 200, `${route} should be served`)
     assert.match(res.headers.get('content-type'), /text\/html/)

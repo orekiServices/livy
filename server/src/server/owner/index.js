@@ -33,7 +33,7 @@ import { fxInfo } from '../../util/fx.js'
 import { REASONS, REASON_IDS, LINES, SHIPPED_LANGUAGES } from '../streamErrors.js'
 import { LANGUAGES, normaliseLanguage } from '../../tts/index.js'
 import { publicTrack } from '../../core/station.js'
-import { EFFECTS, EFFECT_TRAITS, AUTO_EFFECT, DEFAULT_AUTOMIX } from '../../core/automix.js'
+import { EFFECTS, EFFECT_TRAITS, AUTO_EFFECT, DEFAULT_AUTOMIX, outcomeReport } from '../../core/automix.js'
 import { describe as describeFilters } from '../../core/filters/index.js'
 import { modelRoutes, stationModels, trainForStation } from './models.js'
 import { pluginRoutes } from './plugins.js'
@@ -369,7 +369,9 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
 
       // Automix: transition style + DJ, changeable while the station is live.
       if (action === 'automix') {
-        if (method === 'GET') return send(res, 200, target.automix.info())
+        // The scoreboard travels with the settings: an owner choosing a
+        // transition style can see what each one has actually done here.
+        if (method === 'GET') return send(res, 200, { ...target.automix.info(), outcomes: outcomeReport(target.effectOutcomes?.()) })
         if (method === 'POST' || method === 'PATCH') {
           const body = await readJson(req)
           const patch = {}
@@ -387,6 +389,25 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
           }
           store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
           log.info(`owner set automix on "${target.id}": ${JSON.stringify(patch)}`)
+          return send(res, 200, info)
+        }
+        return fail(res, 405, 'Method not allowed')
+      }
+
+      // Seams: what the scout hears in the song on air, and RL.
+      if (action === 'seams') {
+        if (method !== 'GET') return fail(res, 405, 'Method not allowed')
+        return send(res, 200, target.seamsInfo({ graph: true }))
+      }
+
+      // Forever: the song on air loops on itself until something else is due.
+      if (action === 'forever') {
+        if (method === 'GET') return send(res, 200, target.foreverInfo())
+        if (method === 'POST' || method === 'PATCH') {
+          const body = await readJson(req)
+          const info = target.setForever(body.enabled !== false, { apiBase: body.apiBase })
+          store?.saveStation({ ...target.options, id: target.id, name: target.name, playlists: target.playlists })
+          log.info(`owner set forever on "${target.id}": ${info.enabled}`)
           return send(res, 200, info)
         }
         return fail(res, 405, 'Method not allowed')

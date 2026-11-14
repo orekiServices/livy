@@ -31,6 +31,7 @@ import { FilterChain } from './filters/index.js'
 import { queueMethods } from './station/queue.js'
 import { requestsMethods } from './station/requests.js'
 import { playbackMethods } from './station/playback.js'
+import { seamMethods } from './station/seams.js'
 import { relayMethods } from './station/relay.js'
 import { infoMethods } from './station/info.js'
 import { DEFAULTS, publicTrack } from './station/shared.js'
@@ -293,6 +294,6 @@ export class Station extends EventEmitter {
     }
   }
 }
-Object.assign(Station.prototype, queueMethods, requestsMethods, playbackMethods, relayMethods, infoMethods)
+Object.assign(Station.prototype, queueMethods, requestsMethods, playbackMethods, seamMethods, relayMethods, infoMethods)
 
 export default Station

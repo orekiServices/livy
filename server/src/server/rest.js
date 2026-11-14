@@ -495,8 +495,12 @@ export function createRequestHandler({ manager, config, sources, store = null, t
         if (resource === 'sources' && method === 'GET') {
           return send(res, 200, {
             // `describe()` is the one place that knows how a provider is
-            // shaped; the console renders this list directly.
-            sources: sources.describe(),
+            // shaped; the console renders this list directly. `health` says
+            // what each one has done lately, so a dead provider is visible
+            // instead of merely slow.
+            sources: sources.describe({ health: true }),
+            health: sources.healthOf(),
+            searchTimeoutMs: sources.searchTimeoutMs,
             hiRes: { enabled: sources.hiRes, minKbps: sources.hiResMinKbps },
             fallbackOrder: sources.fallbackOrder,
             liveFallback: sources.liveFallback
@@ -705,7 +709,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
         // this deserves to know the difference between "wrong URL" and "this
         // deployment cannot do that".
         if (resource === 'events' && isServerless()) {
-          return fail(res, 501, 'Live events need a long-lived connection; run the node (npm start) instead of a serverless deployment')
+          return fail(res, 501, 'Live events need a long-lived connection; run the node (bun start) instead of a serverless deployment')
         }
 
         return fail(res, 404, 'Unknown API route')

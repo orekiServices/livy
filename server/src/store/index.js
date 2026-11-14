@@ -6,11 +6,10 @@
  * bans, plugin state and settings. One file you can copy, back up, inspect
  * with `sqlite3` and upgrade in place:
  *
- *   node scripts/db.js info | migrate | vacuum | backup <file> | export
+ *   bun scripts/db.js info | migrate | vacuum | backup <file> | export
  *
- * The driver is MetroDB (Rust) when a binary is there, `bun:sqlite` on Bun
- * and `better-sqlite3` otherwise — same
- * engine, same file, same SQL. There is no JSON fallback any more: an older
+ * The driver is MetroDB (Rust) when a binary is there, and `bun:sqlite`
+ * otherwise — same engine, same file, same SQL. There is no JSON fallback any more: an older
  * node's `radio.db.json` is imported once and retired (see `importJson`), so
  * upgrading is nothing but starting the new version.
  */

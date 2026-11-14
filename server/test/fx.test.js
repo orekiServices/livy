@@ -112,14 +112,26 @@ test('the chain delegates to MetroFX when it is loaded', (t) => {
   // One EQ band: the chain's section and a native section with the same
   // coefficients must be sample-identical, which they are only if the chain
   // actually used the native path.
-  const eq = makeFilter('equalizer', { bands: [{ band: 5, gain: 1.5 }] }, { sampleRate: SR })
+  // `gain` is an offset from flat (NodeLink's convention), so 0.5 is a 1.5x
+  // multiplier, and the native section is built from that multiplier.
+  const eq = makeFilter('equalizer', { bands: [{ band: 5, gain: 0.5 }] }, { sampleRate: SR })
   const section = new fx.Biquad()
   section.setPeaking(EQ_BANDS[5], 20 * Math.log10(1.5), SR, 1.41)
   assert.equal(run(eq, section), 0, 'EQ delegates to MetroFX')
 
-  const comp = makeFilter('compressor', { threshold: 0.5, ratio: 4, gain: 1.2, makeupGain: 1.1 }, { sampleRate: SR })
+  // NodeLink units: threshold and makeup in dB, attack and release in seconds.
+  // The native section is given the same linear values the filter derives, so
+  // the comparison is about the shared maths and not about rounding.
+  const thresholdDb = -6.0206
+  const makeupDb = 0.8279
+  const comp = makeFilter(
+    'compressor',
+    { threshold: thresholdDb, ratio: 4, attack: 0.001, release: 0.01, gain: 1.2, makeupGain: makeupDb },
+    { sampleRate: SR }
+  )
   const compressor = new fx.Compressor()
-  compressor.setParams(0.5, 4, 0.001, 0.005, 1.2, 1.1, SR)
+  // `release` is clamped to NodeLink's 10 ms floor, so both sides say 0.01.
+  compressor.setParams(10 ** (thresholdDb / 20), 4, 0.001, 0.01, 1.2, 10 ** (makeupDb / 20), SR)
   assert.equal(run(comp, compressor), 0, 'compressor delegates to MetroFX')
 
   const reverb = makeFilter('reverb', { roomSize: 0.8, damping: 0.2, width: 0.5, mix: 0.5 }, { sampleRate: SR })
