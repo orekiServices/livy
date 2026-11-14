@@ -62,6 +62,10 @@ function mapStrategyToEffect(strategy: AutoMixStrategy, pool: string[] = []): st
   const fallbacks: Record<string, string[]> = {
     'eq-blend': ['bass-swap', 'crossfade', 'filter'],
     'stem-handoff': ['bass-swap', 'filter', 'crossfade'],
+    'phrase-cut': ['bass-swap', 'crossfade', 'drop'],
+    'vocal-bridge': ['filter', 'bass-swap', 'crossfade'],
+    'tempo-ramp': ['filter', 'crossfade', 'wash'],
+    'harmonic-drop': ['bass-swap', 'drop', 'filter', 'crossfade'],
     'bass-swap': ['bass-swap', 'crossfade', 'filter'],
     filter: ['filter', 'crossfade', 'wash'],
     wash: ['wash', 'crossfade', 'echo'],
@@ -770,7 +774,14 @@ export class Automix {
           talkover: Boolean(voice),
           minBeatMatchQuality: this.options.minQualityScore ?? 0.5,
           previousStrategy: this.options.varyEffects === false ? null : this.#lastEffect,
-          hasStems: Boolean(tail.track?.stems || head[0]?.track?.stems)
+          hasStems: Boolean(tail.track?.stems || head[0]?.track?.stems),
+          seamCount:
+            typeof this.options.seamCount === 'number'
+              ? this.options.seamCount
+              : typeof this.ctx.station?.seamCount === 'function'
+                ? this.ctx.station.seamCount()
+                : undefined,
+          progressiveScaling: this.options.progressiveScaling === true
         })
       } catch (error: any) {
         this.log.debug(`intelligent planner: ${error?.message ?? error}`)
@@ -1080,7 +1091,16 @@ export class Automix {
               fallbackUsed: transitionPlan.fallbackUsed,
               fallbackReason: transitionPlan.fallbackReason,
               bassSwapAt: activeAutomation?.bassSwapAt ?? transitionPlan.selected.plan.bassSwapAt,
-              bassSwapWidth: activeAutomation?.bassSwapWidth ?? transitionPlan.selected.plan.bassSwapWidth
+              bassSwapWidth: activeAutomation?.bassSwapWidth ?? transitionPlan.selected.plan.bassSwapWidth,
+              knots: activeAutomation?.curves.knots ?? transitionPlan.selected.plan.curves.knots,
+              scaling: transitionPlan.scaling
+                ? {
+                    tier: transitionPlan.scaling.id,
+                    seams: transitionPlan.scaling.seams,
+                    unlockedTransitions: transitionPlan.scaling.unlockedCount,
+                    neuralParams: transitionPlan.scaling.neuralParams
+                  }
+                : null
             }
           : null,
         peakDb: Number(TO_DB(Math.min(peak, ceiling)).toFixed(1)),

@@ -21,6 +21,8 @@ import {
   pullModels,
   pushModels,
   registryState,
+  scalingLadderSummary,
+  seamCount,
   torchStatus,
   trainBackend,
   trainModels,
@@ -116,10 +118,12 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
 
   if (!id) {
     if (method !== 'GET') return fail(res, 405, 'Method not allowed')
+    const seams = seamCount({ store })
     return send(res, 200, {
       ...(await registryState({ store, cfg })),
       presets: modelPresets(),
       settings: modelSettings(),
+      scaling: scalingLadderSummary(seams, { mobile: Boolean(modelSettings().device?.mobile) }),
       auto: autoTrainer?.state?.() ?? null,
       enabled: modelSettings().enabled !== false,
       // PyTorch is optional: the console offers it when the probe finds an
@@ -190,9 +194,11 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
 
   if (id === 'automix') {
     if (method === 'GET') {
+      const seams = seamCount({ store })
       return send(res, 200, {
         ...neuralAutomix.info(),
         presets: listNeuralPresets(),
+        scaling: scalingLadderSummary(seams, { mobile: Boolean(modelSettings().device?.mobile) }),
         caches: {
           structure: structureCacheStats(),
           planner: planCacheStats()

@@ -14,6 +14,7 @@ import { seamCount } from './trainer/dataset.ts'
 import { models } from './host.ts'
 import { hfConfig, hfReady } from './storage/hf.ts'
 import { pushModels } from './registry.ts'
+import { scalingLadderSummary } from './scaling.ts'
 
 const log = createLogger('dj-auto')
 
@@ -162,6 +163,7 @@ export class AutoTrainer {
 
   state() {
     const settings = modelSettings()
+    const seams = seamCount({ store: this.store })
     return {
       enabled: this.enabled,
       running: this.running,
@@ -171,7 +173,8 @@ export class AutoTrainer {
       candidates: settings.candidates,
       fast: settings.fast,
       preset: settings.preset ?? 'auto',
-      seams: seamCount({ store: this.store }),
+      seams,
+      scaling: scalingLadderSummary(seams, { mobile: Boolean(settings.device?.mobile) }),
       lastSeams: this.lastSeams,
       lastRunAt: this.lastRunAt,
       last: this.lastResult

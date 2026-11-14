@@ -371,6 +371,65 @@ export function buildAutomationPlan(params: {
       mB = t < phraseEnd - 0.1 ? 0.25 : clamp((t - (phraseEnd - 0.1)) / Math.max(0.15, 1.1 - phraseEnd), 0, 1)
       ga = 1
       gb = 1
+    } else if (strategy === 'phrase-cut') {
+      // Crisp beat-locked bar-boundary phrase handoff: Track A holds full presence until the
+      // penultimate phrase beat, then drops cleanly while Track B locks in at full weight.
+      const cutAt = clamp(bassSwapAt, 0.55, 0.8)
+      const cutW = 0.08
+      const sCut = clamp((t - (cutAt - cutW)) / (2 * cutW), 0, 1)
+      const cutEase = 0.5 - 0.5 * Math.cos(Math.PI * sCut)
+      lA = 1 - cutEase
+      lB = cutEase
+      mA = 1 - cutEase * 0.92
+      mB = 0.2 + 0.8 * cutEase
+      hA = 1 - cutEase * 0.88
+      hB = clamp(0.45 + 0.55 * fadeGains(t, exponent)[1], 0, 1)
+      ga = 1
+      gb = 1
+    } else if (strategy === 'vocal-bridge') {
+      // Extended vocal-bridged overlap: carries Track A's vocal hook across Track B's rhythmic intro
+      // while carving Track B's center mid/vocal pocket, then hands lead cleanly at phraseEnd.
+      lA = 1 - smoothSwap
+      lB = smoothSwap
+      hB = clamp(0.35 + 0.65 * fadeGains(clamp(t * 1.2, 0, 1), exponent)[1], 0, 1)
+      hA = clamp(fadeGains(clamp(t * 0.95, 0, 1), exponent)[0], 0, 1)
+      mA = t < phraseEnd ? 1 : clamp(1 - (t - phraseEnd) / Math.max(0.12, 1 - phraseEnd), 0, 1)
+      mB = t < phraseEnd - 0.06 ? 0.3 : clamp(0.3 + 0.7 * ((t - (phraseEnd - 0.06)) / Math.max(0.16, 1.06 - phraseEnd)), 0, 1)
+      revA = t > phraseEnd - 0.05 ? clamp((t - (phraseEnd - 0.05)) * 0.75, 0, 0.42) : 0
+      ga = 1
+      gb = 1
+    } else if (strategy === 'tempo-ramp') {
+      // Progressive tempo-ramped transition: gentle resonant HP sweep lifts Track A out while
+      // Track B's rhythm and low end bloom steadily across a long phrase.
+      fA = clamp(Math.pow(t, 1.25) * 0.62, 0, 0.68)
+      fB = -clamp(Math.pow(1 - t, 1.4) * 0.48, 0, 0.52)
+      lA = clamp(1 - smoothSwap * 1.15, 0, 1)
+      lB = clamp(smoothSwap, 0, 1)
+      mA = ga0
+      mB = gb0
+      hA = clamp(ga0 * (1 - 0.15 * t), 0, 1)
+      hB = clamp(gb0 * (0.85 + 0.15 * t), 0, 1)
+      delA = clamp(Math.sin(Math.PI * t) * 0.24, 0, 0.3)
+      ga = 1
+      gb = 1
+    } else if (strategy === 'harmonic-drop') {
+      // Camelot-locked tension-and-release: HP filter + damped reverb riser builds tension on Track A
+      // into the drop downbeat, then releases cleanly into Track B's full bass & percussion.
+      const dropAt = clamp(Math.max(bassSwapAt, 0.68), 0.65, 0.82)
+      const preDrop = t < dropAt
+      const rise = clamp(t / dropAt, 0, 1)
+      const after = preDrop ? 0 : clamp((t - dropAt) / 0.08, 0, 1)
+      fA = preDrop ? clamp(rise * rise * 0.78, 0, 0.82) : 0.82
+      revA = preDrop ? clamp(rise * 0.52, 0, 0.58) : clamp(0.58 * (1 - after * 0.65), 0, 0.58)
+      delA = preDrop && rise > 0.55 ? clamp((rise - 0.55) * 0.9, 0, 0.36) : 0.12 * (1 - after)
+      lA = preDrop ? clamp(1 - rise * 0.85, 0.15, 1) : 0
+      lB = preDrop ? 0 : clamp(after, 0, 1)
+      mA = preDrop ? 1 : clamp(1 - after * 0.95, 0, 1)
+      mB = preDrop ? clamp(0.18 + rise * 0.22, 0, 0.45) : clamp(0.45 + after * 0.55, 0, 1)
+      hA = preDrop ? 1 : clamp(1 - after * 0.9, 0, 1)
+      hB = preDrop ? clamp(0.25 + rise * 0.35, 0, 0.65) : clamp(0.65 + after * 0.35, 0, 1)
+      ga = preDrop ? 1 : clamp(1 - after * 0.85, 0.1, 1)
+      gb = 1
     } else {
       // Smart crossfade / fallback: gentle bass exclusivity + smooth equal-power fade.
       lA = ga0 * (1 - 0.4 * smoothSwap)

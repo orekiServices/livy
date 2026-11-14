@@ -35,7 +35,11 @@ export const AUTOMIX_STRATEGIES = Object.freeze([
   'roll',
   'drop',
   'eq-blend',
-  'stem-handoff'
+  'stem-handoff',
+  'phrase-cut',
+  'vocal-bridge',
+  'tempo-ramp',
+  'harmonic-drop'
 ] as const)
 
 export type AutoMixStrategy = (typeof AUTOMIX_STRATEGIES)[number]
@@ -1413,11 +1417,11 @@ export const NEURAL_AUTOMIX_PRESETS: Record<string, NeuralAutoMixConfig> = {
 
 export function listNeuralPresets(): ArchitecturePreset[] {
   const descriptions: Record<string, string> = {
-    'mlp-nano': 'Ultra-compact ~4.1K-param 2-stage residual MLP for embedded/mobile CPUs.',
-    'mlp-micro': 'Compact ~14.4K-param residual MLP for sub-millisecond CPU inference.',
-    'tcn-compact': 'Dilated 1D Temporal Convolutional Network (~20.9K params) over beat grids.',
-    'gru-dj': '2-layer GRU sequence encoder (~68.4K params) modeling beat & phrase evolution.',
-    'transformer-mini': 'Lightweight Cross-Attention Transformer (~170K params) aligning Track A & B.',
+    'mlp-nano': 'Ultra-compact ~4.2K-param 2-stage residual MLP for embedded/mobile CPUs.',
+    'mlp-micro': 'Compact ~14.6K-param residual MLP for sub-millisecond CPU inference.',
+    'tcn-compact': 'Dilated 1D Temporal Convolutional Network (~21.0K params) over beat grids.',
+    'gru-dj': '2-layer GRU sequence encoder (~68.6K params) modeling beat & phrase evolution.',
+    'transformer-mini': 'Lightweight Cross-Attention Transformer (~171K params) aligning Track A & B.',
     'transformer-medium': 'Medium Cross-Attention Transformer (~1.01M params) for large DJ mix corpora.',
     'transformer-xl': 'High-capacity Cross-Attention Transformer (~3.59M params, within 5M budget).'
   }

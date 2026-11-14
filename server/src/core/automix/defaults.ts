@@ -65,6 +65,7 @@ export const DEFAULT_AUTOMIX = {
   intelligent: true,
   continuousBlend: true,
   neuralAutomix: true,
+  progressiveScaling: false,
   minQualityScore: 0.5,
   trimSilence: true,
   dj: {

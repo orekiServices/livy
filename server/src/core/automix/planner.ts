@@ -28,6 +28,7 @@ import {
 } from './blender.ts'
 import { evaluateTransition, type TransitionEvaluation } from './evaluator.ts'
 import { neuralAutomix, type DecodedNeuralPlan, type NeuralAutoMixHost } from '../models/neuralAutomix.ts'
+import { resolveScalingTier, type ResolvedScalingTier } from '../models/scaling.ts'
 
 export interface CandidatePlan {
   id: string
@@ -53,6 +54,7 @@ export interface TransitionPlanResult {
   trackA: TrackStructure
   trackB: TrackStructure
   neural: DecodedNeuralPlan | null
+  scaling: ResolvedScalingTier | null
   fallbackUsed: boolean
   fallbackReason: string | null
   planningMs: number
@@ -92,6 +94,13 @@ export interface PlanTransitionOptions {
   bypassCache?: boolean
   /** Prefer continuous blending strategies when stems are provided. */
   hasStems?: boolean
+  /**
+   * Optional observed seam count enabling progressive capacity scaling:
+   * more seams -> more unlocked transitions & wider candidate search.
+   */
+  seamCount?: number
+  /** Enforce unlocked strategy set from `resolveScalingTier(seamCount)`. */
+  progressiveScaling?: boolean
 }
 
 const planCache = new MemoryLruCache({
@@ -133,11 +142,15 @@ function candidateStrategies(params: {
   beatMatched: boolean
   harmonicScore: number
   vocalClash: boolean
+  vocalOut: boolean
+  vocalIn: boolean
   energyDelta: number
+  stretchPercent: number
   talkover: boolean
   hasStems: boolean
   neuralStrategy?: string | null
   allowed?: string[]
+  maxStrategies?: number
 }): string[] {
   const pool = new Set<string>()
   if (params.neuralStrategy) pool.add(params.neuralStrategy)
@@ -150,6 +163,16 @@ function candidateStrategies(params: {
   } else if (params.beatMatched) {
     pool.add('eq-blend')
     pool.add('bass-swap')
+    pool.add('phrase-cut')
+    if (params.vocalClash || (params.vocalOut && !params.vocalIn)) {
+      pool.add('vocal-bridge')
+    }
+    if (Math.abs(params.stretchPercent) >= 3) {
+      pool.add('tempo-ramp')
+    }
+    if (params.harmonicScore >= 0.85 && params.energyDelta >= 0.1) {
+      pool.add('harmonic-drop')
+    }
     if (params.vocalClash || params.harmonicScore < 0.65) {
       pool.add('filter')
       pool.add('echo')
@@ -170,11 +193,10 @@ function candidateStrategies(params: {
   let list = [...pool]
   if (params.allowed && params.allowed.length > 0) {
     const allowSet = new Set(params.allowed)
-    // Map continuous 'eq-blend' to allowed 'bass-swap'/'crossfade' if pool is strict.
     const filtered = list.filter((s) => allowSet.has(s))
     if (filtered.length > 0) list = filtered
   }
-  return list.slice(0, 5)
+  return list.slice(0, Math.max(4, params.maxStrategies ?? 7))
 }
 
 /**
@@ -267,16 +289,40 @@ export function planTransition(
     })
   }
 
+  // Progressive scaling ("more seams -> more transitions -> more parameters"):
+  // when seamCount is supplied, progressively widen unlocked transition strategies,
+  // automation knot count, and candidate search breadth.
+  const scaling =
+    options.seamCount != null && Number.isFinite(options.seamCount)
+      ? resolveScalingTier(options.seamCount)
+      : null
+  const useProgressiveGate = Boolean(scaling && options.progressiveScaling !== false)
+  const effectiveAllowed = (() => {
+    if (useProgressiveGate && scaling) {
+      const unlocked = new Set<string>(scaling.unlockedStrategies)
+      if (options.allowedStrategies && options.allowedStrategies.length > 0) {
+        const both = options.allowedStrategies.filter((s) => unlocked.has(s))
+        return both.length > 0 ? both : options.allowedStrategies
+      }
+      return [...unlocked]
+    }
+    return options.allowedStrategies
+  })()
+
   const barOptions = candidateBarCounts(workingBpm, minMs, maxMs, neural?.durationBars)
   const strategies = candidateStrategies({
     beatMatched: canBeatMatch,
     harmonicScore: harmonic.score,
     vocalClash,
+    vocalOut: trackA.vocalDensity > 0.42,
+    vocalIn: trackB.vocalDensity > 0.42,
     energyDelta: trackB.meanEnergy - trackA.meanEnergy,
+    stretchPercent: canBeatMatch ? stretchPercent : 0,
     talkover,
     hasStems: Boolean(options.hasStems),
     neuralStrategy: neural?.strategy ?? null,
-    allowed: options.allowedStrategies
+    allowed: effectiveAllowed,
+    maxStrategies: scaling ? Math.max(4, Math.min(10, scaling.unlockedCount)) : 7
   })
 
   const candidates: CandidatePlan[] = []
@@ -310,6 +356,7 @@ export function planTransition(
             beatMatched: canBeatMatch,
             lowHz,
             highHz,
+            knots: scaling?.knots,
             source: 'planner'
           })
 
@@ -486,7 +533,8 @@ export function planTransition(
     }
   }
 
-  const topCandidates = candidates.slice(0, 12)
+  const maxReturned = scaling ? Math.max(6, scaling.maxCandidates) : 12
+  const topCandidates = candidates.slice(0, maxReturned)
   const neuralCand = candidates.find((c) => c.id.startsWith('neural-'))
   if (neuralCand && !topCandidates.includes(neuralCand)) {
     topCandidates.push(neuralCand)
@@ -498,6 +546,7 @@ export function planTransition(
     trackA,
     trackB,
     neural,
+    scaling,
     fallbackUsed,
     fallbackReason,
     planningMs: Number((performance.now() - started).toFixed(2)),

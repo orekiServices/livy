@@ -39,6 +39,7 @@ import {
   type ExtractedTransitionExample
 } from './djDataset.ts'
 import { pythonCandidates } from './trainer/torch.ts'
+import { resolveScalingTier, type ResolvedScalingTier } from './scaling.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const serverRoot = path.resolve(here, '../../..')
@@ -101,6 +102,10 @@ export interface PipelineOptions {
   /** Prefer PyTorch GPU/CPU script when installed (`auto` | `ts` | `torch`). */
   backend?: 'auto' | 'ts' | 'torch'
   device?: 'auto' | 'cpu' | 'cuda' | 'mps'
+  /** Optional host mobile flag to keep auto-scaled parameters within edge/phone budget. */
+  mobile?: boolean
+  /** Optional upper neural parameter cap when `preset: 'auto'`. */
+  maxNeuralParams?: number
 }
 
 export interface PipelineResult {
@@ -111,6 +116,7 @@ export interface PipelineResult {
   parameterCount: number
   memoryBytes: number
   seed: number
+  scaling: ResolvedScalingTier
   dataset: {
     total: number
     accepted: number
@@ -458,9 +464,20 @@ export async function runDjTrainingPipeline(options: PipelineOptions): Promise<P
   }
 
   const seed = options.seed ?? 42
-  const baseConfig: Partial<NeuralAutoMixConfig> = options.preset && NEURAL_AUTOMIX_PRESETS[options.preset]
-    ? { ...NEURAL_AUTOMIX_PRESETS[options.preset], ...(options.config ?? {}), seed }
-    : { ...NEURAL_AUTOMIX_PRESETS['tcn-compact'], ...(options.config ?? {}), seed }
+  // Infer dataset automation knot count so auto-scaled models match supervision targets cleanly.
+  const firstAutoLen = validation.valid[0]?.target.automation.length ?? 2 + CURVE_CHANNELS * 8
+  const dataKnots = Math.max(4, Math.round((firstAutoLen - 2) / CURVE_CHANNELS))
+  const scaling = resolveScalingTier(validation.valid.length, {
+    mobile: options.mobile,
+    maxNeuralParams: options.maxNeuralParams,
+    knotsOverride: dataKnots
+  })
+
+  const useAutoScale = !options.preset || options.preset === 'auto'
+  const baseConfig: Partial<NeuralAutoMixConfig> =
+    !useAutoScale && options.preset && NEURAL_AUTOMIX_PRESETS[options.preset]
+      ? { ...NEURAL_AUTOMIX_PRESETS[options.preset], knots: dataKnots, ...(options.config ?? {}), seed }
+      : { ...scaling.neuralConfig, knots: dataKnots, ...(options.config ?? {}), seed }
 
   const splitData = groupSplitByMix(validation.valid, {
     valFraction: options.valFraction ?? 0.15,
@@ -635,6 +652,7 @@ export async function runDjTrainingPipeline(options: PipelineOptions): Promise<P
     parameterCount: model.parameterCount,
     memoryBytes: model.memoryBytes,
     seed,
+    scaling,
     dataset: {
       total: rawExamples.length,
       accepted: validation.valid.length,

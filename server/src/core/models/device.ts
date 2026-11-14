@@ -9,6 +9,7 @@
  */
 import { hostInfo } from '../../util/platform.ts'
 import { MODEL_PRESETS, isModelPreset } from './presets.ts'
+import { resolveScalingTier } from './scaling.ts'
 
 export const SERVER_PROFILE = {
   id: 'server',
@@ -49,11 +50,37 @@ export const ANDROID_PROFILE = {
  * preset therefore never makes a phone pretend to be a server, and it cannot
  * ask a phone for WebGPU.
  */
-export function trainingProfile({ env = process.env, host = null, preset = 'auto' }: any = {}) {
+export function trainingProfile({ env = process.env, host = null, preset = 'auto', seams = null }: any = {}) {
   const info = host ?? hostInfo(env)
   const base = info.mobile ? ANDROID_PROFILE : SERVER_PROFILE
   const id = isModelPreset(preset) ? preset : 'auto'
-  if (id === 'auto') return { ...base, preset: 'auto', host: base.id }
+  if (id === 'auto') {
+    if (seams != null && Number.isFinite(Number(seams))) {
+      const tier = resolveScalingTier(Number(seams), { mobile: info.mobile })
+      const scaledShapes = info.mobile ? base.shapes : tier.policyShapes
+      return {
+        ...base,
+        preset: 'auto',
+        host: base.id,
+        shapes: scaledShapes,
+        fastShapes: scaledShapes,
+        epochs: info.mobile ? base.epochs : tier.epochs,
+        fastEpochs: info.mobile ? base.fastEpochs : tier.fastEpochs,
+        maxPairs: info.mobile ? base.maxPairs : Math.max(base.maxPairs, tier.maxPairs),
+        scaling: {
+          tier: tier.id,
+          label: tier.label,
+          seams: tier.seams,
+          unlockedTransitions: tier.unlockedCount,
+          policyParams: tier.policyParams,
+          neuralPreset: tier.neuralPreset,
+          neuralParams: tier.neuralParams,
+          nextTier: tier.nextTier
+        }
+      }
+    }
+    return { ...base, preset: 'auto', host: base.id }
+  }
 
   const chosen = MODEL_PRESETS[id]
   return {

@@ -17,6 +17,7 @@ import { buildDataset, accuracy, brier, brierSkill, confidence, loss, readSeams,
 import { gpuAvailable, trainOnGpu } from './gpu.ts'
 import { planTorch, trainWithTorch, torchStatus, trainBackend } from './torch.ts'
 import { trainingProfile } from '../device.ts'
+import { resolveScalingTier } from '../scaling.ts'
 import { trainRL } from '../rl.ts'
 
 export {
@@ -192,10 +193,17 @@ export async function trainModels({
 }: any = {}): Promise<Record<string, any>> {
   const started = Date.now()
   // A per-run `preset` wins over the saved setting, which wins over `auto`.
-  const budget = profile ?? trainingProfile({ preset: preset ?? modelSettings().preset ?? 'auto' })
+  const chosenPreset = preset ?? modelSettings().preset ?? 'auto'
+  const initialBudget = profile ?? trainingProfile({ preset: chosenPreset })
   // Bound the read as well as the set: a phone should not deserialize 20,000
   // rows only to throw most of them away.
-  const records = readSeams({ file, store, limit: budget.maxPairs })
+  const records = readSeams({ file, store, limit: Math.max(initialBudget.maxPairs, 25_000) })
+  // Progressive scaling: when `preset === 'auto'` and no explicit profile was
+  // pinned, more seams automatically unlocks more transitions & larger capacity!
+  const scaling = resolveScalingTier(records.length, { mobile: initialBudget.host === 'android' })
+  const budget =
+    profile ??
+    (chosenPreset === 'auto' ? trainingProfile({ preset: 'auto', seams: records.length }) : initialBudget)
   // Bound the set before splitting: a phone should not pay for two years of
   // seams, and the most recent behaviour is the behaviour worth learning.
   let pairs = buildDataset(records)
@@ -404,6 +412,17 @@ export async function trainModels({
         : { available: false, used: false, reason: torchRun.reason, planned: torchRun.planned !== false }
       : { available: false, used: false, reason: preference === 'js' ? 'the JavaScript trainer was asked for' : 'not attempted' },
     rl: rlReport,
+    scaling: {
+      tier: scaling.id,
+      label: scaling.label,
+      seams: scaling.seams,
+      unlockedTransitions: scaling.unlockedCount,
+      knots: scaling.knots,
+      policyParams: scaling.policyParams,
+      neuralPreset: scaling.neuralPreset,
+      neuralParams: scaling.neuralParams,
+      nextTier: scaling.nextTier
+    },
     activated: Boolean(activate && improved),
     model: improved && activate ? { file: savedBest?.file ?? null, name: savedBest?.name ?? null, digest: savedBest?.digest ?? null, activated: true } : null,
     ms: Date.now() - started

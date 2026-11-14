@@ -19,6 +19,7 @@ import {
 import { runDjTrainingPipeline } from '../src/core/models/djPipeline.ts'
 import { benchmarkArchitectures } from '../src/core/models/benchmark.ts'
 import { listNeuralPresets } from '../src/core/models/architectures.ts'
+import { scalingLadderSummary } from '../src/core/models/scaling.ts'
 
 function parseArgs(argv: string[]): { cmd: string; flags: Record<string, string> } {
   const cmd = argv[0] ?? 'help'
@@ -51,6 +52,21 @@ async function main() {
     return
   }
 
+  if (cmd === 'scaling') {
+    const seams = flags.seams ? Number(flags.seams) : 0
+    const summary = scalingLadderSummary(seams, { mobile: flags.mobile === 'true' })
+    console.log(
+      `Seam scaling ladder (seams=${summary.seams} -> tier=${summary.tier}, transitions=${summary.unlockedCount}/${summary.totalTransitions}, knots=${summary.knots}, neural=${summary.neuralPreset} ${summary.neuralParams.toLocaleString()} params)`
+    )
+    for (const t of summary.tiers) {
+      const mark = t.id === summary.tier ? '*' : t.unlocked ? '+' : ' '
+      console.log(
+        ` ${mark} ${t.id.padEnd(11)} >=${String(t.minSeams).padStart(6)} seams -> ${String(t.transitions).padStart(2)} transitions, ${String(t.knots).padStart(2)} knots, policy=${String(t.policyParams).padStart(6)}p, neural=${t.neuralPreset.padEnd(18)} (${String(t.neuralParams).padStart(9)} params)`
+      )
+    }
+    return
+  }
+
   if (cmd === 'extract') {
     const manifestPath = flags.manifest
     const outPath = flags.out
@@ -75,7 +91,7 @@ async function main() {
     }
     const result = await runDjTrainingPipeline({
       datasetPath,
-      preset: flags.preset ?? 'tcn-compact',
+      preset: flags.preset ?? 'auto',
       epochs: flags.epochs ? Number(flags.epochs) : 40,
       batchSize: flags.batch ? Number(flags.batch) : 16,
       learningRate: flags.lr ? Number(flags.lr) : 3e-3,
@@ -144,7 +160,7 @@ async function main() {
     return
   }
 
-  console.log('Commands: presets | extract | train | benchmark')
+  console.log('Commands: presets | scaling | extract | train | benchmark')
 }
 
 main().catch((err) => {

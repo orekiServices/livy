@@ -118,5 +118,12 @@ export type {
 } from './djPipeline.ts'
 export { benchmarkArchitectures, measureInferenceLatency } from './benchmark.ts'
 export type { ArchitectureBenchmarkEntry, BenchmarkReport } from './benchmark.ts'
+export {
+  SEAM_SCALING_TIERS,
+  estimatePolicyParams,
+  resolveScalingTier,
+  scalingLadderSummary
+} from './scaling.ts'
+export type { ResolvedScalingTier, ScalingTierId, SeamScalingTier } from './scaling.ts'
 
 export { models as default } from './host.ts'
