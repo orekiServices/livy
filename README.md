@@ -14,7 +14,7 @@ Bun + Rust. No ffmpeg, no database server, no external mixer.
 
 ```
 server/   the node — sources, automix, filters, REST + ICY
-web/      the owner console — Next.js, exported to static files
+web/      the owner console — Next.js, exported to static files or served
 client/   the listener player — created with create-next-app, exported to /listen
 native/   MetroS (reframing/transcoding), MetroDB (SQLite), MetroFX (DSP), in Rust
 api/      the Vercel function entry point
@@ -172,6 +172,28 @@ storage and is never put in a URL.
 bun run build:web        # rebuild the console and install it into the node
 cd web && bun run dev    # develop it on :3000 against a node on :2333
 ```
+
+### Running the console as its own server
+
+The export is the default shape, not the only one. `web/` is also a real Next
+server, for when the UI should live somewhere other than the node — a host
+with its own port, its own TLS, its own proxy in front of it:
+
+```bash
+cd web
+bun run build:server                     # Next build, no export
+bun run start                            # :3000, proxies to 127.0.0.1:2399
+LIVY_NODE=https://radio.example bun run start
+```
+
+`LIVY_CONSOLE_SERVER=1` switches the config: no `output: 'export'`, a separate
+`web/.next-server` build directory so the two shapes do not overwrite each
+other, and rewrites that carry `/api`, `/stream` and `/listen` to the node in
+`LIVY_NODE`. That last one matters for audio: the browser talks to the console
+origin, the console asks the node, and the player in `RadioProvider` is
+same-origin either way — no CORS, no mixed content, no second URL to
+configure in the UI. Streaming responses are piped, not buffered, so a live
+stream is as live through the proxy as it is from the node.
 
 ## Automix, models and training
 

@@ -5,6 +5,7 @@ node_modules/
 # it into server/plugins/console/public (which *is* committed, because it is
 # what a fresh clone serves).
 web/.next/
+web/.next-server/
 web/out/
 
 # Runtime state: the database, its WAL files, the owner key, logs, caches.
