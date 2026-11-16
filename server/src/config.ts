@@ -142,13 +142,10 @@ export const DEFAULT_CONFIG = {
       ttlMs: 7 * 24 * 60 * 60_000
     }
   },
-  // The learned automix policy. On by default, trained while stations play:
-  // a fast small multi-train every `everySeams` new seams, best candidate
-  // activated only if it beats the incumbent on a held-out split.
-  // Model and training defaults live in `core/models/settings.js`: a Termux
-  // node lowers them before a config file is applied. Keep `hf` here so the
-  // environment overrides below have a container even when config.json is
-  // silent.
+  // DJ recommendation-model settings. The legacy transition/effect classifier
+  // is retired; next-track training replaces its seam-based objective. Defaults
+  // live in `core/models/settings.ts`. Keep `hf` here so environment overrides
+  // have a container even when config.json is silent.
   models: {
     hf: {}
   },
@@ -159,23 +156,22 @@ export const DEFAULT_CONFIG = {
     loop: true,
     maxListeners: 500,
     trackLimit: 40,
-    // Automix: crossfades, transition effects and the voice-tracking DJ.
+    // Automix: crossfade-only transitions, GetSongBPM beat metadata, and the voice-tracking DJ.
     automix: {
       enabled: true,
       crossfadeMs: 6000,
-      // 'auto' lets the measured correlation of the two songs pick the fade
-      // law (equal-gain … equal-power); pin it if you disagree.
+      // 'auto' lets measured correlation pick equal-gain vs equal-power.
       curve: 'auto', // 'auto' | 'equal-power' | 'equal-gain'
-      // 'crossfade' | 'bass-swap' | 'filter' | 'echo' | 'sweep' | 'spindown' | 'slam'
-      effect: 'crossfade',
+      // Compatibility sentinel; 'auto' and 'crossfade' both render a crossfade.
+      effect: 'auto',
+      smart: true,
+      minCrossfadeMs: 2000,
+      maxCrossfadeMs: 30_000,
       minTrackMs: 20_000,
-      beatAlign: true, // land the incoming song on a beat of the outgoing one
-      beatmatch: true, // time-stretch the seam so the two tempos actually match
+      beatAlign: true, // GetSongBPM supplies tempo; local DSP estimates waveform phase only
+      beatmatch: true, // time-stretch the seam so the two service tempos actually match
       maxStretchPercent: 12, // refuse to beatmatch further apart than this
-      // Joint tempo analysis, after automix-engine's select_tempo_pair: the
-      // pair is scored, not each song separately, which is what stops the
-      // half-time octave error that leaves two 128 BPM records unmixed.
-      analysePair: true,
+      model: false, // legacy effect-classifier switch; Automix no longer uses it
       // Release the matched tempo back to the incoming song's own tempo over
       // this window, instead of leaving it stretched for the rest of the track.
       tempoReleaseMs: 4000,
@@ -243,7 +239,6 @@ function fromEnv(config) {
   if (env.AUTOMIX_CROSSFADE_MS) out.stationDefaults.automix.crossfadeMs = Number(env.AUTOMIX_CROSSFADE_MS)
   if (env.AUTOMIX_EFFECT) out.stationDefaults.automix.effect = env.AUTOMIX_EFFECT
   if (env.AUTOMIX_TEMPO_RELEASE_MS) out.stationDefaults.automix.tempoReleaseMs = Number(env.AUTOMIX_TEMPO_RELEASE_MS)
-  if (env.AUTOMIX_PAIR === '0' || env.AUTOMIX_PAIR === 'off') out.stationDefaults.automix.analysePair = false
   if (env.AUTOMIX_VOCAL === '0' || env.AUTOMIX_VOCAL === 'off') out.stationDefaults.automix.vocalAware = false
   // A filter chain as JSON, so a container can ship a station's sound in its
   // environment without writing config.json.

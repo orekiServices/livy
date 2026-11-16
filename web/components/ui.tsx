@@ -324,7 +324,7 @@ export function Empty({ icon, title, children, action }: EmptyProps) {
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-ink-700 bg-ink-900 px-6 py-10 text-center">
       {icon && <span className="mb-2 text-ink-500">{icon}</span>}
-      {title && <h3 className="text-sm font-semibold text-ink-100">{title}</h3>}
+      {title && <h2 className="text-sm font-semibold text-ink-100">{title}</h2>}
       <p className="mt-1 max-w-md text-xs text-ink-500">{children}</p>
       {action && <div className="mt-4">{action}</div>}
     </div>
@@ -374,7 +374,14 @@ export function PageSkeleton({ title, subtitle, blocks = 3, rows }: PageSkeleton
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading">
       {title ? (
-        <PageHeading title={title} subtitle={subtitle} />
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-ink-700 pb-4">
+          <div className="min-w-0">
+            <div role="heading" aria-level={1} className="text-2xl font-semibold tracking-tight text-ink-100 sm:text-3xl">
+              {title}
+            </div>
+            {subtitle && <p className="mt-1 max-w-2xl text-sm text-ink-500">{subtitle}</p>}
+          </div>
+        </div>
       ) : (
         <div className="skeleton h-12 w-56 rounded-md" />
       )}

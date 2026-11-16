@@ -6,7 +6,7 @@
  * a clean smart-crossfade fallback whenever no beat-matched plan clears the
  * quality bar.
  */
-import { clamp } from '../dsp.ts'
+import { clamp } from '../dsp/index.ts'
 import {
   harmonicCompatibility,
   rhythmSimilarity,

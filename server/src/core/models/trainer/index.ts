@@ -13,7 +13,7 @@ import { models } from '../host.ts'
 import { saveModel } from '../storage/local.ts'
 import { modelSettings } from '../settings.ts'
 import { recordModel } from '../registry.ts'
-import { buildDataset, accuracy, brier, brierSkill, confidence, loss, readSeams, recencySummary, split, support, LOG_FILE } from './dataset.ts'
+import { buildDataset, accuracy, brier, brierSkill, confidence, loss, readSeams, readAllSeams, recencySummary, split, support, LOG_FILE } from './dataset.ts'
 import { gpuAvailable, trainOnGpu } from './gpu.ts'
 import { planTorch, trainWithTorch, torchStatus, trainBackend } from './torch.ts'
 import { trainingProfile } from '../device.ts'
@@ -22,6 +22,7 @@ import { trainRL } from '../rl.ts'
 
 export {
   readSeams,
+  readAllSeams,
   recordSeam,
   buildDataset,
   split,

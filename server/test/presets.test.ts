@@ -144,6 +144,16 @@ test('the owner API lists presets and applies them to the next run', async (t) =
   assert.equal(list._status, 200)
   assert.deepEqual(list.presets.map((entry) => entry.id), ['auto', 'fast', 'balanced', 'wide', 'deep'])
   assert.equal(list.settings.preset, 'auto')
+  assert.equal(list.bpmi.name, 'BPMi')
+  assert.equal(list.bpmi.backend, 'cpu')
+  const bpmiStatus = await api(base, '/api/v1/owner/models/bpmi', { key: KEY })
+  assert.equal(bpmiStatus._status, 200)
+  assert.equal(bpmiStatus.backend, 'cpu')
+  const bpmiTrain = await api(base, '/api/v1/owner/models/bpmi/train', {
+    method: 'POST', key: KEY, body: { gpu: true, device: 'cuda' }
+  })
+  assert.equal(bpmiTrain._status, 409)
+  assert.equal(bpmiTrain.backend, 'cpu', 'BPMi cannot be routed to GPU with a request flag')
 
   const patched = await api(base, '/api/v1/owner/models/settings', { method: 'PATCH', key: KEY, body: { preset: 'deep' } })
   assert.equal(patched._status, 200)

@@ -46,7 +46,7 @@ import createLogger from '../util/logger.ts'
 import { normaliseSchema, defaultsOf, validate as validateSettings, describe as describeSettings } from './pluginSchema.ts'
 import { resolveStaticFile, sendFile } from '../util/files.ts'
 import { isOwner } from '../server/owner.ts'
-import { registerEffect, unregisterEffect, EFFECTS } from './automix.ts'
+import { registerEffect, unregisterEffect, EFFECTS } from './automix/index.ts'
 import { buildContext } from './plugins/context.ts'
 
 const log = createLogger('plugins')

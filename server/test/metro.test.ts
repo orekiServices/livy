@@ -12,9 +12,9 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { MetroFramer, probeMp3, scanFrames, decodeMp3, engineInfo } from '../src/util/metro.ts'
 import { Mp3FrameSplitter, probeMp3 as probeMp3Js, buildSilence } from '../src/util/mp3.ts'
-import Station from '../src/core/station.ts'
+import Station from '../src/core/station/index.ts'
 import { SourceRegistry } from '../src/sources/index.ts'
-import { encodeMp3 } from '../src/core/automix.ts'
+import { encodeMp3 } from '../src/core/automix/index.ts'
 import { quietLogs, tmpdir, makeMedia, waitFor } from './helpers.ts'
 
 quietLogs()

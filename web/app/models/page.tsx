@@ -177,6 +177,76 @@ function TrainForm({
   )
 }
 
+function BPMiCard({ status, onTrained }: { status: any; onTrained: (report: any) => void }) {
+  const [epochs, setEpochs] = useState<number | string>(0)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<any>(null)
+
+  const train = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const body: Record<string, unknown> = { full: true }
+      if (Number(epochs) > 0) body.epochs = Number(epochs)
+      const report = await owner('/models/bpmi/train', { method: 'POST', body })
+      setResult(report)
+      onTrained(report)
+    } catch (problem) {
+      const err = problem as ApiError
+      if (err.payload) {
+        setResult(err.payload)
+        onTrained(err.payload)
+      } else setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel
+      title="BPMi"
+      subtitle="CPU-only tempo model. It learns from every labelled seam side across this node’s stations and sources."
+      actions={<Badge tone={status?.loaded ? 'lime' : 'ink'}>{status?.loaded ? 'checkpoint loaded' : 'collecting examples'}</Badge>}
+    >
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat
+          label="Observations"
+          value={status?.coverage?.observations ?? status?.observations ?? 0}
+          hint={`${status?.coverage?.stations ?? status?.stations ?? 0} stations · ${status?.coverage?.sources ?? status?.sources ?? 0} sources`}
+        />
+        <Stat label="Parameters" value={status?.parameters ?? 0} hint={(status?.shape ?? []).join('·') || 'capacity grows with data'} />
+        <Stat
+          label="Within 5%"
+          value={percent(status?.validation?.within5Percent)}
+          hint={status?.validation?.mae == null ? 'not trained yet' : `${status.validation.mae} BPM MAE`}
+          accent={status?.eligible ? 'lime' : 'ink'}
+        />
+        <Stat label="Backend" value="CPU" hint="BPMi never uses GPU" accent="cyan" />
+      </div>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <Field label="Epochs" hint="0 selects the data-scaled budget; max 10,000">
+          <input className={inputClass} type="number" min="0" max="10000" value={epochs} onChange={(event) => setEpochs(event.target.value)} />
+        </Field>
+        <Button variant="primary" onClick={() => void train()} disabled={busy}>
+          {busy ? 'Training BPMi…' : 'Full CPU retrain'}
+        </Button>
+        {error && <span className="text-xs text-rose">{error}</span>}
+      </div>
+      {result && (
+        <p className="mt-2 text-xs text-ink-300">
+          {result.trained
+            ? `Fit ${result.observations} observations from ${result.tracks} recordings · ${result.parameters} parameters · ${percent(result.validation?.within5Percent)} held-out within 5% · ${result.ms} ms.`
+            : result.reason ?? 'No BPMi checkpoint was produced.'}
+        </p>
+      )}
+      <p className="mt-1 text-[11px] text-ink-500">
+        Track-grouped validation is measured first; the final fit includes all eligible seams. GetSongBPM remains the Automix beatmatch authority.
+      </p>
+    </Panel>
+  )
+}
+
 function Report({ report }: { report: any }) {
   if (!report) return null
   if (!report.trained) {
@@ -293,7 +363,8 @@ function Registry({
               {models.map((model) => (
                 <tr key={model.name} className={cx('border-t border-ink-700', model.active && 'bg-amber/10')}>
                   <td className="py-2 pr-2 font-mono text-ink-100">
-                    {model.name} {model.active && <Badge tone="amber">on air</Badge>}
+                    {model.name} {model.legacy && <Badge tone="amber">legacy .bin</Badge>} {model.active && <Badge tone="lime">active</Badge>}
+                    {model.legacy && <div className="mt-1 text-[10px] text-ink-500">Activation converts this file to Safetensors.</div>}
                   </td>
                   <td className="py-2 pr-2 font-mono text-ink-300">{(model.shape ?? []).join('·')}</td>
                   <td className="py-2 pr-2 font-mono text-ink-300">{model.backend ?? 'n/a'}</td>
@@ -396,6 +467,7 @@ export default function ModelsPage() {
               </Panel>
             )}
             <TorchCard torch={models?.torch} backend={models?.backend} />
+            <BPMiCard status={models?.bpmi} onTrained={() => void load()} />
 
             <div className="grid gap-4 lg:grid-cols-2">
               <TrainForm

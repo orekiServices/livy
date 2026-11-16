@@ -47,8 +47,9 @@ export const activationDerivative = (x) => (x > 0 ? 1 : 0.01)
  * A dense network of `activation` layers with a linear output.
  *
  * Weights are `weights[layer][i * out + j]`, biases `biases[layer][j]`, which
- * is the same row-major order the `.bin` format stores, so a model can be
- * round-tripped without a transpose.
+ * is the same row-major order Safetensors records for each weight tensor, so a
+ * model can be round-tripped without a transpose. The legacy `.bin` reader uses
+ * this same in×out layout.
  */
 export class Network {
   declare biases: any

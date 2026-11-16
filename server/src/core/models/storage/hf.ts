@@ -114,7 +114,7 @@ export async function downloadFile(name, cfg = hfConfig(), { fetchImpl = fetch }
   return Buffer.from(await response.arrayBuffer())
 }
 
-/** Every `.bin` in the repo, newest last. */
+/** Every Safetensors model and legacy `.bin` in the repo, newest last. */
 export async function listRemote(cfg = hfConfig(), { fetchImpl = fetch }: any = {}) {
   if (!hfReady(cfg)) return []
   const response = await fetchImpl(`${API}/api/models/${cfg.repo}/tree/${cfg.revision}?recursive=true`, {
@@ -123,8 +123,8 @@ export async function listRemote(cfg = hfConfig(), { fetchImpl = fetch }: any = 
   if (response.status === 404) return []
   const entries = await json(response, 'tree')
   return (entries ?? [])
-    .filter((entry) => entry.type === 'file' && entry.path?.endsWith('.bin'))
-    .map((entry) => ({ name: entry.path.split('/').pop(), path: entry.path, bytes: entry.size ?? null }))
+    .filter((entry) => entry.type === 'file' && /\.(?:safetensors|bin)$/i.test(entry.path ?? ''))
+    .map((entry) => ({ name: entry.path.split('/').pop(), path: entry.path, bytes: entry.size ?? null, legacy: /\.bin$/i.test(entry.path) }))
 }
 
 export async function hubStatus(cfg = hfConfig(), { fetchImpl = fetch }: any = {}): Promise<Record<string, any>> {

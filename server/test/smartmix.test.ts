@@ -17,10 +17,10 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 
-import { smartCrossfadeMs, EFFECTS, AUTO_EFFECT } from '../src/core/automix.ts'
+import { smartCrossfadeMs, EFFECTS, AUTO_EFFECT } from '../src/core/automix/index.ts'
 import { previewTransition } from '../src/core/preview.ts'
 import { analyseBeat, stretchAudio, engineInfo, probeMp3 } from '../src/util/metro.ts'
-import { estimateBeat, timeStretch } from '../src/core/dsp.ts'
+import { estimateBeat, timeStretch } from '../src/core/dsp/index.ts'
 import { quietLogs, tmpdir, beatLoop, makeMedia, boot, api } from './helpers.ts'
 
 quietLogs()
@@ -122,8 +122,8 @@ test('the blend length follows the pair, within its bounds', () => {
 
 /* ------------------------------ preview ------------------------------- */
 
-test('every transition can be auditioned before it goes on air', async () => {
-  for (const effect of ['crossfade', 'roll', 'drop', AUTO_EFFECT]) {
+test('the crossfade can be auditioned before it goes on air', async () => {
+  for (const effect of ['crossfade', AUTO_EFFECT]) {
     const preview = await previewTransition({ effect, crossfadeMs: 4000 })
     const probe = probeMp3(preview.mp3)
 
@@ -153,18 +153,18 @@ test('the owner can list and hear transitions over HTTP', async (t) => {
 
   const listed = await api(base, '/api/v1/owner/automix', { key: 'preview-key' })
   assert.ok(listed.effects.includes('auto'))
-  assert.ok(listed.effects.length >= 10, 'ten transitions and auto')
-  assert.ok(listed.traits.roll, 'with what each one needs')
+  assert.deepEqual(listed.effects, ['auto', 'crossfade'])
+  assert.ok(listed.traits.crossfade, 'with its built-in traits')
   assert.ok(listed.engine, 'and where the DSP runs')
 
   const res = await fetch(`${base}/api/v1/owner/automix/preview`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-owner-key': 'preview-key' },
-    body: JSON.stringify({ effect: 'filter', crossfadeMs: 3000 })
+    body: JSON.stringify({ effect: 'crossfade', crossfadeMs: 3000 })
   })
   assert.equal(res.status, 200)
   assert.equal(res.headers.get('content-type'), 'audio/mpeg')
-  assert.equal(res.headers.get('x-livy-effect'), 'filter')
+  assert.equal(res.headers.get('x-livy-effect'), 'crossfade')
   assert.ok(probeMp3(Buffer.from(await res.arrayBuffer())).frames > 40, 'and it is audio')
 
   // Owner-only, and honest about nonsense.

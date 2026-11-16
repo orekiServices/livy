@@ -15,6 +15,7 @@ import { models } from './host.ts'
 import { hfConfig, hfReady } from './storage/hf.ts'
 import { pushModels } from './registry.ts'
 import { scalingLadderSummary } from './scaling.ts'
+import { trainBPMi } from './bpmi.ts'
 
 const log = createLogger('dj-auto')
 
@@ -111,6 +112,16 @@ export class AutoTrainer {
         gpu: 'auto'
       })
 
+      try {
+        // BPMi is a separate CPU-only model; its full-data pass learns from
+        // every labelled side of every station/source seam, not the DJ-policy
+        // station argument or the GPU/PyTorch training backend.
+        report.bpmi = await trainBPMi({ store: this.store, fast: settings.fast !== false, full: true })
+      } catch (error) {
+        report.bpmi = { trained: false, model: 'BPMi', backend: 'cpu', reason: error.message }
+        this.log.warn(`BPMi auto-train: ${error.message}`)
+      }
+
       this.lastSeams = seams
       this.lastRunAt = Date.now()
       this.lastResult = report
@@ -183,7 +194,13 @@ export class AutoTrainer {
             accuracyAfter: this.lastResult.accuracyAfter,
             activated: this.lastResult.activated,
             best: this.lastResult.best?.name ?? null,
-            ms: this.lastResult.ms
+            ms: this.lastResult.ms,
+            bpmi: this.lastResult.bpmi ? {
+              trained: this.lastResult.bpmi.trained,
+              observations: this.lastResult.bpmi.observations ?? 0,
+              validation: this.lastResult.bpmi.validation ?? null,
+              reason: this.lastResult.bpmi.reason ?? null
+            } : null
           }
         : null,
       error: this.error

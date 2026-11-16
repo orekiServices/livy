@@ -19,7 +19,7 @@
  *       - 14 continuous automation curves × K knots (gainA/B, 3-band EQ A/B,
  *         vocalDuckA/B, filterA/B, reverbSendA, delaySendA)
  */
-import { clamp } from '../dsp.ts'
+import { clamp } from '../dsp/index.ts'
 
 export type ArchitectureKind = 'mlp-micro' | 'tcn-compact' | 'gru-dj' | 'transformer-mini'
 

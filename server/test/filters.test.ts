@@ -23,7 +23,7 @@ import {
   validate,
   renderWithStretch
 } from '../src/core/filters/index.ts'
-import { samplePeak } from '../src/core/dsp.ts'
+import { samplePeak } from '../src/core/dsp/index.ts'
 import { quietLogs } from './helpers.ts'
 
 quietLogs()

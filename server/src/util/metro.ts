@@ -678,7 +678,7 @@ export async function analyseBeat(mono, sampleRate) {
     const beat = await native.analyseBeatAsync(mono, sampleRate)
     return beat ?? null
   }
-  const { estimateBeat } = await import('../core/dsp.ts')
+  const { estimateBeat } = await import('../core/dsp/index.ts')
   return estimateBeat(mono, sampleRate)
 }
 
@@ -695,11 +695,11 @@ export async function stretchAudio(channels, sampleRate, { stretch = 1, rampSamp
     const out = await native.timeStretchAsync(left, right, sampleRate, stretch, rampSamples, length ?? undefined)
     // The time map is pure arithmetic and the caller needs it to find where
     // a beat *landed*; it is the same map the native side used.
-    const { stretchMap } = await import('../core/dsp.ts')
+    const { stretchMap } = await import('../core/dsp/index.ts')
     return { channels: [out.left, out.right], length: out.length, map: stretchMap(stretch, rampSamples), engine: 'native' }
   }
 
-  const { timeStretch } = await import('../core/dsp.ts')
+  const { timeStretch } = await import('../core/dsp/index.ts')
   const out = timeStretch([left, right], sampleRate, { stretch, rampSamples, length })
   return { ...out, engine: 'javascript' }
 }

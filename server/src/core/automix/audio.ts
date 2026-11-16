@@ -3,7 +3,7 @@
  * falls back to the WASM decoder / lamejs when it is not.
  */
 import { decodeMp3 as metroDecode, encodeMp3 as metroEncode } from '../../util/metro.ts'
-import { resample } from '../dsp.ts'
+import { resample } from '../dsp/index.ts'
 
 export { resample }
 

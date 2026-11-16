@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 
 import { Mp3FrameSplitter, probeMp3 as probeJs } from '../src/util/mp3.ts'
 import { MetroFramer, probeMp3, decodeMp3, transcodeToMp3, encodeMp3, engineInfo } from '../src/util/metro.ts'
-import { encodeMp3 as encodeForMaterial } from '../src/core/automix.ts'
+import { encodeMp3 as encodeForMaterial } from '../src/core/automix/index.ts'
 import { configureLogging } from '../src/util/logger.ts'
 
 configureLogging({ level: 'error', color: false, file: { enabled: false } })

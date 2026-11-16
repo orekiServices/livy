@@ -11,7 +11,7 @@
  *   • Smooth zipper-free resonant LP/HP filter sweeps, beat-synced echo, and
  *     stereo reverb wash sends
  */
-import { Biquad, Crossover, DB, clamp, echoTail, fadeGains } from '../dsp.ts'
+import { Biquad, Crossover, DB, clamp, echoTail, fadeGains } from '../dsp/index.ts'
 
 export const DEFAULT_KNOTS = 8
 

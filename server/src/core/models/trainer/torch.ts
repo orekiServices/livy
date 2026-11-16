@@ -10,10 +10,10 @@
  *     a time, over batches sized for BLAS, on as many threads as the process
  *     is given — and on a GPU, which the JavaScript path cannot use at all.
  *   • **A model that can grow.** The next policy will not be 500 parameters.
- *   • **One definition.** Weights come back in the `.bin` layout and are
- *     loaded into a real `Network`, so the accuracy the trainer reports is
- *     measured by the code that mixes the music. There is no second inference
- *     path, and no Python at request time.
+ *   • **One definition.** Weights come back as arrays and are written by Node
+ *     in the standard Safetensors layout, then loaded into the same `Network`
+ *     used for inference. There is no second serving path and no Python at
+ *     request time.
  *
  * The worker is a long-lived child process speaking one JSON line per request
  * (`train.py --serve`): importing torch costs about a second, and paying that

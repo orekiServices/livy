@@ -19,19 +19,27 @@ import {
   DEFAULT_AUTOMIX,
   registerEffect,
   unregisterEffect,
+  GetSongBpmServiceError,
   decodeMp3
-} from '../src/core/automix.ts'
-import { estimateBeat, samplePeak, TO_DB } from '../src/core/dsp.ts'
+} from '../src/core/automix/index.ts'
+import { estimateBeat, samplePeak, TO_DB } from '../src/core/dsp/index.ts'
 import { quietLogs, beatLoop, tone, toMp3, framesFrom } from './helpers.ts'
 
 quietLogs()
 
 const TRACK_A = { id: 'a', title: 'Opener', artist: 'Kavi' }
 const TRACK_B = { id: 'b', title: 'Closer', artist: 'Mira' }
+const testTempos = new Map<string, number>()
 
 /** Encode audio and hand it back as reader frames, the way a station does. */
 async function frames(audio, track, { bitrate = 128 }: any = {}) {
+  if (track?.id && Number.isFinite(audio?.bpm)) testTempos.set(String(track.id), audio.bpm)
   return framesFrom(await toMp3(audio, bitrate), track)
+}
+
+async function testTempoLookup(track) {
+  const tempo = testTempos.get(String(track?.id)) ?? Number(track?.tempo) ?? 120
+  return { tempo, confidence: 1, id: `test:${track?.id ?? 'unknown'}`, title: track?.title ?? '', artist: track?.artist ?? null, uri: null }
 }
 
 const totalMs = (list) => list.reduce((sum, frame) => sum + frame.ms, 0)
@@ -42,7 +50,7 @@ function automix(options: any = {}, ctx: any = {}) {
     // Most tests are about something other than which transition was
     // chosen, so they pin one; the picker has its own test below.
     { minTrackMs: 3000, crossfadeMs: 2000, maxRenderMs: 8000, effect: 'crossfade', ...options, dj: { enabled: false, ...(options.dj ?? {}) } },
-    { station: { name: 'Test FM', subscribers: new Set() }, ...ctx }
+    { station: { name: 'Test FM', subscribers: new Set() }, getSongBpmTempo: testTempoLookup, ...ctx }
   )
 }
 
@@ -109,6 +117,8 @@ test('a real seam is beatmatched, phase-locked and level-matched', async () => {
   assert.equal(report.from, 'Opener')
   assert.equal(report.to, 'Closer')
   assert.equal(report.effect, 'crossfade')
+  assert.equal(report.beat.source, 'GetSongBPM')
+  assert.equal(report.beat.serviceConfidence, 1)
 
   // Beatmatching: the outgoing song is stretched onto the incoming tempo.
   assert.equal(report.beat.matched, true, 'the tempos were matched, not just aligned')
@@ -138,6 +148,36 @@ test('a real seam is beatmatched, phase-locked and level-matched', async () => {
   assert.ok(TO_DB(samplePeak([audio.left, audio.right])) <= -0.5, 'and it does not clip')
 })
 
+
+test('GetSongBPM supplies the tempo while local analysis contributes phase only', async () => {
+  const mix = automix({ crossfadeMs: 2500 }, {
+    getSongBpmTempo: async (track) => ({
+      tempo: track?.id === TRACK_A.id ? 116 : 124,
+      confidence: 0.99,
+      id: `service:${track?.id}`,
+      title: track?.title,
+      artist: track?.artist,
+      uri: null
+    })
+  })
+
+  await mix.push(await frames(beatLoop({ bpm: 120, seconds: 9 }), TRACK_A))
+  await mix.push(await frames(beatLoop({ bpm: 128, seconds: 9, freq: 220 }), TRACK_B))
+  const beat = mix.info().last.beat
+
+  assert.equal(beat.source, 'GetSongBPM')
+  assert.equal(beat.bpm, 116)
+  assert.equal(beat.incomingBpm, 124)
+  assert.equal(beat.serviceConfidence, 0.99)
+  assert.ok(beat.confidence > 0.25, 'the local phase estimate is independently usable')
+  assert.equal(beat.bpmi.model, 'BPMi')
+  assert.equal(beat.bpmi.backend, 'cpu')
+  assert.equal(beat.bpmi.profiles.outgoing.referenceBpm, 116)
+  assert.equal(beat.bpmi.profiles.incoming.referenceBpm, 124)
+  assert.ok(beat.bpmi.profiles.outgoing.candidates.length > 0, 'BPMi captures local tempo candidates for seam training')
+  assert.equal(beat.matched, true)
+})
+
 test('a quieter incoming song is pulled up, but never further than maxGainDb', async () => {
   const mix = automix({ crossfadeMs: 3000, maxGainDb: 4 })
   const loud = beatLoop({ bpm: 120, seconds: 9, gain: 0.7 })
@@ -152,45 +192,65 @@ test('a quieter incoming song is pulled up, but never further than maxGainDb', a
   assert.equal(loudness.appliedDb, 4, 'the match is clamped to maxGainDb')
 })
 
-test('a plugin effect is honoured, and unknown effects are refused', async () => {
-  const seen = []
-  registerEffect('unit-test-fx', (ctx) => {
-    seen.push({ fade: ctx.fade, total: ctx.total, beatSamples: ctx.beatSamples })
-    // A deliberately simple renderer: hard cut at the halfway point.
-    for (let i = 0; i < ctx.total; i += 1) {
-      const from = i < ctx.fade / 2 ? ctx.a : ctx.b
-      ctx.left[i] = from.left[i] ?? 0
-      ctx.right[i] = from.right[i] ?? 0
-    }
+test('only the built-in crossfade can be configured or registered', async () => {
+  assert.deepEqual([...EFFECTS], ['crossfade'])
+
+  const retiredModels = automix({ model: true, continuousBlend: true, neuralAutomix: true })
+  assert.equal(retiredModels.info().model, false)
+  assert.equal(retiredModels.info().continuousBlend, false)
+  assert.equal(retiredModels.info().neuralAutomix, false)
+  retiredModels.configure({ model: true, continuousBlend: true, neuralAutomix: true })
+  assert.equal(retiredModels.info().model, false, 'persisted and live settings cannot re-enable the effect classifier')
+  assert.throws(() => registerEffect('unit-test-fx', () => {}), /supports crossfade only/)
+  assert.equal(unregisterEffect('crossfade'), false, 'the built-in renderer is immutable')
+  assert.equal(chooseEffect({ tempoDelta: 50 }), 'crossfade')
+
+  const legacy = automix({ effect: 'filter' })
+  assert.equal(legacy.info().effect, 'auto', 'legacy persisted effects migrate to auto-crossfade')
+  assert.throws(() => legacy.configure({ effect: 'filter' }), /supports crossfade only/)
+
+  const automatic = automix({ effect: 'auto' })
+  await automatic.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
+  await automatic.push(await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B))
+  assert.equal(automatic.info().last.effect, 'crossfade')
+  assert.equal(automatic.info().last.chosen, true)
+
+  const pinned = automix({ effect: 'crossfade' })
+  await pinned.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
+  await pinned.push(await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B))
+  assert.equal(pinned.info().last.effect, 'crossfade')
+  assert.equal(pinned.info().last.chosen, false)
+})
+
+test('a GetSongBPM failure is reported and a safe crossfade stays on air', async () => {
+  const serviceError = new GetSongBpmServiceError('rate_limited', 'GetSongBPM service error: request limit reached.', 429)
+  const mix = automix({ effect: 'auto', crossfadeMs: 2500 }, {
+    getSongBpmTempo: async () => { throw serviceError }
   })
 
-  try {
-    assert.ok(EFFECTS.includes('unit-test-fx'))
-    const mix = automix({ effect: 'unit-test-fx', crossfadeMs: 3000 })
-    assert.equal(mix.info().effect, 'unit-test-fx')
+  await mix.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
+  const output = await mix.push(await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B))
+  const report = mix.info().last
 
-    await mix.push(await frames(beatLoop({ bpm: 120, seconds: 9 }), TRACK_A))
-    await mix.push(await frames(beatLoop({ bpm: 120, seconds: 9, freq: 220 }), TRACK_B))
+  assert.ok(report, 'the seam is still rendered')
+  assert.equal(report.effect, 'crossfade')
+  assert.equal(report.fallback.effect, 'crossfade')
+  assert.equal(report.fallback.serviceError.service, 'GetSongBPM')
+  assert.equal(report.fallback.serviceError.code, 'rate_limited')
+  assert.equal(report.serviceError.status, 429)
+  assert.match(report.fallback.reason, /GetSongBPM service error/)
 
-    assert.equal(seen.length, 1, 'the plugin renderer drew the seam')
-    assert.ok(seen[0].total >= seen[0].fade)
-    assert.equal(mix.info().last.effect, 'unit-test-fx')
-
-    assert.throws(() => mix.configure({ effect: 'does-not-exist' }), /Unknown transition/)
-    assert.equal(mix.info().effect, 'unit-test-fx', 'a rejected change leaves the setting alone')
-  } finally {
-    unregisterEffect('unit-test-fx')
-  }
-  assert.ok(!EFFECTS.includes('unit-test-fx'), 'the effect goes away with its plugin')
+  const seam = output.filter((frame) => frame.track.automix)
+  assert.ok(seam.length > 0, 'the safe crossfade reached the output')
+  const audio = await decodeMp3(Buffer.concat(seam.map((frame) => frame.data)))
+  assert.ok(samplePeak([audio.left, audio.right]) > 0.02, 'fallback audio is audible')
 })
 
 test('the built-in effects all render an audible, legal seam', { timeout: 60_000 }, async () => {
   const a = await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A)
   const b = await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B)
 
-  for (const effect of ['crossfade', 'bass-swap', 'filter', 'echo', 'sweep', 'spindown', 'slam', 'wash', 'roll', 'drop'].filter((id) =>
-    EFFECTS.includes(id)
-  )) {
+  for (const effect of EFFECTS) {
     const mix = automix({ effect, crossfadeMs: 2500 })
     await mix.push(a)
     const out = await mix.push(b)
@@ -257,64 +317,34 @@ test('the incoming tempo estimate the mix acts on is real', async () => {
   assert.ok(report.beat.confidence > 0.3)
 })
 
-test('the mix picks a transition per seam, and does not repeat itself', async () => {
-  // The picker on its own: same seam, many draws.
-  const clubSeam = { beat: true, matched: true, tempoDelta: 0.5, correlation: 0.2, fadeMs: 6000, energy: 0.8 }
-  const picks = new Set<string>()
-  for (let i = 0; i < 200; i += 1) picks.add(chooseEffect(clubSeam))
-  assert.ok(picks.size > 1, 'a matched club seam has more than one right answer')
-  for (const effect of picks) assert.ok(EFFECT_TRAITS[effect].energy >= 0.4, `${effect} suits a hot seam`)
-
-  // Nothing that needs a beat grid is chosen without one…
-  const noGrid = { beat: false, matched: false, tempoDelta: 40, correlation: 0.4, fadeMs: 6000, energy: 0.2 }
-  for (let i = 0; i < 100; i += 1) {
-    const effect = chooseEffect(noGrid)
-    assert.equal(EFFECT_TRAITS[effect].needsBeat, false, `${effect} needs a grid it cannot have`)
-  }
-
-  // …nothing longer than the blend is chosen for a short one…
-  for (let i = 0; i < 50; i += 1) {
-    const effect = chooseEffect({ ...noGrid, fadeMs: 900 })
-    assert.ok(EFFECT_TRAITS[effect].length <= 900, `${effect} cannot fit in 900ms`)
-  }
-
-  // …the DJ gets something calm to talk over…
-  for (let i = 0; i < 50; i += 1) {
-    const effect = chooseEffect({ ...clubSeam, talkover: true })
-    assert.ok(EFFECT_TRAITS[effect].energy <= 0.6, `${effect} fights the voice`)
-  }
-
-  // …and the last transition is avoided when anything else will do.
-  const repeats = new Set()
-  for (let i = 0; i < 100; i += 1) repeats.add(chooseEffect({ ...clubSeam, previous: 'roll' }))
-  assert.ok(!repeats.has('roll') || repeats.size > 1, 'the same trick is not played twice in a row')
-
-  // An owner-chosen effect is still honoured exactly.
-  const pinned = automix({ effect: 'filter', crossfadeMs: 3000 })
-  await pinned.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
-  await pinned.push(await frames(beatLoop({ bpm: 124, seconds: 8, freq: 220 }), TRACK_B))
-  assert.equal(pinned.info().last.effect, 'filter')
-  assert.equal(pinned.info().last.chosen, false)
+test('the crossfade policy has one answer for every seam shape', () => {
+  const seams = [
+    { beat: false, matched: false, tempoDelta: 40, correlation: 0.4, fadeMs: 6000, energy: 0.2 },
+    { beat: true, matched: true, tempoDelta: 0.5, correlation: 0.2, fadeMs: 6000, energy: 0.8, talkover: true },
+    { beat: true, matched: false, tempoDelta: 18, fadeMs: 8000, energy: 0.9, correlation: 0 }
+  ]
+  for (const seam of seams) assert.equal(chooseEffect(seam), 'crossfade')
+  assert.deepEqual(Object.keys(EFFECT_TRAITS), ['crossfade'])
 })
 
-test('auto mode renders a real seam and says what it chose', async () => {
+test('auto mode renders the only supported seam and reports the compatibility choice', async () => {
   const mix = automix({ effect: 'auto', crossfadeMs: 3000 })
   await mix.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
   const out = await mix.push(await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B))
 
   const report = mix.info().last
   assert.ok(report, 'a seam was rendered')
-  assert.ok(EFFECTS.includes(report.effect), `${report.effect} is a real transition`)
-  assert.equal(report.chosen, true, 'and it says the mix chose it')
+  assert.deepEqual([...EFFECTS], ['crossfade'])
+  assert.equal(report.effect, 'crossfade')
+  assert.equal(report.chosen, true, 'auto remains a compatibility sentinel')
   assert.ok(report.entryEnergy >= 0 && report.entryEnergy <= 1)
   assert.ok(out.some((frame) => frame.track.automix), 'the seam reached the output')
 
-  // A pool narrows the choice to what the owner allows.
-  const pooled = automix({ effect: 'auto', effectPool: ['crossfade', 'filter'], crossfadeMs: 3000 })
-  await pooled.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
-  await pooled.push(await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B))
-  assert.ok(['crossfade', 'filter'].includes(pooled.info().last.effect))
-  assert.throws(() => pooled.configure({ effectPool: ['nope'] }), /Unknown transition/)
+  const compatiblePool = automix({ effect: 'auto', effectPool: ['crossfade'], crossfadeMs: 3000 })
+  await compatiblePool.push(await frames(beatLoop({ bpm: 120, seconds: 8 }), TRACK_A))
+  await compatiblePool.push(await frames(beatLoop({ bpm: 120, seconds: 8, freq: 220 }), TRACK_B))
+  assert.equal(compatiblePool.info().last.effect, 'crossfade')
+  assert.throws(() => compatiblePool.configure({ effectPool: ['filter'] }), /supports crossfade only/)
 })
 
 test('every seam is joinable: no click where the render meets the programme', () => {
@@ -372,35 +402,17 @@ test('a vocal clash shortens the blend, and says why', () => {
   assert.equal(smartCrossfadeMs({ ...base, vocal: { outgoing: true, incoming: true } }, { smart: false, crossfadeMs: 6000 }).ms, 6000)
 })
 
-test('roll and drop are refused when the tempos do not actually meet', () => {
-  const seam = { beat: true, matched: false, tempoDelta: 18, fadeMs: 8000, energy: 0.9, correlation: 0 }
-  for (let run = 0; run < 40; run += 1) {
-    const picked = chooseEffect(seam, ['roll', 'drop'])
-    assert.notEqual(picked, 'roll', `run ${run} rolled on a 18 BPM gap`)
-    assert.notEqual(picked, 'drop', `run ${run} dropped on a 18 BPM gap`)
-  }
-  // A *folded* match with a wide raw gap is fine: the grid already met.
-  for (let run = 0; run < 20; run += 1) {
-    assert.equal(chooseEffect({ ...seam, matched: true, tempoDelta: 6, fadeMs: 3200 }, ['bass-swap']), 'bass-swap')
+test('legacy transition names cannot leak into the crossfade policy', () => {
+  for (const name of ['roll', 'drop', 'bass-swap', 'filter', 'echo', 'wash']) {
+    assert.equal(EFFECTS.includes(name), false, `${name} is no longer exposed`)
+    assert.throws(() => automix().configure({ effect: name }), /supports crossfade only/)
   }
 })
 
-test('two vocals prefer a masking transition over a bass-swap', () => {
-  const seam = {
-    beat: true,
-    matched: true,
-    tempoDelta: 1,
-    fadeMs: 6000,
-    energy: 0.5,
-    correlation: 0.3,
-    vocalOut: 1,
-    vocalIn: 1
-  }
-  let filter = 0
-  for (let run = 0; run < 60; run += 1) {
-    const picked = chooseEffect(seam, ['bass-swap', 'filter'])
-    assert.ok(picked === 'filter' || picked === 'bass-swap')
-    if (picked === 'filter') filter += 1
-  }
-  assert.ok(filter > 45, `filter masks the clash (${filter}/60)`)
+test('vocal information may adjust fade timing but cannot select another effect', () => {
+  const seam = { beat: true, matched: true, tempoDelta: 1, fadeMs: 6000, energy: 0.5, vocalOut: 1, vocalIn: 1, bpm: 120 }
+  assert.equal(chooseEffect(seam), 'crossfade')
+  const clean = smartCrossfadeMs(seam, { crossfadeMs: 6000 })
+  const clash = smartCrossfadeMs({ ...seam, vocal: { outgoing: true, incoming: true } }, { crossfadeMs: 6000 })
+  assert.ok(clash.ms < clean.ms, 'vocal clash shortens the crossfade relative to the clean seam')
 })

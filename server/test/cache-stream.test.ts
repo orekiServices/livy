@@ -3,11 +3,13 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createServer } from 'node:http'
 import { Readable } from 'node:stream'
+import type { AddressInfo } from 'node:net'
 
 import RadioCache, { MemoryLruCache, AudioDiskCache, audioCacheKey } from '../src/core/cache.ts'
 import SourceRegistry from '../src/sources/index.ts'
-import Station from '../src/core/station.ts'
+import Station from '../src/core/station/index.ts'
 import { createRadioServer } from '../src/index.ts'
 import { StreamErrorVoice } from '../src/server/streamErrors.ts'
 import { buildSilence } from '../src/util/mp3.ts'
@@ -235,6 +237,51 @@ test('Station caches clean MP3 frames on disk and retries once via fallback when
   await station._readTrack(emptyTrack)
   assert.equal(primaryStreams, 2)
   assert.equal(fallbackStreams, 1, '0-frame stream rescued by fallback clone')
+})
+
+
+test('direct-link MP3 is fully cached before the first frame is aired', async (t) => {
+  const dir = tmpDir(t)
+  const cache = new RadioCache({}, { defaultDir: dir })
+  const mp3 = Buffer.concat(buildSilence(900).frames)
+  const splitAt = Math.max(1, Math.floor(mp3.length / 2))
+  let releaseDownload
+  let signalFirstChunk
+  const downloadGate = new Promise((resolve) => { releaseDownload = resolve })
+  const firstChunk = new Promise((resolve) => { signalFirstChunk = resolve })
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'audio/mpeg' })
+    res.write(mp3.subarray(0, splitAt))
+    signalFirstChunk()
+    void downloadGate.then(() => res.end(mp3.subarray(splitAt)))
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  const url = `http://127.0.0.1:${address.port}/full-track.mp3`
+  const sources = new SourceRegistry({ noSearch: ['*'], liveFallback: false }, { cache })
+  const track = (await sources.resolve(url, { noCache: true })).tracks[0]
+  assert.equal(track.directMp3, true)
+
+  const station = new Station({ id: 'prefetch-fm', name: 'Prefetch FM', automix: { enabled: false } }, sources, { cache })
+  station._running = true
+  let airedFrames = 0
+  station._air = async (batch) => { airedFrames += batch.length }
+  t.after(async () => {
+    releaseDownload()
+    station.destroy()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+
+  const reading = station._readTrack(track)
+  await firstChunk
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(airedFrames, 0, 'the partial upstream response must not be aired')
+  assert.equal(cache.audio.stats().entries, 0, 'partial downloads are not committed to the cache')
+
+  releaseDownload()
+  await reading
+  assert.ok(airedFrames > 0, 'playback starts after the response is complete')
+  assert.equal(cache.audio.stats().entries, 1, 'the complete MP3 is cached before it is read for playback')
 })
 
 test('HTTP stream fixes, owner TTS fix, and owner cache API work end to end', async (t) => {

@@ -20,7 +20,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { clamp } from '../dsp.ts'
+import { clamp } from '../dsp/index.ts'
 import {
   CURVE_CHANNELS,
   NEURAL_AUTOMIX_PRESETS,

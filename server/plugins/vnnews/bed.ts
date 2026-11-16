@@ -29,7 +29,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { decodeMp3, transcodeToMp3, encodeMp3, sniff } from '../../src/util/metro.ts'
-import { compressorGain, samplePeak, resample, TO_DB, DB } from '../../src/core/dsp.ts'
+import { compressorGain, samplePeak, resample, TO_DB, DB } from '../../src/core/dsp/index.ts'
 
 /** Where a bed can come from, in the order they are tried. */
 const CACHE_TTL_MS = 12 * 3600_000

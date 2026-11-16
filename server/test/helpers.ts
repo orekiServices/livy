@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createRadioServer } from '../src/index.ts'
 import { buildSilence } from '../src/util/mp3.ts'
-import { encodeMp3 } from '../src/core/automix.ts'
+import { encodeMp3 } from '../src/core/automix/index.ts'
 import { configureLogging, resetLogging } from '../src/util/logger.ts'
 
 // Hermetic: no test reaches foreverjukebox.com. A test that wants the API

@@ -8,6 +8,8 @@
     "livy": "cd server && bun install && bun run build:web && bun src/index.ts",
     "setup": "cd server && bun install && bun run build:web",
     "start": "cd server && bun src/index.ts",
+    "automix:mp3": "cd server && bun scripts/automix-mp3.ts",
+    "automix:demo": "cd server && bun scripts/automix-demo.ts",
     "livy:termux": "bash livy-termux",
     "dev": "cd server && bun --watch src/index.ts",
     "build:web": "cd server && bun run build:web",

@@ -51,6 +51,9 @@ export class HttpSource {
           artwork: null,
           url: resolved,
           format: hls ? 'hls' : decodable ? resolved.split('.').pop()?.split('?')[0]?.toLowerCase() : 'mp3',
+          // Direct MP3 files are fully downloaded into the audio cache before
+          // the station starts airing them. Live mounts and playlists are not.
+          directMp3: !hls && !decodable && PASSTHROUGH.test(resolved),
           // A playlist or a codec we have to decode: MetroS handles both.
           transcode: hls || decodable,
           live: hls || /\.(m3u|pls)$/i.test(url) || !PASSTHROUGH.test(resolved),

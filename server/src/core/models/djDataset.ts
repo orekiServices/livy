@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { clamp, resample } from '../dsp.ts'
+import { clamp, resample } from '../dsp/index.ts'
 import { CHROMA, FeatureStream, fft } from '../seams/features.ts'
 import { DEFAULT_KNOTS } from '../automix/blender.ts'
 import { analyzeTrackStructure, type TrackStructure } from '../automix/structure.ts'

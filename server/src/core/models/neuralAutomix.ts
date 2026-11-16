@@ -10,7 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import createLogger from '../../util/logger.ts'
-import { clamp, foldTempo } from '../dsp.ts'
+import { clamp, foldTempo } from '../dsp/index.ts'
 import { MemoryLruCache } from '../cache.ts'
 import {
   harmonicCompatibility,

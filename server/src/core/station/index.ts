@@ -20,23 +20,23 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { randomUUID } from 'node:crypto'
 
-import { buildSilence } from '../util/mp3.ts'
-import { MetroFramer, MetroTranscoder, engineInfo, sniff } from '../util/metro.ts'
-import { worthResuming } from './memory.ts'
-import { hlsSegments, isHlsUrl } from '../util/hls.ts'
-import createLogger from '../util/logger.ts'
-import Automix, { DEFAULT_AUTOMIX, decodeMp3, encodeMp3 } from './automix.ts'
-import { FilterChain } from './filters/index.ts'
+import { buildSilence } from '../../util/mp3.ts'
+import { MetroFramer, MetroTranscoder, engineInfo, sniff } from '../../util/metro.ts'
+import { worthResuming } from '../memory.ts'
+import { hlsSegments, isHlsUrl } from '../../util/hls.ts'
+import createLogger from '../../util/logger.ts'
+import Automix, { DEFAULT_AUTOMIX, decodeMp3, encodeMp3 } from '../automix/index.ts'
+import { FilterChain } from '../filters/index.ts'
 
-import { queueMethods } from './station/queue.ts'
-import { requestsMethods } from './station/requests.ts'
-import { playbackMethods } from './station/playback.ts'
-import { seamMethods } from './station/seams.ts'
-import { relayMethods } from './station/relay.ts'
-import { infoMethods } from './station/info.ts'
-import { DEFAULTS, publicTrack } from './station/shared.ts'
+import { queueMethods } from './queue.ts'
+import { requestsMethods } from './requests.ts'
+import { playbackMethods } from './playback.ts'
+import { seamMethods } from './seams.ts'
+import { relayMethods } from './relay.ts'
+import { infoMethods } from './info.ts'
+import { DEFAULTS, publicTrack } from './shared.ts'
 
-export { publicTrack } from './station/shared.ts'
+export { publicTrack } from './shared.ts'
 
 const StationEventEmitter = EventEmitter as unknown as new () => Omit<EventEmitter, 'listeners'>
 
@@ -121,7 +121,7 @@ export class Station extends StationEventEmitter {
 
     this.log = createLogger(`station:${this.id}`)
 
-    // Automix: crossfades, transition effects and the voice-tracking DJ.
+    // Automix: crossfade-only rendering and the voice-tracking DJ.
     this.automix = new Automix(
       { ...DEFAULT_AUTOMIX, ...(config.automix ?? {}) },
       { sources, station: this, log: createLogger(`automix:${this.id}`) }

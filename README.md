@@ -215,53 +215,73 @@ stream is as live through the proxy as it is from the node.
 
 ## Automix, models and training
 
-Every seam is analysed before a sample is mixed: tempo and beat phase, key,
-loudness, and vocal density at each end. Ten transitions are scored against that
-pair — crossfade, bass-swap, filter, echo, sweep, spin-down, slam, wash, roll,
-drop — and the best one wins. Blends run up to 30 s; the heavy DSP runs in Rust
-off the event loop.
+Automix renders one transition shape: a smooth crossfade. `auto` remains as a
+backwards-compatible setting and renders the same crossfade; unsupported legacy
+effects are migrated to `auto`, while new owner requests and plugin renderer
+registrations for other effects are rejected. Smart overlap timing, phrase
+alignment, vocal awareness, loudness matching, and the voice-tracking DJ remain
+independent controls.
 
-Three rules were added to make the seam sound intentional rather than
-random:
+When beat alignment or beatmatching is enabled, GetSongBPM supplies both tracks'
+published tempos. For the rendered beat grid, the local analyser estimates
+phase only; it is not a beatmatch-tempo fallback. BPMi's separate candidate
+estimates do not replace those service tempos. Configure `GETSONGBPM_API_KEY` (or
+`LIVY_GETSONGBPM_API_KEY`) in the Livy server environment. Successful lookups
+are matched on title and artist and cached for six hours. Missing credentials,
+rejected keys, rate limits, network failures, and unmatched tracks are reported
+in the seam fallback details; Automix then renders a safe crossfade without
+beatmatching. The owner Automix response exposes whether the credential is
+configured, but never returns its value. GetSongBPM requires a backlink: the
+Station panel and this README link to [GetSongBPM](https://getsongbpm.com/).
 
-- **Vocals decide the length, not just the curve.** Both ends singing at the
-  seam is a clash: the blend contracts to ~70 % so the lines hand over instead
-  of overlapping, and a masking transition (filter/echo) outranks a bass-swap
-  that would leave both voices exposed.
-- **A trick that needs the grid does not run without it.** Roll and drop are
-  refused when the tempos did not fold together (5 and 7 BPM of drift), while
-  a folded match with a wider raw gap is still allowed — the grid already met.
-- **A folded match counts as a match.** Bass-swap is no longer rejected merely
-  because the two files' BPM tags differ after a successful ±4 % fold.
+### Render an MP3 transition
 
-A **DJ model** is a tiny learned policy that re-ranks those ten choices. It is
-optional, it can only choose from transitions the heuristic already allows, and
-a missing or corrupt model falls back to the JS heuristic without stopping the
-station.
+Render a short transition by passing the outgoing track first and the incoming
+track second. Livy takes audio from the **end** of the outgoing MP3 and the
+**start** of the incoming MP3; the output is only the outgoing pre-roll and
+rendered seam, not either complete song:
 
-Two things keep that policy current:
+```bash
+bun run automix:mp3 -- outro.mp3 next.mp3 --output transition.mp3
+# Or from server/:
+bun run automix:mp3 -- outro.mp3 next.mp3 -o transition.mp3 --fixed --crossfade-ms 6000
+```
 
-- **Recency weighting.** Every labelled seam is weighted by its age, halving
-  every 14 days (`LIVY_RECENCY_HALF_LIFE`), with a floor of 0.05 so old
-  evidence keeps a quiet vote. Eight months of log no longer outvote the last
-  six weeks of behaviour. Training shuffles the rows each epoch (seeded, so
-  runs stay reproducible), because a chronological log fed in order means every
-  epoch ends on the same handful of newest seams and the weights stop meaning
-  anything.
-- **A scoreboard for transitions.** The same log answers a simpler question:
-  *this transition, on this station — do listeners stay?* Each effect gets a
-  completion rate, Laplace-smoothed and recency-weighted, and once it carries
-  eight shows of weight it nudges its own score in `chooseEffect` by at most
-  ±0.06 — enough to settle an argument between two plausible transitions,
-  never enough to override "there is no beat to roll on". `GET
-  /owner/stations/:id/seams` (and `/automix`) returns it under `outcomes`.
+The default is a smart crossfade requested at six seconds (smart timing may
+adjust it) with three seconds of outgoing pre-roll. Beatmatching is off unless
+requested; `--beatmatch` uses GetSongBPM and requires its API key in the Livy
+environment. Add `--outgoing-title`, `--outgoing-artist`, `--incoming-title`,
+and `--incoming-artist` to improve service matching. `--help` lists all options. The command scans the outgoing
+file for its tail but retains only that tail in memory, and reads only the
+necessary head of the incoming file. For a synthetic end-to-start example,
+run `bun run automix:demo -- [output.mp3]`.
 
-A run report also says how much to trust the result, not just whether it
-improved: `eval.skill` scores the predicted distribution against a uniform
-guess via the Brier score (`0` = no better than guessing), `eval.confidence` is
-the probability it puts on its own first choice, `eval.support` counts which
-transitions the training rows actually covered, and `recency` reports the mean
-weight and how many rows had faded out.
+**BPMi** is the separate learned tempo model. Each seam records compact local
+tempo candidates for both tracks. Successful GetSongBPM matches supply strong
+labels; when the service is unavailable or beat alignment is disabled, BPMi can
+still learn from explicitly lower-confidence local DSP labels. The node-wide
+trainer reads the complete seam history from
+MetroDB and `dj-seams.jsonl`, deduplicates mirrored rows, and uses every
+eligible observation regardless of station, provider, or listener outcome.
+Validation groups recordings to prevent the same song leaking across the split;
+the final fit then includes all eligible observations. BPMi capacity and its
+data-scaled epoch budget grow with the observations, and the full CPU retrain is
+available at `POST /api/v1/owner/models/bpmi/train` (optional `epochs`, up to
+10,000). The checkpoint is standard Safetensors at
+`data/models/bpmi/bpmi.safetensors`. **BPMi training and inference are CPU-only**;
+the separate audio-mixing backend is not used to accelerate BPMi. GetSongBPM
+remains the tempo authority for Automix beatmatching; BPMi predictions and local
+profiles are reported and learned independently.
+
+Every fade eases smoothly into the programme. If a render fails, Automix
+retries with a conservative crossfade; it passes through original frames only
+if a safe render still cannot be built (for example, undecodable audio or an
+undersized seam).
+
+The historical learned-effect selector is not used by the crossfade-only
+renderer. Model storage and training controls remain available while the
+planned next-track policy replaces the old effect-classification objective;
+a learned model cannot choose a transition or alter the crossfade.
 
 Defaults are what a radio node actually wants:
 
@@ -332,10 +352,10 @@ Face repo form.
 
 `server/python/train.py` trains the **same** network — same He initialisation,
 same leaky ReLU, same mean-squared loss, same Adam — in PyTorch, and returns
-the weights in the `.bin` layout, so the server loads them into a real
-`Network` and the accuracy it reports is measured by the code that mixes the
-music. Inference never leaves JavaScript: there is no Python at request time,
-and a node without it is not degraded, just trained by the JS loop.
+weights to Node. The registry writes the checkpoint as standard Safetensors
+and loads it into the same `Network` used for inference. Inference never leaves
+JavaScript: there is no Python at request time, and a node without it is still
+trained by the JS loop.
 
 ```bash
 cd server
@@ -549,6 +569,7 @@ For a station that stays on air, run the node on a VM or container with
 | `SERVER_PASSWORD` | empty | legacy password for the stream/API surface |
 | `OWNER_KEY` | empty | explicit owner credential; survives alongside a password |
 | `OWNER_PASSWORD` | empty | owner password, hashed at boot; set it in the environment instead of the console |
+| `GETSONGBPM_API_KEY` / `LIVY_GETSONGBPM_API_KEY` | empty | required for service-backed Automix tempo metadata; configure it on the Livy server |
 | `LIVY_RECENCY_HALF_LIFE` | `14` | days before an old seam counts half in training |
 | `LIVY_TRAIN_BACKEND` | `auto` | `auto`, `js` (never leave the process) or `torch` (PyTorch, fall back on failure) |
 | `LIVY_PYTHON` | auto-detected | interpreter for the PyTorch trainer; `off` disables it |
@@ -561,32 +582,33 @@ For a station that stays on air, run the node on a VM or container with
 | **Stations** | many per process, each with its own queue, rotation, requests, automix and listeners |
 | **Audio path** | MP3 in → MP3 out, byte for byte, no ffmpeg. Anything else is decoded and re-encoded by MetroS at 70–145× realtime |
 | **Sources** | 16 providers — soundcloud · audius · bandcamp · ccmixter · **nhaccuatui** · archive.org · deezer · somafm · podcast/RSS · vimeo · youtube music · mirror · song.link · radio-browser · http/icecast/HLS · local, plus TTS for idents |
-| **Automix** | loudness-matched, cue-trimmed, beatmatched seams; ten transitions chosen per seam; blends up to 30 s |
+| **Automix** | GetSongBPM-backed tempo, phase-aware and loudness-matched crossfades; blends up to 30 s |
 | **DJ** | optional voice-tracking over the seam with a real sidechain duck |
 | **Console** | phone-first, shipped as a plugin — overview, stations, station desk, search, words, seams, filters, training, node, plus the owner index |
 | **Lyrics** | fetched **by the node** from LRCLIB, never by the listener's browser; synced lines honour the file's `[offset:]`, and the console renders its own scroll |
 | **Memory** | a station comes back mid-song after a restart, out of MetroDB |
-| **Plugins** | drop-in `plugins/` folder — sources, transitions, routes and hooks, switchable per node or per station |
+| **Plugins** | drop-in `plugins/` folder — sources, routes and hooks, switchable per node or per station; Automix renderers are crossfade-only |
 
 ## Layout of the core
 
 Large files were split so a reader can hold one idea at a time:
 
 ```
-core/station.js              lifecycle, fields, getters (~300 lines)
-core/station/queue.js        rotation, skips, seam logging
-core/station/requests.js     the request line and votes
-core/station/playback.js     reader, filters, track reader
-core/station/relay.js        listeners and live relays
-core/station/info.js         announcements and the public view
-core/station/seams.js        the scout, RL's advice, Forever mode
-core/automix/                analysis, voice, effects, renderers, engine
-core/seams/                  features, beats, detectors, categories, jukebox, forever, scout, fj (the Forever Jukebox API)
-util/splice.ts               joining re-encoded MP3 to untouched frames (reservoir, delay)
-core/models/                 format, train (JS and PyTorch), registry, hub (HF), auto, settings
-python/train.py              the PyTorch trainer: same network, weights out as .bin
-web/                         the console — a create-next-app export, served by the node
-server/owner/                index, plugins, system, models routes
+core/station/index.ts       lifecycle, fields, getters (~300 lines)
+core/station/queue.ts       rotation, skips, seam logging
+core/station/requests.ts    the request line and votes
+core/station/playback.ts    reader, filters, track reader
+core/station/relay.ts       listeners and live relays
+core/station/info.ts        announcements and the public view
+core/station/seams.ts       the scout, RL's advice, Forever mode
+core/automix/index.ts      public automix API; implementation split by job
+core/dsp/index.ts          DSP API; analysis, transforms and tempo decisions
+core/seams/                features, beats, detectors, categories, jukebox, forever, scout, fj (the Forever Jukebox API)
+util/splice.ts             joining re-encoded MP3 to untouched frames (reservoir, delay)
+core/models/               DJ policy, CPU-only BPMi, Safetensors, trainers, registry, hub (HF), auto
+python/train.py            the PyTorch trainer: same network, weights returned to Node for Safetensors output
+web/                       the console — a create-next-app export, served by the node
+server/owner/index.ts      owner routes, split into plugins, system and models
 ```
 
 ## Lyrics

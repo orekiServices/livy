@@ -6,7 +6,7 @@ import { test, expect, describe, beforeAll } from 'bun:test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { encodeMp3 } from '../src/core/automix.ts'
+import { encodeMp3 } from '../src/core/automix/index.ts'
 import { codec, decodeFrames } from '../src/util/codec.ts'
 import { SeamScout, ForeverJukebox, JukeboxWalker, CATEGORIES, PROTOTYPES, fitCentroids, nearest, fuse } from '../src/core/seams/index.ts'
 import { boot, tone, toMp3, tmpdir } from './helpers.ts'
@@ -658,74 +658,39 @@ describe('on a station', () => {
     }
   }, 60_000)
 
-  test('RL advises a transition only with evidence, and only one the seam can carry', async () => {
+  test('RL cannot alter the transition, while beat context remains available for diagnostics', async () => {
     const node = await boot({ stations: [{ id: 'rl', name: 'RL', autoStart: false, sources: [] }] })
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'livy-rl-'))
     try {
       const live = node.manager.get('rl')
       const beat = (category) => ({ index: 0, category, descriptor: PROTOTYPES[CATEGORIES.indexOf(category)] })
-      live._seamKinds = async () => ({ exit: beat('break'), entry: beat('drop') })
+      const exit = beat('break')
+      const entry = beat('drop')
+      live._seamKinds = async () => ({ exit, entry })
       const seam = { beat: true, matched: true, tempoDelta: 0, fadeMs: 8000 }
-      const choice = { effect: 'crossfade', source: 'heuristic', baseline: 'crossfade' }
+      const choice = { effect: 'crossfade', source: 'crossfade-only', baseline: 'crossfade' }
 
-      reloadRL()
-      const model = rl(path.join(dir, 'rl-model.json'))
-      // Knows nothing yet: says nothing.
       expect(await live.adviseSeam(seam, choice, [], {})).toBeNull()
-      for (let i = 0; i < 10; i += 1) {
-        model.learn({ exitKind: 'break', entryKind: 'drop', effect: 'slam', outcome: 'completed' })
-        model.learn({ exitKind: 'break', entryKind: 'drop', effect: 'crossfade', outcome: 'skipped', skippedAfterMs: 2000 })
-      }
-      // `rl()` with the default path would load a different model; point the
-      // station at this one the way it finds it.
-      const advised = await (async () => {
-        const original = process.env.LIVY_DATA_DIR
-        saveRL(model, path.join(dir, 'rl-model.json'))
-        process.env.LIVY_DATA_DIR = dir
-        fs.mkdirSync(path.join(dir, 'data'), { recursive: true })
-        saveRL(model, path.join(dir, 'data', 'rl-model.json'))
-        reloadRL()
-        try {
-          return {
-            usable: await live.adviseSeam(seam, choice, [], {}),
-            pooled: await live.adviseSeam(seam, choice, ['crossfade', 'echo'], {}),
-            agreed: await live.adviseSeam(seam, { ...choice, effect: 'slam' }, [], {}),
-            off: await ((live.options.rl = false), live.adviseSeam(seam, choice, [], {}))
-          }
-        } finally {
-          if (original === undefined) delete process.env.LIVY_DATA_DIR
-          else process.env.LIVY_DATA_DIR = original
-          reloadRL()
-        }
-      })()
-      expect(advised.usable).toMatchObject({ effect: 'slam', source: 'rl', model: 'RL', baseline: 'crossfade' })
-      expect(advised.pooled?.effect ?? 'crossfade').not.toBe('slam')
-      expect(advised.agreed).toBeNull()
-      expect(advised.off).toBeNull()
-      // What it saw is kept for the seam log.
+      expect(live._seamContext).toMatchObject({ exit, entry })
+      live.options.rl = false
+      expect(await live.adviseSeam(seam, choice, [], {})).toBeNull()
       expect(live._seamKindsNow({ blendMs: 6000 })).toMatchObject({ exitKind: 'break', entryKind: 'drop' })
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true })
       await node.close()
     }
   })
 })
 
 describe('fixes', () => {
-  test('a model whose first choice cannot be rendered is asked for its next', () => {
+  test('the compatibility model API cannot select anything but a crossfade', () => {
     const seam = { beat: false, matched: false, tempoDelta: 30, fadeMs: 8000, correlation: 0 }
-    const unusable = ['roll', 'bass-swap', 'slam', 'drop', 'spindown', 'sweep', 'filter', 'echo', 'wash', 'crossfade'].filter((name) => !effectUsable(name, seam))
-    expect(unusable.length).toBeGreaterThan(0)
-    const usable = ['wash', 'echo', 'filter', 'crossfade'].filter((name) => effectUsable(name, seam))
-    expect(usable.length).toBeGreaterThan(1)
-    const baseline = chooseEffectWithModel(seam, [], null).effect
-    const second = usable.find((name) => name !== baseline)
-    const scores = Object.fromEntries([[unusable[0], 0.9], [second, 0.7], [baseline, 0.2]])
-    const model = { best: unusable[0], order: [unusable[0], second, baseline], margin: 0.2, scores, model: 'm.bin' }
-    expect(chooseEffectWithModel(seam, [], model)).toMatchObject({ effect: second, source: 'model' })
-    // A runner-up that is no better than the rules is not acted on.
-    const weak = { ...model, scores: { ...scores, [second]: 0.22 } }
-    expect(chooseEffectWithModel(seam, [], weak)).toMatchObject({ effect: baseline, source: 'heuristic' })
+    const unsupported = ['roll', 'bass-swap', 'slam', 'drop', 'spindown', 'sweep', 'filter', 'echo', 'wash']
+    for (const name of unsupported) expect(effectUsable(name, seam)).toBe(false)
+    expect(effectUsable('crossfade', seam)).toBe(true)
+
+    const baseline = chooseEffectWithModel(seam, [], null)
+    expect(baseline).toMatchObject({ effect: 'crossfade', source: 'crossfade-only' })
+    const model = { best: 'roll', order: ['roll', 'wash', 'crossfade'], margin: 0.9, model: 'legacy.bin' }
+    expect(chooseEffectWithModel(seam, [], model)).toMatchObject({ effect: 'crossfade', source: 'crossfade-only' })
   })
 
   test('a small training set is never scored on rows it trained on', () => {

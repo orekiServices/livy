@@ -28,8 +28,8 @@ import {
   foldTempo,
   resample,
   compressorGain
-} from '../src/core/dsp.ts'
-import { decodeMp3, encodeMp3 } from '../src/core/automix.ts'
+} from '../src/core/dsp/index.ts'
+import { decodeMp3, encodeMp3 } from '../src/core/automix/index.ts'
 import { tone, beatLoop, quietLogs } from './helpers.ts'
 
 quietLogs()
@@ -159,6 +159,30 @@ test('the fade law follows the correlation of the material', () => {
   }
   const [startA, startB] = fadeGains(0, 2)
   assert.ok(startA > 0.99 && startB < 0.01)
+})
+
+test('crossfade curves ease in and out without breaking their gain law', () => {
+  const epsilon = 0.001
+
+  for (const exponent of [1, 1.5, 2]) {
+    const start = fadeGains(0, exponent)
+    const first = fadeGains(epsilon, exponent)
+    const second = fadeGains(epsilon * 2, exponent)
+    const beforeEnd = fadeGains(1 - epsilon * 2, exponent)
+    const nearEnd = fadeGains(1 - epsilon, exponent)
+    const end = fadeGains(1, exponent)
+
+    assert.deepEqual(start, [1, 0])
+    assert.deepEqual(end, [0, 1])
+    assert.ok(second[1] - first[1] > first[1] - start[1], `incoming fader eases in for exponent ${exponent}`)
+    assert.ok(beforeEnd[0] - nearEnd[0] > nearEnd[0] - end[0], `outgoing fader eases out for exponent ${exponent}`)
+
+    for (let i = 0; i <= 100; i += 1) {
+      const [a, b] = fadeGains(i / 100, exponent)
+      assert.ok(a >= 0 && a <= 1 && b >= 0 && b <= 1)
+      assert.ok(Math.abs(a ** exponent + b ** exponent - 1) < 1e-6, 'the transition law stays normalized')
+    }
+  }
 })
 
 test('filters do what their names say', () => {

@@ -1,12 +1,13 @@
 /**
  * Public automix surface. Implementation is split by job: defaults, audio,
- * the ten renderers, transition choice, joint tempo analysis, the DJ voice,
+ * the crossfade renderer, transition metadata, joint tempo analysis, the DJ voice,
  * and the engine.
  */
 export { AUTO_EFFECT, BUILT_IN_EFFECTS, DEFAULT_AUTOMIX, EFFECTS } from './defaults.ts'
 export { decodeMp3, encodeMp3, resample } from './audio.ts'
 export { registerEffect, unregisterEffect } from './renderers.ts'
 export { EFFECT_TRAITS, chooseEffect, chooseEffectWithModel, rankEffects, smartCrossfadeMs, smoothEdges } from './effects.ts'
+export { clearGetSongBpmCache, getSongBpmStatus, getSongBpmTempo, GetSongBpmServiceError } from './getsongbpm.ts'
 export { MAX_NUDGE, MIN_SHOWS, effectNudge, effectOutcomes, outcomeReport } from './outcomes.ts'
 export { Automix } from './engine.ts'
 export {

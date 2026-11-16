@@ -34,9 +34,9 @@ import { canClaimPassword, passwordInfo, passwordProblem, setPassword } from './
 import { StreamErrorVoice, failStream } from './streamErrors.ts'
 import { LANGUAGES } from '../tts/index.ts'
 import Lyrics from '../core/lyrics.ts'
-import { publicTrack } from '../core/station.ts'
+import { publicTrack } from '../core/station/index.ts'
 import createLogger from '../util/logger.ts'
-import { EFFECTS } from '../core/automix.ts'
+import { EFFECTS } from '../core/automix/index.ts'
 import { describe as describeFilters } from '../core/filters/index.ts'
 import { isServerless } from '../config.ts'
 

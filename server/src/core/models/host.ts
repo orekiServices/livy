@@ -10,6 +10,7 @@ import path from 'node:path'
 import createLogger from '../../util/logger.ts'
 import { Network } from './network.ts'
 import { digestOf, unpackModel } from './format.ts'
+import { unpackNetworkSafetensors } from './safetensors.ts'
 import { ACTIONS, FEATURES, featuresFor } from './features.ts'
 import { listModels, modelDirs, resolveModel } from './storage/local.ts'
 
@@ -48,7 +49,7 @@ class ModelHost {
         return cached
       }
       const buffer = fs.readFileSync(found.file)
-      const model = unpackModel(buffer)
+      const model = path.extname(found.file).toLowerCase() === '.safetensors' ? unpackNetworkSafetensors(buffer) : unpackModel(buffer)
       const shape = [model.featureCount, ...model.biases.map((bias) => bias.length)]
       const network = new Network(shape)
       network.load(model)

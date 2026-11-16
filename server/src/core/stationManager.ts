@@ -2,7 +2,7 @@
  * Station registry + shared event bus. One process, many stations.
  */
 import { EventEmitter } from 'node:events'
-import Station from './station.ts'
+import Station from './station/index.ts'
 import createLogger from '../util/logger.ts'
 
 const log = createLogger('stations')

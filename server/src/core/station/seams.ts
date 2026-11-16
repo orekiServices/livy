@@ -7,7 +7,6 @@
 import { SeamScout, ForeverJukebox } from '../seams/index.ts'
 import { beatTrackFromFj, fjClient, graphFromFjAnalysis } from '../seams/fj.ts'
 import { rl } from '../models/rl.ts'
-import { effectUsable } from '../automix/effects.ts'
 import { effectOutcomes, outcomeReport } from '../automix/outcomes.ts'
 import { readSeams } from '../models/trainer/dataset.ts'
 
@@ -18,11 +17,6 @@ const OUTCOME_ROWS = 4000
 
 /** The jukebox's crossfade at a jump: half of it either side of the cut. */
 const JUKEBOX_FADE_MS = Math.round(((384 * 2) / 44_100) * 1000)
-
-/** RL speaks once it has seen this many seams between two kinds of beat. */
-const MIN_EVIDENCE = 6
-/** …and only when its pick is this much better than what was going to play. */
-const MIN_EDGE = 0.08
 
 export const seamMethods = {
   /**
@@ -85,22 +79,15 @@ export const seamMethods = {
    * it is about to render and the choice it has made so far; returns a
    * replacement, or nothing.
    */
-  async adviseSeam(seam, choice, pool: any = [], { from = null, to = null, blendMs = 6000 }: any = {}) {
+  async adviseSeam(_seam, _choice, _pool: any = [], { from = null, to = null, blendMs = 6000 }: any = {}) {
     this._seamContext = null
     if (this.options.seams === false) return null
     const { exit, entry } = await this._seamKinds({ from: from?.id, to: to?.id, blendMs })
+    // Preserve the beat context for seam diagnostics and future next-track
+    // training, but the retired effect policy can no longer recommend a
+    // transition renderer. Automix is crossfade-only.
     this._seamContext = { from: from?.id ?? null, to: to?.id ?? null, exit, entry }
-    if (!exit || !entry || this.options.rl === false) return null
-
-    const model = rl()
-    if (model.evidence(exit.category, entry.category) < MIN_EVIDENCE) return null
-    const ranked = model.rank(exit.category, entry.category, pool.length ? pool : undefined, { explore: this.options.rlExplore ?? 0.35 })
-    const top = ranked.find((option) => effectUsable(option.effect, seam))
-    if (!top || top.effect === choice.effect) return null
-    const current = model.value(exit.category, entry.category, choice.effect).value
-    if (top.score - current < MIN_EDGE) return null
-    this.log.info(`RL: ${exit.category} → ${entry.category}: ${top.effect} (${top.value.toFixed(2)}) over ${choice.effect} (${current.toFixed(2)})`)
-    return { effect: top.effect, source: 'rl', baseline: choice.baseline ?? choice.effect, margin: Number((top.score - current).toFixed(3)), model: 'RL' }
+    return null
   },
 
   /**
