@@ -238,6 +238,13 @@ test('tempo and phase are recovered from a beat loop', () => {
   }
 })
 
+test('short beat windows return no estimate instead of indexing past the correlation buffer', () => {
+  // This produces 173 onset-envelope samples: max_lag is 172 while the
+  // autocorrelation only has valid indices through 171.
+  const shortWindow = new Float32Array(1024 + 173 * 256)
+  assert.equal(estimateBeat(shortWindow, 44100), null)
+})
+
 test('material without a beat is reported as unusable, not confidently wrong', () => {
   const sampleRate = 44100
   // A sustained sine: window ripple gives the autocorrelation *something* to

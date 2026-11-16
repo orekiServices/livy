@@ -117,7 +117,11 @@ pub fn estimate_beat(mono: &[f32], sample_rate: u32, frame_size: usize, hop_size
 
   let odf_rate = sample_rate as f64 / hop_size as f64;
   let min_lag = ((60.0 / 200.0) * odf_rate).round().max(2.0) as usize;
-  let max_lag = (((60.0 / 60.0) * odf_rate).round() as usize).min(odf.len() - 1);
+  // The harmonic comb indexes `acf[lag]` for every tempo candidate. Keep
+  // that range inside the autocorrelation buffer even when the ODF is only
+  // just long enough to contain a one-minute beat period.
+  let max_lag = (((60.0 / 60.0) * odf_rate).round() as usize)
+    .min(odf.len().saturating_sub(2));
   if max_lag <= min_lag {
     return None;
   }
@@ -434,3 +438,14 @@ pub fn time_stretch(
 
 /// Shared between the sync and async entry points in `lib.rs`.
 pub type SharedSamples = Arc<Vec<f32>>;
+
+#[cfg(test)]
+mod tests {
+  use super::estimate_beat;
+
+  #[test]
+  fn short_onset_envelope_does_not_index_past_autocorrelation() {
+    let mono = vec![0.0; 1024 + 173 * 256];
+    assert!(estimate_beat(&mono, 44_100, 1024, 256).is_none());
+  }
+}

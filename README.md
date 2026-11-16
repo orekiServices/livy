@@ -131,6 +131,7 @@ around what a radio actually does:
 | **Stations** | every station as a card; create one from a provider string |
 | **Station** (`?id=`) | player, queue, requests, automix, announcements, settings, listener bans, and the policy on air |
 | **Search** | one query across every provider, then queue or play the pick; the sources table shows each provider's health |
+| **Automix Editor** | standalone end-to-start transition renders from user MP3 uploads or direct MP3 links; never touches a station or queue |
 | **Words** | the lyrics for whatever is on air, in time, with a nudge control when they drift |
 | **Seams & Forever** | the scout's candidates on a time axis, the jukebox graph, Forever, RL |
 | **Radio filters** | the live DSP rack: 15-band EQ, 18 units, presets, one station at a time |
@@ -143,11 +144,11 @@ storage and is never put in a URL.
 
 ### The frame
 
-The console is a rail, a page and a transport. The rail groups its nine
+The console is a rail, a page and a transport. The rail groups its eleven
 destinations by what they are for — what is on air, what the engine knows, what
-the node is doing — because eight flat items is a list and three groups is a
-map. Below `md` the rail becomes a scrolling strip and the brand stays, so a
-phone still says where it is.
+the node is doing — because a flat list is harder to scan than a map. Below `md`
+the rail becomes a scrolling strip and the brand stays, so a phone still says
+where it is.
 
 Everything visual comes from three places and nowhere else:
 
@@ -255,6 +256,14 @@ and `--incoming-artist` to improve service matching. `--help` lists all options.
 file for its tail but retains only that tail in memory, and reads only the
 necessary head of the incoming file. For a synthetic end-to-start example,
 run `bun run automix:demo -- [output.mp3]`.
+
+The console's **Audio desk → Automix Editor** offers the same end-to-start render
+for two user-provided MP3s: upload one or paste a direct public HTTP(S) MP3 link
+for each side. Each input is limited to 12 MiB. Links are fetched by the node
+(with public-address checks); uploads and fetched inputs live in a disposable
+temporary directory only during rendering. The rendered MP3 can be auditioned
+in the page or downloaded. This tool never reads the station music catalog,
+queues, or on-air audio, and it does not feed the broadcast player.
 
 **BPMi** is the separate learned tempo model. Each seam records compact local
 tempo candidates for both tracks. Successful GetSongBPM matches supply strong

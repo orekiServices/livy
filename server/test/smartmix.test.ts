@@ -50,6 +50,11 @@ test('the Rust beat tracker agrees with the JavaScript one', async () => {
   }
 })
 
+test('short seam windows bypass older native beat trackers safely', async () => {
+  const shortWindow = new Float32Array(1024 + 173 * 256)
+  assert.equal(await analyseBeat(shortWindow, 44100), null)
+})
+
 test('time stretching changes the tempo and not the length contract', async () => {
   const audio = beatLoop({ bpm: 120, seconds: 8 })
 

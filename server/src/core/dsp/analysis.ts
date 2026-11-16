@@ -430,7 +430,9 @@ export function estimateBeat(mono, sampleRate, options: any = {}) {
 
   const odfRate = sampleRate / hopSize
   const minLag = Math.max(2, Math.round((60 / 200) * odfRate))
-  const maxLag = Math.min(odf.length - 1, Math.round((60 / 60) * odfRate))
+  // Keep the tempo-candidate range inside the autocorrelation buffer; the
+  // comb below reads `acf[lag]` even when its harmonic teeth are out of range.
+  const maxLag = Math.min(odf.length - 2, Math.round((60 / 60) * odfRate))
   if (maxLag <= minLag) return null
 
   // Autocorrelation over every lag the comb can reach, not just the tempo

@@ -675,6 +675,13 @@ const clamp = (value, low, high) => (value < low ? low : value > high ? high : v
  */
 export async function analyseBeat(mono, sampleRate) {
   if (native?.analyseBeatAsync) {
+    // Older shipped libmetro binaries can panic if the onset envelope does not
+    // extend beyond the longest candidate lag. Until every node has the fixed
+    // addon, skip beat estimation on very short seam windows rather than risk
+    // aborting the process in Rust.
+    const hopSize = 256
+    const minimumOdfLength = Math.round(sampleRate / hopSize) + 2
+    if (mono.length < 1024 + minimumOdfLength * hopSize) return null
     const beat = await native.analyseBeatAsync(mono, sampleRate)
     return beat ?? null
   }

@@ -39,6 +39,7 @@ import { modelRoutes, stationModels, trainForStation } from './models.ts'
 import { pluginRoutes } from './plugins.ts'
 import { systemRoutes } from './system.ts'
 import { previewTransition } from '../../core/preview.ts'
+import { EDITOR_MAX_JSON_BYTES, renderEditorTransition } from '../../core/automix/editor.ts'
 import {
   canClaimPassword,
   hasPassword,
@@ -604,6 +605,28 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
     // Audition the supported crossfade before putting it on air. The node
     // renders a real seam between two pieces of audio and returns the MP3.
     if (section === 'automix') {
+      // The web editor is intentionally separate from the station preview:
+      // its only inputs are two user-provided MP3s, never a queue or source.
+      if (id === 'editor' && method === 'POST') {
+        const body = await readJson(req, EDITOR_MAX_JSON_BYTES)
+        const rendered = await renderEditorTransition(body)
+        return send(res, 200, rendered.mp3, {
+          'content-type': 'audio/mpeg',
+          'content-length': String(rendered.mp3.length),
+          'content-disposition': 'attachment; filename="livy-automix-transition.mp3"',
+          'x-livy-report': Buffer.from(JSON.stringify({
+            from: rendered.report.from,
+            to: rendered.report.to,
+            effect: rendered.report.effect,
+            blendMs: rendered.report.blendMs,
+            curve: rendered.report.curve,
+            durationMs: rendered.durationMs,
+            preRollMs: rendered.preRollMs
+          })).toString('base64url'),
+          'access-control-expose-headers': 'content-disposition, x-livy-report'
+        })
+      }
+
       if (method === 'GET') {
         return send(res, 200, {
           effects: [AUTO_EFFECT, ...EFFECTS],

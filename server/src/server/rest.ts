@@ -124,13 +124,21 @@ export function createRequestHandler({ manager, config, sources, store = null, t
   const readJson = (req: any, limit = 1 << 20): Promise<Record<string, any>> =>
     new Promise((resolve, reject) => {
       let size = 0
+      let oversized = false
       const chunks = []
       req.on('data', (c) => {
+        if (oversized) return // drain without retaining a body we will reject
         size += c.length
-        if (size > limit) return req.destroy(new Error('Body too large'))
+        if (size > limit) {
+          oversized = true
+          chunks.length = 0
+          reject(Object.assign(new Error('Request body is too large'), { status: 413 }))
+          return
+        }
         chunks.push(c)
       })
       req.on('end', () => {
+        if (oversized) return
         if (!chunks.length) return resolve({})
         try {
           resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
