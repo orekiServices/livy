@@ -12,7 +12,7 @@ import path from 'node:path'
 
 import Memory, { slimTrack, worthResuming } from '../src/core/memory.ts'
 import SmartQueue, { seedsFrom, fingerprint } from '../src/core/smartQueue.ts'
-import Station from '../src/core/station.ts'
+import Station from '../src/core/station/index.ts'
 import Store from '../src/store/index.ts'
 import { SourceRegistry } from '../src/sources/index.ts'
 import { probeMp3 } from '../src/util/metro.ts'

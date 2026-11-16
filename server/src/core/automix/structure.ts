@@ -16,7 +16,7 @@ import {
   detectVocal,
   type DetectorContext
 } from '../seams/detectors.ts'
-import { clamp, estimateBeat, integratedLoudness } from '../dsp.ts'
+import { clamp, estimateBeat, integratedLoudness } from '../dsp/index.ts'
 import { MemoryLruCache } from '../cache.ts'
 
 export type MusicalMode = 'major' | 'minor'

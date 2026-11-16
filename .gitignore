@@ -15,6 +15,7 @@ server/data/
 server/media/tts/fallback-tone.mp3
 # Trained DJ models are runtime state; the engine ships none by default.
 server/models/*.bin
+server/models/*.safetensors
 *.log
 
 # A virtualenv for the optional PyTorch trainer (server/python/README.md).

@@ -1,18 +1,13 @@
 /**
  * Transition names, the auto sentinel, and every default the engine reads.
  */
-/**
- * Transitions the node can render. The seven built-ins are always present;
- * plugins append to this list with `registerEffect()` (see src/core/plugins.js),
- * which is why it is a live array rather than a frozen constant.
- */
-export const EFFECTS = ['crossfade', 'bass-swap', 'filter', 'echo', 'sweep', 'spindown', 'slam', 'wash', 'roll', 'drop']
+/** Livy's only supported Automix transition. */
+export const EFFECTS = Object.freeze(['crossfade'])
 export const BUILT_IN_EFFECTS = new Set(EFFECTS)
 
 /**
- * `auto` is not a renderer: it is the instruction "you choose", and the
- * choice is made per seam by `chooseEffect()` below. It sits outside
- * `EFFECTS` so plugins cannot shadow it and `registerEffect` cannot remove it.
+ * `auto` is a backwards-compatible setting sentinel. Both `auto` and
+ * `crossfade` render the same crossfade; `auto` can never select another effect.
  */
 export const AUTO_EFFECT = 'auto'
 
@@ -25,15 +20,11 @@ export const DEFAULT_AUTOMIX = {
   smart: true,
   minCrossfadeMs: 2000,
   maxCrossfadeMs: 30_000,
+  holdMs: 12_000, // outgoing tail retained for smart crossfades
+  landingMs: 2500, // incoming-only landing before untouched MP3 frames resume
   curve: 'auto', // 'auto' (correlation decides) | 'equal-power' | 'equal-gain'
-  // 'auto' lets the mix pick a transition per seam from what the two songs
-  // are actually doing; name one to use it every time.
+  // Retained for configuration compatibility; both values render a crossfade.
   effect: 'auto',
-  // When picking automatically, only choose from these (empty = all of them).
-  effectPool: [],
-  // Never play the same transition twice in a row — a station that always
-  // does the same trick stops sounding like a DJ after ten minutes.
-  varyEffects: true,
   minTrackMs: 20_000, // shorter items are aired untouched
   // Ceiling on one rendered segment. Long blends need room for the blend
   // *and* the tail on either side; the DSP that made this expensive is now
@@ -46,25 +37,20 @@ export const DEFAULT_AUTOMIX = {
   beatAlign: true, // land the incoming song on a beat
   beatmatch: true, // time-stretch the outgoing song to the incoming tempo
   maxStretchPercent: 12, // never stretch further than this to match
-  // Seam analysis, after automix-engine: choose a tempo *pair* rather than two
-  // independent tempos, snap cues to the beat grid, and release the tempo back
-  // to native over a fixed window instead of switching at the seam.
-  analysePair: true,
-  // The learned DJ policy, when one is in models/. `false` pins the heuristic,
-  // which is what a station owner who wants predictable sets will choose.
-  model: true,
+  // Legacy effect-classifier switch retained for persisted-config compatibility.
+  // Automix no longer consults an effect model; crossfade is the only renderer.
+  model: false,
   cueTolerance: 0.6, // a cue further than this fraction of a beat is not snapped
   tempoReleaseMs: 4000, // how long the incoming track takes to return to native tempo
   vocalAware: true, // wait for the outgoing vocal line, duck when both sing
   phraseBlend: true, // snap the blend length to whole 4-beat phrases
   crossoverHz: 200, // bass-swap low crossover
   highCrossoverHz: 3600, // 3-band Linkwitz-Riley high crossover
-  // Intelligent Neural DJ AutoMix: harmonic/structural analysis, multi-candidate
-  // planning, 8-dimension perceptual scoring, and continuous 3-band EQ/vocal/FX
-  // blending with graceful fallback to smart crossfades.
+  // Structural analysis may explain a crossfade, but cannot change its renderer.
   intelligent: true,
-  continuousBlend: true,
-  neuralAutomix: true,
+  // Retired model-rendering switches; kept false for old config compatibility.
+  continuousBlend: false,
+  neuralAutomix: false,
   progressiveScaling: false,
   minQualityScore: 0.5,
   trimSilence: true,

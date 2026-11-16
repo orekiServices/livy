@@ -22,8 +22,6 @@ import {
   brake,
   noiseSource,
   resample,
-  tempoCandidates,
-  selectTempoPair,
   beatGrid,
   snapCue,
   beatAlignOffset,
@@ -33,14 +31,15 @@ import {
   bandSplit,
   phraseBlend,
   vocalAwareCurves
-} from '../dsp.ts'
-import { DEFAULT_AUTOMIX, AUTO_EFFECT, BUILT_IN_EFFECTS, EFFECTS } from './defaults.ts'
+} from '../dsp/index.ts'
+import { DEFAULT_AUTOMIX, AUTO_EFFECT, EFFECTS } from './defaults.ts'
 import { codec, codecKey, decodeFrames, samplesIn } from '../../util/codec.ts'
 import { LEAD_FRAMES, bridge, reservoirBefore } from '../../util/splice.ts'
 import { fitRate, monoOf, sliceChannels } from './util.ts'
-import { chooseEffect, chooseEffectWithModel, smartCrossfadeMs, smoothEdges } from './effects.ts'
+import { smartCrossfadeMs, smoothEdges } from './effects.ts'
 import { EFFECT_RENDERERS } from './renderers.ts'
-import { analysePair } from './analysis.ts'
+import { getSongBpmTempo, getSongBpmStatus } from './getsongbpm.ts'
+import { estimateBPMi, makeBpmProfile } from '../models/bpmi.ts'
 import { speak, voiceTrack } from './voice.ts'
 import {
   analyzeTrackStructure,
@@ -49,67 +48,8 @@ import {
   type TrackStructure
 } from './structure.ts'
 import { planTransition, type TransitionPlanResult } from './planner.ts'
-import { buildAutomationPlan, renderContinuousBlend, type AutomationPlan } from './blender.ts'
-import type { AutoMixStrategy } from '../models/architectures.ts'
 
 const log = createLogger('automix')
-
-const CONTINUOUS_EFFECTS = new Set(['crossfade', 'bass-swap', 'filter', 'wash', 'echo'])
-
-function mapStrategyToEffect(strategy: AutoMixStrategy, pool: string[] = []): string {
-  const allowed = pool.length ? pool.filter((e) => EFFECTS.includes(e)) : EFFECTS
-  if (allowed.includes(strategy)) return strategy
-  const fallbacks: Record<string, string[]> = {
-    'eq-blend': ['bass-swap', 'crossfade', 'filter'],
-    'stem-handoff': ['bass-swap', 'filter', 'crossfade'],
-    'phrase-cut': ['bass-swap', 'crossfade', 'drop'],
-    'vocal-bridge': ['filter', 'bass-swap', 'crossfade'],
-    'tempo-ramp': ['filter', 'crossfade', 'wash'],
-    'harmonic-drop': ['bass-swap', 'drop', 'filter', 'crossfade'],
-    'bass-swap': ['bass-swap', 'crossfade', 'filter'],
-    filter: ['filter', 'crossfade', 'wash'],
-    wash: ['wash', 'crossfade', 'echo'],
-    echo: ['echo', 'wash', 'crossfade'],
-    crossfade: ['crossfade', 'bass-swap', 'filter'],
-    slam: ['slam', 'crossfade'],
-    drop: ['drop', 'bass-swap', 'crossfade'],
-    roll: ['roll', 'bass-swap', 'crossfade'],
-    sweep: ['sweep', 'filter', 'crossfade'],
-    spindown: ['spindown', 'echo', 'crossfade']
-  }
-  for (const cand of fallbacks[strategy] ?? ['crossfade']) {
-    if (allowed.includes(cand)) return cand
-  }
-  return allowed[0] ?? 'crossfade'
-}
-
-// `models` imports EFFECTS from this module, so it is pulled in lazily. The
-// cycle would otherwise resolve with one side holding an uninitialised binding.
-let djModels = null
-const loadModels = async () => {
-  if (djModels !== null) return djModels
-  try {
-    const module = await import('../models/index.ts')
-    djModels = module.models ?? null
-  } catch {
-    djModels = null
-  }
-  return djModels
-}
-
-let neuralHost: any = null
-let neuralHostTried = false
-const loadNeuralAutomix = async () => {
-  if (neuralHostTried) return neuralHost
-  neuralHostTried = true
-  try {
-    const module = await import('../models/neuralAutomix.ts')
-    neuralHost = module.neuralAutomix ?? null
-  } catch {
-    neuralHost = null
-  }
-  return neuralHost
-}
 
 export class Automix {
   declare ctx: any
@@ -134,6 +74,14 @@ export class Automix {
 
   constructor(options: any = {}, ctx: any = {}) {
     this.options = { ...DEFAULT_AUTOMIX, ...options, dj: { ...DEFAULT_AUTOMIX.dj, ...(options.dj ?? {}) } }
+    // Migrate old station configs in memory: legacy transition names now map
+    // to auto-crossfade and can never reach a renderer. The old effect
+    // classifier and automation-model switches are also inert now.
+    if (![AUTO_EFFECT, 'crossfade'].includes(this.options.effect)) this.options.effect = AUTO_EFFECT
+    this.options.effectPool = []
+    this.options.model = false
+    this.options.continuousBlend = false
+    this.options.neuralAutomix = false
     this.ctx = ctx
     this.log = ctx.log ?? log
     this.last = null
@@ -145,36 +93,49 @@ export class Automix {
 
   configure(patch: any = {}) {
     const next = { ...this.options, ...patch, dj: { ...this.options.dj, ...(patch.dj ?? {}) } }
-    if (patch.effect && patch.effect !== AUTO_EFFECT && !EFFECTS.includes(patch.effect)) {
-      throw new Error(`Unknown transition "${patch.effect}" (try: ${AUTO_EFFECT}, ${EFFECTS.join(', ')})`)
+    if (patch.effect != null && ![AUTO_EFFECT, 'crossfade'].includes(patch.effect)) {
+      throw new Error(`Automix supports crossfade only (try: ${AUTO_EFFECT}, crossfade)`)
     }
-    if (patch.effectPool) {
+    if (patch.curve != null && !['auto', 'equal-power', 'equal-gain'].includes(patch.curve)) {
+      throw new Error(`Unknown fade curve "${patch.curve}" (try: auto, equal-power, equal-gain)`)
+    }
+    if (patch.effectPool != null) {
+      if (!Array.isArray(patch.effectPool)) throw new Error('Automix effectPool must be an array')
       const unknown = patch.effectPool.filter((name) => !EFFECTS.includes(name))
-      if (unknown.length) throw new Error(`Unknown transition(s) in the pool: ${unknown.join(', ')}`)
+      if (unknown.length) throw new Error(`Automix supports crossfade only; unsupported transition(s): ${unknown.join(', ')}`)
     }
+    next.effectPool = []
+    next.model = false
+    next.continuousBlend = false
+    next.neuralAutomix = false
     this.options = next
     if (!this.enabled) this.reset()
     return this.info()
   }
 
   info() {
-    const { enabled, crossfadeMs, curve, effect, minTrackMs, targetLufs, beatAlign, beatmatch, maxStretchPercent } = this.options
+    const { enabled, crossfadeMs, curve, effect, minTrackMs, targetLufs, beatAlign, beatmatch, maxStretchPercent, smart, phraseBlend } = this.options
     return {
       enabled,
       crossfadeMs,
       curve,
       effect,
+      smart: smart !== false,
+      phraseBlend: phraseBlend !== false,
       effects: [...EFFECTS],
       minTrackMs,
       targetLufs,
       beatAlign,
       beatmatch,
+      beatmatchSource: 'GetSongBPM',
+      beatmatchService: getSongBpmStatus(),
       maxStretchPercent,
-      analysePair: this.options.analysePair !== false,
-      model: this.options.model !== false,
+      analysePair: false,
+      mode: 'crossfade-only',
+      model: false,
       intelligent: this.options.intelligent !== false,
-      continuousBlend: this.options.continuousBlend !== false,
-      neuralAutomix: this.options.neuralAutomix !== false,
+      continuousBlend: false,
+      neuralAutomix: false,
       vocalAware: this.options.vocalAware !== false,
       tempoReleaseMs: this.options.tempoReleaseMs ?? 4000,
       dj: { ...this.options.dj },
@@ -275,7 +236,7 @@ export class Automix {
   get holdMs() {
     const { crossfadeMs, maxCrossfadeMs, holdMs, smart } = this.options
     if (smart === false) return crossfadeMs + 100
-    return clamp(Number(holdMs) || 12_000, crossfadeMs, Math.max(crossfadeMs, maxCrossfadeMs ?? crossfadeMs)) + 100
+    return clamp(Number(holdMs) || DEFAULT_AUTOMIX.holdMs, crossfadeMs, Math.max(crossfadeMs, maxCrossfadeMs ?? crossfadeMs)) + 100
   }
 
   /** Keep the last few aired frames: the seam decode needs a run-up. */
@@ -356,7 +317,7 @@ export class Automix {
   }
 
   get landingMs() {
-    return clamp(Number(this.options.landingMs ?? 2500) || 0, 300, 6000)
+    return clamp(Number(this.options.landingMs ?? DEFAULT_AUTOMIX.landingMs) || 0, 300, 6000)
   }
 
   #djDue() {
@@ -378,32 +339,84 @@ export class Automix {
     if (!tail || head.length === 0) return [...(tail?.frames ?? []), ...head]
 
     const started = Date.now()
+    let mixed = null
+    let fallbackReason = null
+    let serviceError = null
     try {
-      const mixed = await this.#mix(tail, head)
-      if (!mixed) return [...tail.frames, ...head]
-      this.#transitions += 1
-      this.last = { at: Date.now(), reason, renderMs: Date.now() - started, ...mixed.report }
-      this.ctx.station?.emit?.('automix', this.last)
-      this.log.info(
-        `${mixed.report.effect} ${mixed.report.blendMs}ms ${mixed.report.curve}` +
-          (mixed.report.beat?.matched
-            ? ` beatmatched ${mixed.report.beat.bpm.toFixed(0)}→${mixed.report.beat.playedAtBpm.toFixed(0)}bpm (${mixed.report.beat.stretchPercent > 0 ? '+' : ''}${mixed.report.beat.stretchPercent}%)`
-            : mixed.report.beat?.aligned
-              ? ` @${mixed.report.beat.bpm.toFixed(0)}bpm`
-              : '') +
-          `: "${tail.track?.title ?? '?'}" → "${head[0]?.track?.title ?? '?'}"` +
-          ` [match ${mixed.report.loudness.appliedDb > 0 ? '+' : ''}${mixed.report.loudness.appliedDb} dB, peak ${mixed.report.peakDb} dBFS` +
-          (mixed.report.dj ? `, DJ ${mixed.report.dj.kind}` : '') +
-          `, ${Date.now() - started}ms]`
-      )
-      return mixed.frames
-    } catch (error) {
-      this.log.warn(`transition failed (${error.message}); hard cut instead`)
+      mixed = await this.#mix(tail, head)
+      if (!mixed) fallbackReason = 'the crossfade render could not be completed'
+    } catch (error: any) {
+      const detail = error instanceof Error ? error.message : String(error)
+      if (error?.service === 'GetSongBPM') {
+        serviceError = { service: error.service, code: error.code ?? 'service_error', message: detail, status: error.status ?? null }
+        fallbackReason = detail
+      } else {
+        fallbackReason = 'crossfade renderer failed'
+      }
+      this.log.warn(`crossfade failed (${detail}); retrying with a safe crossfade`)
+    }
+
+    if (!mixed) {
+      try {
+        mixed = await this.#mix(tail, head, { safeFallback: true })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.log.warn(`safe crossfade failed (${message})`)
+      }
+    }
+
+    if (!mixed) {
+      this.log.warn(`no decodable audio for a crossfade (${fallbackReason ?? 'unknown render failure'}); passing through original frames`)
       return [...tail.frames, ...head]
     }
+
+    this.#transitions += 1
+    this.last = {
+      at: Date.now(),
+      reason,
+      renderMs: Date.now() - started,
+      ...(fallbackReason
+        ? { fallback: { effect: 'crossfade', reason: fallbackReason, ...(serviceError ? { serviceError } : {}) } }
+        : {}),
+      ...(serviceError ? { serviceError } : {}),
+      ...mixed.report
+    }
+    this.ctx.station?.emit?.('automix', this.last)
+    this.log.info(
+      `${mixed.report.effect} ${mixed.report.blendMs}ms ${mixed.report.curve}` +
+        (mixed.report.beat?.matched
+          ? ` beatmatched ${mixed.report.beat.bpm.toFixed(0)}→${mixed.report.beat.playedAtBpm.toFixed(0)}bpm (${mixed.report.beat.stretchPercent > 0 ? '+' : ''}${mixed.report.beat.stretchPercent}%)`
+          : mixed.report.beat?.aligned
+            ? ` @${mixed.report.beat.bpm.toFixed(0)}bpm`
+            : '') +
+        `: "${tail.track?.title ?? '?'}" → "${head[0]?.track?.title ?? '?'}"` +
+        ` [match ${mixed.report.loudness.appliedDb > 0 ? '+' : ''}${mixed.report.loudness.appliedDb} dB, peak ${mixed.report.peakDb} dBFS` +
+        (mixed.report.dj ? `, DJ ${mixed.report.dj.kind}` : '') +
+        (fallbackReason ? ', safe crossfade fallback' : '') +
+        `, ${Date.now() - started}ms]`
+    )
+    return mixed.frames
   }
 
-  async #mix(tail, head) {
+  async #mix(tail, head, { safeFallback = false }: { safeFallback?: boolean } = {}) {
+    const options = safeFallback
+      ? {
+          ...this.options,
+          smart: false,
+          curve: 'equal-power',
+          effect: 'crossfade',
+          effectPool: ['crossfade'],
+          intelligent: false,
+          model: false,
+          neuralAutomix: false,
+          continuousBlend: false,
+          beatAlign: false,
+          beatmatch: false,
+          vocalAware: false,
+          trimSilence: false,
+          dj: { ...this.options.dj, enabled: false }
+        }
+      : this.options
     // Decode on the frame grid: sample 0 of each buffer is the first sample
     // of its first frame, which is what lets the seam be put back between
     // frames nobody re-encoded. The outgoing side is decoded with a run-up of
@@ -440,16 +453,16 @@ export class Automix {
     if (tailFrames.length <= passFrames + 2 || a0.length < free + sec(400)) return null
 
     /* 1. loudness (BS.1770) ------------------------------------------------ */
-    const loudA = integratedLoudness([a0.left, a0.right], sampleRate)
-    const loudB = integratedLoudness([b0.left, b0.right], sampleRate)
+    const loudA = safeFallback ? null : integratedLoudness([a0.left, a0.right], sampleRate)
+    const loudB = safeFallback ? null : integratedLoudness([b0.left, b0.right], sampleRate)
 
     /* 2. cue points -------------------------------------------------------- */
     const monoA = monoOf(a0)
     const monoB = monoOf(b0)
-    const cuesA = detectCues(monoA, sampleRate, { integrated: loudA })
-    const cuesB = detectCues(monoB, sampleRate, { integrated: loudB })
+    const cuesA = safeFallback ? { cueOut: a0.length, overlay: a0.length } : detectCues(monoA, sampleRate, { integrated: loudA })
+    const cuesB = safeFallback ? { cueIn: 0 } : detectCues(monoB, sampleRate, { integrated: loudB })
 
-    const trim = this.options.trimSilence !== false
+    const trim = options.trimSilence !== false
     const aStart = free
     const aEnd = Math.min(a0.length, trim ? Math.max(free + sec(500), cuesA.cueOut) : a0.length)
     const bStart = trim ? Math.min(cuesB.cueIn, Math.max(0, b0.length - sec(2000))) : 0
@@ -459,28 +472,118 @@ export class Automix {
 
     /* 3. loudness match ---------------------------------------------------- */
     let matchDb = 0
-    if (loudA != null && loudB != null) matchDb = clamp(loudA - loudB, -this.options.maxGainDb, this.options.maxGainDb)
+    if (loudA != null && loudB != null) matchDb = clamp(loudA - loudB, -options.maxGainDb, options.maxGainDb)
     const matchGain = DB(matchDb)
 
     /* 4. tempo pair, beat grid + beatmatch -------------------------------- */
-    // Both tempos at once, off the event loop when libmetro is there: this
-    // is the stage that used to cost most of a second on a long crossfade,
-    // and the pacer has to keep releasing frames while it runs.
-    //
-    // automix-engine's first real insight: the pair is what matters. Two
-    // independent estimates plus a fold picks the wrong octave often enough
-    // to hear; scoring every candidate pair for agreement (and for sitting
-    // near 100 BPM, where real songs live) is the fix. The scalar estimator
-    // stays as the default so the native path keeps its speed, and the pair
-    // search only runs when both songs were unconfident or disagree badly.
+    // The service supplies both published tempos. Waveform analysis estimates
+    // phase only, so missing credentials or an unavailable API never silently
+    // falls back to a local BPM estimator.
     let beatA = null
     let beatB = null
     let pairChoice = null
-    if (this.options.beatAlign) {
-      ;[beatA, beatB] = await Promise.all([analyseBeat(monoA.subarray(aStart, aEnd), sampleRate), analyseBeat(monoB.subarray(bStart), sampleRate)])
-      pairChoice = await analysePair(this.options, monoA.subarray(aStart, aEnd), monoB.subarray(bStart), sampleRate, beatA, beatB)
-      if (pairChoice?.beatA) beatA = pairChoice.beatA
-      if (pairChoice?.beatB) beatB = pairChoice.beatB
+    let bpmIProfiles = null
+    let bpmIEstimates = null
+    if (options.beatAlign) {
+      // BPM is always sourced from GetSongBPM for rendering. Local tempo
+      // candidates are recorded for the separate CPU BPMi trainer, but they
+      // never replace the service result in this beatmatch path.
+      const trackA = tail.track ?? tail.frames[0]?.track
+      const trackB = head[0]?.track
+      const tempoLookup = this.ctx.getSongBpmTempo ?? getSongBpmTempo
+      const [tempoA, tempoB] = await Promise.all([tempoLookup(trackA), tempoLookup(trackB)])
+      const [phaseA, phaseB] = await Promise.all([
+        analyseBeat(monoA.subarray(aStart, aEnd), sampleRate).catch(() => null),
+        analyseBeat(monoB.subarray(bStart), sampleRate).catch(() => null)
+      ])
+      const remoteGrid = (metadata, phaseEstimate) => {
+        const bpm = Number(metadata?.tempo)
+        if (!Number.isFinite(bpm) || bpm < 40 || bpm > 220) {
+          throw new Error('GetSongBPM returned a tempo outside the supported range (40–220 BPM).')
+        }
+        const periodSamples = (60 * sampleRate) / bpm
+        const estimatedPeriod = Number(phaseEstimate?.periodSamples)
+        const rawPhase = Number(phaseEstimate?.phaseSamples) || 0
+        const phaseFraction = estimatedPeriod > 0
+          ? (((rawPhase % estimatedPeriod) + estimatedPeriod) % estimatedPeriod) / estimatedPeriod
+          : 0
+        return {
+          bpm,
+          periodSamples,
+          phaseSamples: phaseFraction * periodSamples,
+          confidence: Number(phaseEstimate?.confidence) || 0,
+          serviceConfidence: Number(metadata?.confidence) || 0,
+          source: 'GetSongBPM',
+          serviceTrack: { id: metadata.id, title: metadata.title, artist: metadata.artist, uri: metadata.uri }
+        }
+      }
+      beatA = remoteGrid(tempoA, phaseA)
+      beatB = remoteGrid(tempoB, phaseB)
+      // Capture four-second local candidate profiles at the actual seam. BPMi
+      // trains on these CPU DSP observations across the whole node, but it is
+      // diagnostic here: GetSongBPM remains the tempo used by the renderer.
+      const profileAWindow = monoA.subarray(aStart, aEnd)
+      const profileBWindow = monoB.subarray(bStart)
+      const profileSamples = Math.round(sampleRate * 4)
+      const profileA = makeBpmProfile(
+        profileAWindow.subarray(Math.max(0, profileAWindow.length - profileSamples)),
+        sampleRate,
+        { confidence: phaseA?.confidence, scalarBpm: phaseA?.bpm, scalarConfidence: phaseA?.confidence, track: trackA, referenceBpm: beatA.bpm, referenceSource: beatA.source, labelConfidence: beatA.serviceConfidence }
+      )
+      const profileB = makeBpmProfile(
+        profileBWindow.subarray(0, Math.min(profileBWindow.length, profileSamples)),
+        sampleRate,
+        { confidence: phaseB?.confidence, scalarBpm: phaseB?.bpm, scalarConfidence: phaseB?.confidence, track: trackB, referenceBpm: beatB.bpm, referenceSource: beatB.source, labelConfidence: beatB.serviceConfidence }
+      )
+      const bpmIOutgoing = estimateBPMi(profileA)
+      const bpmIIncoming = estimateBPMi(profileB)
+      bpmIProfiles = { outgoing: profileA, incoming: profileB }
+      bpmIEstimates = { outgoing: bpmIOutgoing, incoming: bpmIIncoming }
+      const octaveFoldedA = foldTempo(beatA.bpm, beatB.bpm).bpm
+      const compatibility = Number(clamp(1 - Math.abs(octaveFoldedA - beatB.bpm) / Math.max(1, beatB.bpm), 0, 1).toFixed(4))
+      pairChoice = {
+        bpmA: beatA.bpm,
+        bpmB: beatB.bpm,
+        compatibility,
+        score: compatibility,
+        source: 'GetSongBPM'
+      }
+    } else {
+      // BPMi still observes seams when service-backed beat alignment is off or
+      // the GetSongBPM failure path retries a safe crossfade. These local
+      // pseudo-labels carry deliberately low confidence; service labels remain
+      // stronger when available.
+      const trackA = tail.track ?? tail.frames[0]?.track
+      const trackB = head[0]?.track
+      const profileAWindow = monoA.subarray(aStart, aEnd)
+      const profileBWindow = monoB.subarray(bStart)
+      const profileSamples = Math.round(sampleRate * 4)
+      const windowA = profileAWindow.subarray(Math.max(0, profileAWindow.length - profileSamples))
+      const windowB = profileBWindow.subarray(0, Math.min(profileBWindow.length, profileSamples))
+      const [phaseA, phaseB] = await Promise.all([
+        analyseBeat(windowA, sampleRate).catch(() => null),
+        analyseBeat(windowB, sampleRate).catch(() => null)
+      ])
+      const profileA = makeBpmProfile(windowA, sampleRate, {
+        confidence: phaseA?.confidence,
+        scalarBpm: phaseA?.bpm,
+        scalarConfidence: phaseA?.confidence,
+        track: trackA,
+        referenceBpm: phaseA?.bpm,
+        referenceSource: phaseA?.bpm ? 'local-dsp' : null,
+        labelConfidence: Math.max(0.15, (Number(phaseA?.confidence) || 0) * 0.25)
+      })
+      const profileB = makeBpmProfile(windowB, sampleRate, {
+        confidence: phaseB?.confidence,
+        scalarBpm: phaseB?.bpm,
+        scalarConfidence: phaseB?.confidence,
+        track: trackB,
+        referenceBpm: phaseB?.bpm,
+        referenceSource: phaseB?.bpm ? 'local-dsp' : null,
+        labelConfidence: Math.max(0.15, (Number(phaseB?.confidence) || 0) * 0.25)
+      })
+      bpmIProfiles = { outgoing: profileA, incoming: profileB }
+      bpmIEstimates = { outgoing: estimateBPMi(profileA), incoming: estimateBPMi(profileB) }
     }
     const confident = Boolean(beatA && beatB && beatA.confidence > 0.25 && beatB.confidence > 0.25)
 
@@ -492,12 +595,12 @@ export class Automix {
     let beatmatch = null
     let release = null
 
-    if (confident && this.options.beatmatch !== false) {
+    if (confident && options.beatmatch !== false) {
       // 174 BPM against 87 BPM is the same groove at half time: fold first.
       const folded = foldTempo(beatB.bpm, beatA.bpm)
       const ratio = beatA.bpm / folded.bpm // < 1 speeds the outgoing song up
       const driftPercent = Math.abs(1 - ratio) * 100
-      const limit = Number(this.options.maxStretchPercent ?? 12)
+      const limit = Number(options.maxStretchPercent ?? 12)
 
       if (driftPercent > 0.3 && driftPercent <= limit) {
         // Ride the pitch fader instead of stamping on it: the tempo change
@@ -538,7 +641,7 @@ export class Automix {
         // shows what will happen and how long it takes.
         release = tempoRelease(b.length, sampleRate, {
           fromRate: folded.bpm / beatB.bpm,
-          releaseSeconds: Math.max(0.5, Number(this.options.tempoReleaseMs ?? 4000) / 1000)
+          releaseSeconds: Math.max(0.5, Number(options.tempoReleaseMs ?? 4000) / 1000)
         })
       }
     }
@@ -554,7 +657,7 @@ export class Automix {
     // outgoing side is the last stretch of `a`, not its first. Where exactly
     // depends on the length about to be chosen, so the probes look at the
     // configured length's worth and the choice is made from that.
-    const aSeam = sliceChannels(a, Math.max(0, a.length - sec(this.options.crossfadeMs)), a.length)
+    const aSeam = sliceChannels(a, Math.max(0, a.length - sec(options.crossfadeMs)), a.length)
     const seamWindow = Math.min(aSeam.length, b.length, sec(1500))
     const r = seamWindow > 0 ? correlation(monoOf(aSeam).subarray(0, seamWindow), monoOf(b).subarray(0, seamWindow), seamWindow) : 0
 
@@ -570,7 +673,7 @@ export class Automix {
     let probe = null
     let outMono = null
     let inMono = null
-    if (this.options.vocalAware !== false && confident) {
+    if (options.vocalAware !== false && confident) {
       outMono = monoOf(aSeam)
       inMono = monoOf(b)
       const outActive = vocalActivity(outMono.subarray(0, Math.min(outMono.length, sec(1800))), sampleRate)
@@ -589,7 +692,7 @@ export class Automix {
         available: ms(Math.min(a.length, b.length)),
         vocal: probe
       },
-      this.options
+      options
     )
     let fade = Math.min(sec(smart.ms), a.length, b.length)
     // Where the outgoing song's ending actually begins (its overlay point),
@@ -603,7 +706,7 @@ export class Automix {
       // the audio we are actually holding. Rounding up and then clamping
       // would silently put the blend back off the grid, so round down.
       const available = Math.min(fade, a.length, b.length)
-      if (this.options.phraseBlend !== false) {
+      if (options.phraseBlend !== false) {
         // automix-engine maps a fixed count of beats (32) and lets the clock
         // follow the music; a radio seam is the same idea in the other
         // direction — the *length* is a whole number of phrases and the
@@ -635,7 +738,7 @@ export class Automix {
       let n = 0
       while (beatAt(n) < lead && n < 4096) n += 1
       alignShift = beatAlignOffset(beatPeriod, beatAt(n) - lead, beatB.phaseSamples, b.length, {
-        maxFraction: this.options.cueTolerance ?? 0.6
+        maxFraction: options.cueTolerance ?? 0.6
       })
       if (alignShift > 0) b = sliceChannels(b, alignShift, b.length)
     }
@@ -646,7 +749,7 @@ export class Automix {
 
     /* 6. the mix ----------------------------------------------------------- */
     // Curve: correlation decides unless the owner pinned one.
-    const exponent = this.options.curve === 'equal-power' ? 2 : this.options.curve === 'equal-gain' ? 1 : exponentFor(r)
+    const exponent = options.curve === 'equal-power' ? 2 : options.curve === 'equal-gain' ? 1 : exponentFor(r)
 
     // Vocal-aware shaping (automix-engine's "do not fade a lyric mid-line").
     // Without stems the honest proxy is the band-energy gate in
@@ -680,23 +783,23 @@ export class Automix {
     // Voice first: it can make the rendered segment longer than the blend.
     let voice = null
     let dj = null
-    if (this.#djDue()) {
+    if (!safeFallback && this.#djDue()) {
       dj = djLine({
         from: tail.track,
         to: head[0]?.track,
         station: this.ctx.station?.name ?? 'the station',
-        dj: this.options.dj.name,
+        dj: options.dj.name,
         listeners: this.ctx.station?.subscribers?.size ?? 0,
         index: this.#breaks
       })
-      voice = await speak({ sources: this.ctx.sources, options: this.options, log: this.log }, dj.text, sampleRate)
+      voice = await speak({ sources: this.ctx.sources, options: options, log: this.log }, dj.text, sampleRate)
       if (!voice) dj = null
       else this.#breaks += 1
     }
 
-    const voiceStart = voice ? sec(this.options.dj.leadInMs) : 0
-    const needed = Math.max(fade, voice ? voiceStart + voice.length + sec(this.options.dj.tailMs) : 0)
-    const total = Math.min(needed, b.length, sec(this.options.maxRenderMs))
+    const voiceStart = voice ? sec(options.dj.leadInMs) : 0
+    const needed = Math.max(fade, voice ? voiceStart + voice.length + sec(options.dj.tailMs) : 0)
+    const total = Math.min(needed, b.length, sec(options.maxRenderMs))
 
     // Apply the match gain to the incoming song for the seam, then ease it
     // back to the song's own level so the rest of the track is untouched.
@@ -715,39 +818,24 @@ export class Automix {
     const left = new Float32Array(total)
     const right = new Float32Array(total)
 
-    // Which transition? Either the one the owner named, or — the default —
-    // one chosen for this particular seam (see chooseEffect).
-    const wanted = this.options.effect ?? AUTO_EFFECT
-    // What this station's own log says about each transition (see
-    // ./outcomes.js). One cached read, not one per seam: the station answers
-    // from memory and refreshes on a timer.
-    const outcomes = typeof this.ctx.station?.effectOutcomes === 'function' ? this.ctx.station.effectOutcomes() : null
-    const seamDescription = {
-      beat: confident,
-      matched: Boolean(beatmatch),
-      tempoDelta: Math.abs((beatA?.bpm ?? 0) - (beatB?.bpm ?? 0)),
-      correlation: r,
-      fadeMs: ms(fade),
-      energy: entryEnergy,
-      talkover: Boolean(voice),
-      previous: this.options.varyEffects === false ? null : this.#lastEffect,
-      // The model's richer view of the same seam: tempos on both sides, the
-      // loudness gap, vocal activity, and the time of day.
-      bpmOut: beatA?.bpm ?? 0,
-      bpmIn: beatB?.bpm ?? 0,
-      loudnessGap: matchDb,
-      vocalOut: vocal?.outgoing ? 1 : 0,
-      vocalIn: vocal?.incoming ? 1 : 0,
-      phraseAligned: Boolean(phrase),
-      outcomes
+    // The transition type is deliberately fixed. Auto mode can still report
+    // that the seam was automatically configured, but it never selects an
+    // alternate effect or lets a learned policy replace the crossfade.
+    const effect = 'crossfade'
+    const choice: Record<string, any> = {
+      effect,
+      source: 'crossfade-only',
+      baseline: 'crossfade',
+      margin: 0,
+      model: null
     }
-    // Intelligent harmonic/structural analysis + multi-candidate transition planning.
-    // Runs on the decoded seam windows (LRU-cached by track ID & length) so we
-    // get musical key/Camelot compatibility, section structure, rhythm similarity,
-    // 8-dimension quality scoring, continuous 3-band/vocal/FX automation, and
-    // graceful smart fallback without blocking the event loop.
+    this.#lastEffect = effect
+    this.#lastModel = null
+
+    // Structural analysis is retained as diagnostics only. It cannot choose a
+    // different renderer or add EQ/FX automation to the crossfade.
     let transitionPlan: TransitionPlanResult | null = null
-    if (this.options.intelligent !== false) {
+    if (options.intelligent !== false) {
       try {
         const monoA = monoOf(a)
         const monoB = monoOf(b)
@@ -755,153 +843,49 @@ export class Automix {
         const keyB = head[0]?.track?.id ? `head:${head[0].track.id}:${monoB.length}` : undefined
         const structA: TrackStructure = analyzeTrackStructure(monoA, sampleRate, { cacheKey: keyA })
         const structB: TrackStructure = analyzeTrackStructure(monoB, sampleRate, { cacheKey: keyB })
-        const neural = this.options.model !== false && this.options.neuralAutomix !== false ? await loadNeuralAutomix() : null
-        const pool = (this.options.effectPool ?? []) as string[]
-        const allowedStrategies = pool.length ? pool.filter((s) => EFFECTS.includes(s)) : undefined
         transitionPlan = planTransition(structA, structB, {
-          neuralHost: neural ?? null,
-          useNeural: this.options.model !== false && this.options.neuralAutomix !== false,
-          allowedStrategies: allowedStrategies?.length ? allowedStrategies : undefined,
-          minCrossfadeMs: this.options.minCrossfadeMs ?? 2000,
-          maxCrossfadeMs: this.options.maxCrossfadeMs ?? 30_000,
-          requestedCrossfadeMs: this.options.crossfadeMs ?? 6000,
+          useNeural: false,
+          minCrossfadeMs: options.minCrossfadeMs ?? 2000,
+          maxCrossfadeMs: options.maxCrossfadeMs ?? 30_000,
+          requestedCrossfadeMs: options.crossfadeMs ?? 6000,
           availableMs: ms(Math.min(a.length, b.length)),
-          maxStretchPercent: this.options.maxStretchPercent ?? 12,
+          maxStretchPercent: options.maxStretchPercent ?? 12,
           correlation: r,
           appliedGainDb: matchDb,
-          lowHz: this.options.crossoverHz ?? 200,
-          highHz: this.options.highCrossoverHz ?? 3600,
           talkover: Boolean(voice),
-          minBeatMatchQuality: this.options.minQualityScore ?? 0.5,
-          previousStrategy: this.options.varyEffects === false ? null : this.#lastEffect,
-          hasStems: Boolean(tail.track?.stems || head[0]?.track?.stems),
+          minBeatMatchQuality: options.minQualityScore ?? 0.5,
           seamCount:
-            typeof this.options.seamCount === 'number'
-              ? this.options.seamCount
+            typeof options.seamCount === 'number'
+              ? options.seamCount
               : typeof this.ctx.station?.seamCount === 'function'
                 ? this.ctx.station.seamCount()
                 : undefined,
-          progressiveScaling: this.options.progressiveScaling === true
+          progressiveScaling: false
         })
       } catch (error: any) {
-        this.log.debug(`intelligent planner: ${error?.message ?? error}`)
+        this.log.debug(`crossfade diagnostics: ${error?.message ?? error}`)
       }
     }
 
-    let choice: Record<string, any> = { effect: chooseEffect(seamDescription, this.options.effectPool ?? []), source: 'heuristic' }
-    if (wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted]) {
-      // Multi-candidate intelligent planner (harmonic + structural + quality + optional neural v2 model).
-      if (transitionPlan) {
-        const mapped = mapStrategyToEffect(transitionPlan.selected.strategy as AutoMixStrategy, this.options.effectPool ?? [])
-        if (EFFECT_RENDERERS[mapped]) {
-          choice = {
-            effect: mapped,
-            source:
-              transitionPlan.selected.plan.source === 'neural'
-                ? 'neural-automix'
-                : transitionPlan.fallbackUsed
-                  ? 'smart-fallback'
-                  : 'intelligent-planner',
-            baseline: choice.effect,
-            margin: Number(
-              (transitionPlan.selected.evaluation.overall - (transitionPlan.candidates[1]?.evaluation.overall ?? 0)).toFixed(3)
-            ),
-            model: transitionPlan.selected.plan.source === 'neural' ? 'neural-automix-v2' : null
-          }
-        }
-      }
-      // The v1 DJ model, when one is loaded and the owner has not turned it off.
-      // A model is an *opinion*, not a requirement: `score()` returns null for
-      // every failure mode, and the planner/heuristic answers as it always did.
-      if (this.options.model !== false && choice.source !== 'neural-automix') {
-        const host = await loadModels()
-        const scored = host ? host.score(seamDescription) : null
-        if (scored) choice = chooseEffectWithModel(seamDescription, this.options.effectPool ?? [], scored)
-      }
-      // The station's own advice (RL: what has worked between these two
-      // kinds of beat). Same rule as the model: an opinion, never an outage.
-      const advise = this.ctx.station?.adviseSeam
-      if (typeof advise === 'function') {
-        try {
-          const advised = await advise.call(this.ctx.station, seamDescription, choice, this.options.effectPool ?? [], { from: tail.track ?? tail.frames[0]?.track ?? null, to: head[0]?.track ?? null, blendMs: ms(fade) })
-          if (advised?.effect && EFFECT_RENDERERS[advised.effect]) choice = advised
-        } catch (error) {
-          this.log.debug(`seam advice: ${error.message}`)
-        }
-      }
-      this.#lastModel = choice.model ?? null
-    }
-    const effect = wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted] ? choice.effect : wanted
-    this.#lastEffect = effect
-
-    // Choose continuous 3-band EQ / vocal-sculpted / micro-ducked / optional stem
-    // blender for continuous auto transitions; keep discrete FX (`spindown`,
-    // `roll`, `drop`, `sweep`, `slam`), explicit owner-pinned effects, and
-    // third-party plugins on their exact registered renderers.
-    const isAutoMode = wanted === AUTO_EFFECT || !EFFECT_RENDERERS[wanted]
-    const useContinuous =
-      isAutoMode &&
-      this.options.continuousBlend !== false &&
-      BUILT_IN_EFFECTS.has(effect) &&
-      CONTINUOUS_EFFECTS.has(effect)
-
-    let activeAutomation: AutomationPlan | null = null
-    let stemsUsed = false
     const harmonyInfo = transitionPlan ? harmonicCompatibility(transitionPlan.trackA.key, transitionPlan.trackB.key) : null
     const rhythmSim = transitionPlan
       ? rhythmSimilarity(transitionPlan.trackA.rhythmPattern, transitionPlan.trackB.rhythmPattern)
       : null
-    if (useContinuous) {
-      const strategyForBlend =
-        transitionPlan && mapStrategyToEffect(transitionPlan.selected.strategy as AutoMixStrategy, this.options.effectPool ?? []) === effect
-          ? transitionPlan.selected.strategy
-          : effect
-      activeAutomation =
-        transitionPlan && strategyForBlend === transitionPlan.selected.strategy
-          ? transitionPlan.selected.plan
-          : buildAutomationPlan({
-              strategy: strategyForBlend,
-              exponent,
-              vocalOut: vocal?.outgoing ? 1 : 0,
-              vocalIn: vocal?.incoming ? 1 : 0,
-              harmonicScore: harmonyInfo?.score ?? 0.65,
-              beatMatched: Boolean(beatmatch),
-              lowHz: this.options.crossoverHz ?? 200,
-              highHz: this.options.highCrossoverHz ?? 3600
-            })
-      const stemsA = tail.track?.stems ?? null
-      const stemsB = head[0]?.track?.stems ?? null
-      stemsUsed = Boolean(stemsA || stemsB)
-      renderContinuousBlend({
-        a,
-        b,
-        left,
-        right,
-        fade,
-        total,
-        sampleRate,
-        plan: activeAutomation,
-        beatSamples: confident ? beatPeriod : 0,
-        stemsA,
-        stemsB
-      })
-    } else {
-      EFFECT_RENDERERS[effect]({
-        a,
-        b,
-        left,
-        right,
-        fade,
-        total,
-        gainFor,
-        sampleRate,
-        options: this.options,
-        beatSamples: confident ? beatPeriod : 0
-      })
-    }
+    EFFECT_RENDERERS.crossfade({
+      a,
+      b,
+      left,
+      right,
+      fade,
+      total,
+      gainFor,
+      sampleRate,
+      options,
+      beatSamples: confident ? beatPeriod : 0
+    })
 
     /* 7. the DJ, over a real sidechain ducker ------------------------------ */
-    if (voice) voiceTrack(this.options, { left, right, voice, voiceStart, sampleRate })
+    if (voice) voiceTrack(options, { left, right, voice, voiceStart, sampleRate })
 
     /* 8. make it joinable -------------------------------------------------- */
     // The render sits between the outgoing song alone and the incoming song
@@ -924,7 +908,7 @@ export class Automix {
     /* 9. peak ceiling ------------------------------------------------------ */
     // Applied as an envelope that is 1 at both edges: a flat gain over the
     // render would step against the untouched audio either side of it.
-    const ceiling = DB(this.options.ceilingDb)
+    const ceiling = DB(options.ceilingDb)
     const peak = samplePeak([left, right])
     if (peak > ceiling) {
       const g = ceiling / peak
@@ -977,7 +961,7 @@ export class Automix {
     }
 
     /* 11. back to MP3 ------------------------------------------------------ */
-    const bitrate = Math.max(96, Math.min(320, head[0]?.track?.streamBitrate ?? this.options.bitrate ?? 128))
+    const bitrate = Math.max(96, Math.min(320, head[0]?.track?.streamBitrate ?? options.bitrate ?? 128))
     const encoded = await bridge(
       codec,
       {
@@ -1013,13 +997,13 @@ export class Automix {
         to: head[0]?.track?.title ?? null,
         effect,
         // Was this one chosen for the seam, or named by the owner?
-        chosen: (this.options.effect ?? AUTO_EFFECT) === AUTO_EFFECT,
+        chosen: (options.effect ?? AUTO_EFFECT) === AUTO_EFFECT,
         // Which brain chose it, and what the other one would have picked. An
         // owner looking at a surprising transition can see the disagreement
         // rather than having to infer it.
         decision: {
-          source: (this.options.effect ?? AUTO_EFFECT) === AUTO_EFFECT ? choice.source : 'owner',
-          baseline: (this.options.effect ?? AUTO_EFFECT) === AUTO_EFFECT ? choice.baseline : null,
+          source: (options.effect ?? AUTO_EFFECT) === AUTO_EFFECT ? choice.source : 'owner',
+          baseline: (options.effect ?? AUTO_EFFECT) === AUTO_EFFECT ? choice.baseline : null,
           margin: choice.margin ?? null,
           model: choice.model ?? null
         },
@@ -1028,7 +1012,7 @@ export class Automix {
         correlation: Number(r.toFixed(3)),
         blendMs: ms(fade),
         // Smart Automix: what it asked for, and why.
-        blend: { requestedMs: this.options.crossfadeMs, chosenMs: smart.ms, bars: smart.bars, why: smart.why },
+        blend: { requestedMs: options.crossfadeMs, chosenMs: smart.ms, bars: smart.bars, why: smart.why },
         renderedMs: ms(total),
         // Where the render sits: the outgoing song alone before it, the
         // incoming song alone after it, and how far the landing was nudged to
@@ -1050,10 +1034,23 @@ export class Automix {
           shiftMs: ms(alignShift),
           beatsInBlend: beatPeriod ? Math.round(fade / beatPeriod) : 0,
           confidence: beatA ? Number(beatA.confidence.toFixed(2)) : null,
-          // Joint tempo analysis: the pair chosen, and how well it agrees.
+          serviceConfidence: beatA ? Number(beatA.serviceConfidence.toFixed(2)) : null,
+          incomingServiceConfidence: beatB ? Number(beatB.serviceConfidence.toFixed(2)) : null,
+          source: beatA?.source ?? null,
+          // Independent CPU BPMi predictions and their local candidate inputs
+          // are recorded for training; they never replace the service tempos.
+          bpmi: bpmIProfiles ? {
+            model: 'BPMi',
+            backend: 'cpu',
+            outgoing: bpmIEstimates?.outgoing ?? null,
+            incoming: bpmIEstimates?.incoming ?? null,
+            profiles: bpmIProfiles
+          } : null,
+          // The rendered beat grid remains service-backed. BPMi's separate
+          // local estimate/profile is diagnostic and training data only.
           pair: pairChoice
-            ? { bpmA: pairChoice.bpmA, bpmB: pairChoice.bpmB, compatibility: pairChoice.compatibility, source: 'pair' }
-            : { source: 'scalar' },
+            ? { bpmA: pairChoice.bpmA, bpmB: pairChoice.bpmB, compatibility: pairChoice.compatibility, source: pairChoice.source }
+            : { source: options.beatAlign ? 'GetSongBPM' : 'disabled' },
           // Phrase-aligned blend length (automix-engine's 32-beat map, here).
           phrase: phrase ? { beats: phrase.beats, phrases: phrase.phrases, beatMs: ms(phrase.beatSamples) } : null,
           // Tempo release: how long the incoming song takes to reach native speed.
@@ -1083,24 +1080,13 @@ export class Automix {
         quality: transitionPlan?.selected.evaluation ?? null,
         plan: transitionPlan
           ? {
-              source: transitionPlan.selected.plan.source,
-              strategy: transitionPlan.selected.strategy,
-              continuousBlend: useContinuous,
-              stemsUsed,
-              candidateCount: transitionPlan.candidates.length,
-              fallbackUsed: transitionPlan.fallbackUsed,
-              fallbackReason: transitionPlan.fallbackReason,
-              bassSwapAt: activeAutomation?.bassSwapAt ?? transitionPlan.selected.plan.bassSwapAt,
-              bassSwapWidth: activeAutomation?.bassSwapWidth ?? transitionPlan.selected.plan.bassSwapWidth,
-              knots: activeAutomation?.curves.knots ?? transitionPlan.selected.plan.curves.knots,
-              scaling: transitionPlan.scaling
-                ? {
-                    tier: transitionPlan.scaling.id,
-                    seams: transitionPlan.scaling.seams,
-                    unlockedTransitions: transitionPlan.scaling.unlockedCount,
-                    neuralParams: transitionPlan.scaling.neuralParams
-                  }
-                : null
+              source: 'crossfade-only',
+              strategy: 'crossfade',
+              continuousBlend: false,
+              stemsUsed: false,
+              candidateCount: 1,
+              fallbackUsed: false,
+              fallbackReason: null
             }
           : null,
         peakDb: Number(TO_DB(Math.min(peak, ceiling)).toFixed(1)),

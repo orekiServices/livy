@@ -18,7 +18,7 @@ import { Network } from '../src/core/models/network.ts'
 import { MAGIC, VERSION, checksum, packModel, unpackModel } from '../src/core/models/format.ts'
 import { buildDataset, readSeams, recordSeam, seamFor, trainModel } from '../src/core/models/trainer.ts'
 import { saveModel, listModels, modelDirs, models, resolveModel } from '../src/core/models/index.ts'
-import { EFFECTS, chooseEffect, chooseEffectWithModel } from '../src/core/automix.ts'
+import { EFFECTS, chooseEffect, chooseEffectWithModel } from '../src/core/automix/index.ts'
 import { tmpdir } from './helpers.ts'
 
 const network = (shape = [FEATURES.length, 8, ACTIONS.length]) => new Network(shape)
@@ -147,43 +147,23 @@ test('a target is the outcome, not the heuristic\'s opinion', () => {
   assert.ok(late[ACTIONS.indexOf('bass-swap')] > 0.3, 'a late skip is not attributed to the seam')
 })
 
-test('the model only re-ranks what the heuristic already allows', () => {
+test('the compatibility chooser ignores legacy effect-classifier outputs', () => {
   const seam = { beat: true, matched: true, tempoDelta: 1, fadeMs: 6000, correlation: 0.1 }
-  const scorings = {
+  const legacyModelOutput = {
     order: ['bass-swap', 'crossfade', 'wash'],
     best: 'bass-swap',
     margin: 0.4,
-    model: 'test'
+    model: 'legacy-effect-classifier'
   }
 
-  // Allowed: the model wins.
-  //
-  // `chooseEffect` picks at random among the near-best transitions (so two
-  // identical-looking seams do not always resolve the same way), which means a
-  // single call is not a stable baseline. The claim being tested is about the
-  // fold, not about the draw, so the model's pick has to be the same every
-  // time regardless of what the heuristic happened to roll.
+  assert.deepEqual([...EFFECTS], ['crossfade'])
   for (let run = 0; run < 25; run += 1) {
-    const picked = chooseEffectWithModel(seam, [], scorings)
-    assert.equal(picked.effect, 'bass-swap', `run ${run}: expected the model's pick, got ${picked.effect} (${picked.source})`)
-    assert.equal(picked.source, 'model')
+    const picked = chooseEffectWithModel(seam, [], legacyModelOutput)
+    assert.equal(picked.effect, 'crossfade')
+    assert.equal(picked.source, 'crossfade-only')
   }
-
-  // Excluded by the pool: the pool wins.
-  assert.notEqual(chooseEffectWithModel(seam, ['crossfade', 'wash'], scorings).effect, 'bass-swap')
-
-  // A margin under 0.05 is not a decision.
-  const thin = chooseEffectWithModel(seam, [], { ...scorings, margin: 0.01 })
-  assert.equal(thin.source, 'heuristic')
-
-  // No model at all: the heuristic's own distribution, untouched. With no
-  // model the fold must not even be consulted, so every answer has to be a
-  // transition the heuristic can pick.
-  for (let run = 0; run < 25; run += 1) {
-    const picked = chooseEffectWithModel(seam, [], null)
-    assert.equal(picked.source, 'heuristic')
-    assert.ok(EFFECTS.includes(picked.effect), `${picked.effect} is a real transition`)
-  }
+  assert.equal(chooseEffectWithModel(seam, ['crossfade', 'wash'], legacyModelOutput).effect, 'crossfade')
+  assert.equal(chooseEffectWithModel(seam, [], null).effect, 'crossfade')
 })
 
 test('the model cannot pick a transition the seam cannot carry', () => {

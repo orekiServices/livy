@@ -39,6 +39,20 @@ export const modelRepo = {
     return records
   },
 
+  /** Full node-wide history for stable, labelled BPM observations. */
+  allSeams() {
+    const rows = this.db.all('SELECT record FROM dj_seams ORDER BY id ASC')
+    const records = []
+    for (const row of rows) {
+      try {
+        records.push(JSON.parse(row.record))
+      } catch {
+        // A row written by a different schema: ignore it.
+      }
+    }
+    return records
+  },
+
   countSeams() {
     return this.db.get('SELECT COUNT(*) AS n FROM dj_seams')?.n ?? 0
   },

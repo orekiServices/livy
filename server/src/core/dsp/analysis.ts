@@ -286,12 +286,18 @@ export function correlation(a, b, length = Math.min(a.length, b.length)) {
  * Crossfade gains for fader position `t` (0…1) under the law aˣ + bˣ = 1:
  * x = 1 is equal-gain (correlated material), x = 2 is equal-power
  * (uncorrelated). Everything between is a legitimate compromise, so the
- * measured correlation picks the exponent.
+ * measured correlation picks the exponent. A smoothstep time warp gives both
+ * faders a zero-slope start and finish without changing that gain law.
  */
 export function fadeGains(t, exponent = 2) {
   const c = clamp(t, 0, 1)
   const x = clamp(exponent, 1, 2)
-  return [(1 - c) ** (1 / x), c ** (1 / x)]
+  if (c === 0) return [1, 0]
+  if (c === 1) return [0, 1]
+  const eased = c * c * (3 - 2 * c)
+  const angle = eased * (Math.PI / 2)
+  const power = 2 / x
+  return [Math.cos(angle) ** power, Math.sin(angle) ** power]
 }
 
 export function exponentFor(correlationValue) {
@@ -424,7 +430,9 @@ export function estimateBeat(mono, sampleRate, options: any = {}) {
 
   const odfRate = sampleRate / hopSize
   const minLag = Math.max(2, Math.round((60 / 200) * odfRate))
-  const maxLag = Math.min(odf.length - 1, Math.round((60 / 60) * odfRate))
+  // Keep the tempo-candidate range inside the autocorrelation buffer; the
+  // comb below reads `acf[lag]` even when its harmonic teeth are out of range.
+  const maxLag = Math.min(odf.length - 2, Math.round((60 / 60) * odfRate))
   if (maxLag <= minLag) return null
 
   // Autocorrelation over every lag the comb can reach, not just the tempo

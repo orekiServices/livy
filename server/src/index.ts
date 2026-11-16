@@ -374,5 +374,5 @@ if (isMain) {
 }
 
 export { StationManager, SourceRegistry, PluginHost, Store, RadioCache }
-export { Station } from './core/station.ts'
+export { Station } from './core/station/index.ts'
 export default createRadioServer

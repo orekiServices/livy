@@ -12,7 +12,7 @@ import { EventEmitter } from 'node:events'
 import PluginHost from '../src/core/plugins.ts'
 import Store from '../src/store/index.ts'
 import SourceRegistry from '../src/sources/index.ts'
-import { EFFECTS } from '../src/core/automix.ts'
+import { EFFECTS } from '../src/core/automix/index.ts'
 import { tmpdir, quietLogs, boot, api, waitFor } from './helpers.ts'
 
 quietLogs()
@@ -84,7 +84,7 @@ test('a broken plugin is isolated, never fatal', async () => {
   await h.close()
 })
 
-test('plugins add sources, transitions and HTTP routes — and give them back', async () => {
+test('plugins add sources and HTTP routes, but cannot add Automix renderers', async () => {
   const { host: h } = await host({
     'kitchen-sink.js': `export default function setup(ctx) {
       ctx.registerSource({
@@ -93,27 +93,23 @@ test('plugins add sources, transitions and HTTP routes — and give them back', 
         canResolve: (q) => q.startsWith('demo:'),
         resolve: async () => ({ type: 'search', name: 'demo', tracks: [] })
       })
-      ctx.registerEffect('warp', ({ left, right, total, a, b, gainFor, fade }) => {
-        for (let i = 0; i < total; i += 1) {
-          const [ga, gb] = gainFor(i / fade)
-          left[i] = (a.left[i] ?? 0) * ga + (b.left[i] ?? 0) * gb
-          right[i] = left[i]
-        }
-      })
+      try { ctx.registerEffect('warp', () => {}) } catch (error) { globalThis.__warpError = error.message }
       ctx.registerRoute('GET', '/ping', ({ res, send }) => { send(res, 200, { pong: true }); return true })
     }`
   })
 
   const record = h.list()[0]
   assert.deepEqual(record.provides.sources, ['demo'])
-  assert.deepEqual(record.provides.effects, ['warp'])
+  assert.deepEqual(record.provides.effects, [])
+  assert.match(globalThis.__warpError, /supports crossfade only/)
   assert.deepEqual(record.provides.routes, ['/api/v1/x/kitchen-sink/ping'])
-  assert.ok(EFFECTS.includes('warp'), 'the transition is offered to stations')
+  assert.deepEqual(EFFECTS, ['crossfade'], 'the renderer registry remains fixed')
   assert.ok(h.sources.get('demo'), 'the source is in the registry')
 
   await h.disable('kitchen-sink')
   assert.equal(h.sources.get('demo'), undefined, 'sources are revoked')
-  assert.ok(!EFFECTS.includes('warp'), 'effects are revoked')
+  assert.deepEqual(EFFECTS, ['crossfade'], 'a plugin cannot mutate the renderer registry')
+  delete globalThis.__warpError
   assert.equal(h.routes.length, 0, 'routes are revoked')
   await h.close()
 })

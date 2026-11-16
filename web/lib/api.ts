@@ -195,6 +195,45 @@ export const clearOwnerKey = (): void => {
 export const owner = <T = any>(path: string, options: ApiOptions = {}): Promise<T> =>
   api<T>(`/api/v1/owner${path}`, { ...options, key: options.key ?? ownerKey() })
 
+/** Render a user-supplied Automix seam and keep the result as binary MP3. */
+export async function ownerAutomixEditor(body: unknown, signal?: AbortSignal): Promise<{ mp3: Blob; report: Record<string, unknown> }> {
+  const origin = await nodeBase()
+  const key = ownerKey()
+  const res = await fetch(`${origin}/api/v1/owner/automix/editor`, {
+    method: 'POST',
+    signal,
+    cache: 'no-store',
+    headers: {
+      'content-type': 'application/json',
+      ...(key ? { 'x-owner-key': key } : {})
+    },
+    body: JSON.stringify(body)
+  })
+
+  if (!res.ok) {
+    const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    const err = new Error(typeof payload.message === 'string' ? payload.message : `HTTP ${res.status}`) as ApiError
+    err.status = res.status
+    err.payload = payload
+    throw err
+  }
+
+  const mp3 = await res.blob()
+  let report: Record<string, unknown> = {}
+  const encoded = res.headers.get('x-livy-report')
+  if (encoded) {
+    try {
+      const raw = encoded.replace(/-/g, '+').replace(/_/g, '/')
+      const base64 = raw + '='.repeat((4 - raw.length % 4) % 4)
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
+      report = JSON.parse(new TextDecoder().decode(bytes))
+    } catch {
+      // The audio remains usable even if an older node has no report header.
+    }
+  }
+  return { mp3, report }
+}
+
 /** Owner cache endpoints. */
 export const ownerCache = (limit = 50): Promise<CacheStats> =>
   owner<CacheStats>(`/cache?limit=${encodeURIComponent(limit)}`)

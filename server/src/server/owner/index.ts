@@ -32,13 +32,14 @@ import { hostInfo } from '../../util/platform.ts'
 import { fxInfo } from '../../util/fx.ts'
 import { REASONS, REASON_IDS, LINES, SHIPPED_LANGUAGES } from '../streamErrors.ts'
 import { LANGUAGES, normaliseLanguage } from '../../tts/index.ts'
-import { publicTrack } from '../../core/station.ts'
-import { EFFECTS, EFFECT_TRAITS, AUTO_EFFECT, DEFAULT_AUTOMIX, outcomeReport } from '../../core/automix.ts'
+import { publicTrack } from '../../core/station/index.ts'
+import { EFFECTS, EFFECT_TRAITS, AUTO_EFFECT, DEFAULT_AUTOMIX, outcomeReport } from '../../core/automix/index.ts'
 import { describe as describeFilters } from '../../core/filters/index.ts'
 import { modelRoutes, stationModels, trainForStation } from './models.ts'
 import { pluginRoutes } from './plugins.ts'
 import { systemRoutes } from './system.ts'
 import { previewTransition } from '../../core/preview.ts'
+import { EDITOR_MAX_JSON_BYTES, renderEditorTransition } from '../../core/automix/editor.ts'
 import {
   canClaimPassword,
   hasPassword,
@@ -368,7 +369,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         return send(res, 200, { intro, station: target.id })
       }
 
-      // Automix: transition style + DJ, changeable while the station is live.
+      // Automix: crossfade timing, beat metadata, and DJ controls; changeable live.
       if (action === 'automix') {
         // The scoreboard travels with the settings: an owner choosing a
         // transition style can see what each one has actually done here.
@@ -376,8 +377,27 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
         if (method === 'POST' || method === 'PATCH') {
           const body = await readJson(req)
           const patch: Record<string, any> = {}
-          for (const key of ['enabled', 'crossfadeMs', 'curve', 'effect', 'minTrackMs', 'bitrate', 'beatAlign', 'beatmatch', 'maxStretchPercent', 'trimSilence', 'crossoverHz', 'targetLufs', 'ceilingDb', 'maxGainDb', 'model']) {
-            if (body[key] !== undefined) patch[key] = ['enabled', 'beatmatch', 'beatAlign', 'model'].includes(key) ? Boolean(body[key]) : body[key]
+          for (const key of [
+            'enabled',
+            'crossfadeMs',
+            'curve',
+            'effect',
+            'minTrackMs',
+            'bitrate',
+            'beatAlign',
+            'beatmatch',
+            'maxStretchPercent',
+            'trimSilence',
+            'smart',
+            'phraseBlend',
+            'vocalAware',
+            'crossoverHz',
+            'targetLufs',
+            'ceilingDb',
+            'maxGainDb',
+            'model'
+          ]) {
+            if (body[key] !== undefined) patch[key] = ['enabled', 'beatmatch', 'beatAlign', 'model', 'smart', 'phraseBlend', 'vocalAware'].includes(key) ? Boolean(body[key]) : body[key]
           }
           if (body.dj !== undefined) {
             patch.dj = typeof body.dj === 'boolean' ? { enabled: body.dj } : body.dj
@@ -582,11 +602,31 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
 
     /* -------------------------------- automix --------------------------- */
 
-    // Hear a transition before putting it on air. The node renders the seam
-    // between two demo tracks with the effect and blend length asked for and
-    // answers with the MP3 — which is the only honest way to choose between
-    // ten transitions.
+    // Audition the supported crossfade before putting it on air. The node
+    // renders a real seam between two pieces of audio and returns the MP3.
     if (section === 'automix') {
+      // The web editor is intentionally separate from the station preview:
+      // its only inputs are two user-provided MP3s, never a queue or source.
+      if (id === 'editor' && method === 'POST') {
+        const body = await readJson(req, EDITOR_MAX_JSON_BYTES)
+        const rendered = await renderEditorTransition(body)
+        return send(res, 200, rendered.mp3, {
+          'content-type': 'audio/mpeg',
+          'content-length': String(rendered.mp3.length),
+          'content-disposition': 'attachment; filename="livy-automix-transition.mp3"',
+          'x-livy-report': Buffer.from(JSON.stringify({
+            from: rendered.report.from,
+            to: rendered.report.to,
+            effect: rendered.report.effect,
+            blendMs: rendered.report.blendMs,
+            curve: rendered.report.curve,
+            durationMs: rendered.durationMs,
+            preRollMs: rendered.preRollMs
+          })).toString('base64url'),
+          'access-control-expose-headers': 'content-disposition, x-livy-report'
+        })
+      }
+
       if (method === 'GET') {
         return send(res, 200, {
           effects: [AUTO_EFFECT, ...EFFECTS],

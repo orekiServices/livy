@@ -10,7 +10,7 @@ import path from 'node:path'
 import createLogger from '../../util/logger.ts'
 import { describe as describeSettings } from '../pluginSchema.ts'
 import { isOwner } from '../../server/owner.ts'
-import { registerEffect } from '../automix.ts'
+import { registerEffect } from '../automix/index.ts'
 
 export function buildContext(host, record) {
     const pluginLog = createLogger(`plugin:${record.id}`)
@@ -166,7 +166,7 @@ export function buildContext(host, record) {
         return provider
       },
 
-      /** Add an automix transition: `registerEffect('my-effect', ctx => …)`. */
+      /** Legacy compatibility hook; Automix rejects additional transition renderers. */
       registerEffect: (name, renderer) => {
         registerEffect(name, renderer)
         track('effects', name)

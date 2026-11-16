@@ -18,7 +18,7 @@ import path from 'node:path'
 
 import { serverless, paths } from '../src/config.ts'
 import { FilterChain, EQ_BANDS } from '../src/core/filters/index.ts'
-import { decodeMp3, encodeMp3 } from '../src/core/automix.ts'
+import { decodeMp3, encodeMp3 } from '../src/core/automix/index.ts'
 import { quietLogs, beatLoop, tone, toMp3, framesFrom, boot, api, tmpdir } from './helpers.ts'
 
 quietLogs()
@@ -110,7 +110,7 @@ test('the console is served by the function, with the filter schema in setup', a
   const setup = JSON.parse((await get('/api/v1/setup')).body)
   assert.equal(setup.filters.bands.length, EQ_BANDS.length)
   assert.ok(setup.filters.filters.length >= 19, 'every filter is advertised')
-  assert.ok(setup.transitions.length >= 10, 'and so is every transition')
+  assert.deepEqual(setup.transitions, ['crossfade'], 'only the built-in crossfade is advertised')
 })
 
 test('REST works on a serverless deployment; a socket-only route explains itself', async (t) => {

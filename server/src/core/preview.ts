@@ -1,9 +1,8 @@
 /**
- * Hearing a transition before it goes on air.
+ * Auditioning the supported crossfade before it goes on air.
  *
- * Ten transitions with names like "wash" and "roll" are ten guesses unless
- * you can listen to them. This renders a real seam — the same code path the
- * station uses, the same beatmatching, the same ducker, the same encoder —
+ * This renders a real seam through the same code path the station uses —
+ * including beat metadata, phase alignment, the ducker, and the encoder —
  * between two pieces of music, and hands back an MP3.
  *
  * What it mixes, in order of preference:
@@ -22,7 +21,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { Automix, EFFECTS, AUTO_EFFECT } from './automix.ts'
+import { Automix, EFFECTS, AUTO_EFFECT } from './automix/index.ts'
 import { decodeMp3, encodeMp3, probeMp3, MetroFramer } from '../util/metro.ts'
 import { paths } from '../config.ts'
 import createLogger from '../util/logger.ts'

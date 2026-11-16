@@ -6,13 +6,15 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./station": "./src/core/station.ts",
+    "./station": "./src/core/station/index.ts",
     "./sources": "./src/sources/index.ts",
     "./mp3": "./src/util/mp3.ts",
     "./metro": "./src/util/metro.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",
+    "automix:mp3": "bun scripts/automix-mp3.ts",
+    "automix:demo": "bun scripts/automix-demo.ts",
     "dev": "bun --watch src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",

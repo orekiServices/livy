@@ -316,7 +316,7 @@ export default function Overview() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel
           title="Seam engine & automix"
-          subtitle="Beat alignment, transition chooser, and background trainer."
+          subtitle="GetSongBPM-backed beat alignment, crossfades, and background training."
           actions={
             <Link href="/seams/">
               <Button size="sm" variant="ghost">

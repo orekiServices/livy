@@ -59,9 +59,17 @@
     "automix": {
       "enabled": true,
       "crossfadeMs": 6000,
+      "minCrossfadeMs": 2000,
+      "maxCrossfadeMs": 30000,
+      "curve": "auto",
       "effect": "auto",
+      "smart": true,
+      "beatAlign": true,
       "beatmatch": true,
-      "model": true
+      "maxStretchPercent": 12,
+      "phraseBlend": true,
+      "vocalAware": true,
+      "model": false
     },
     "allowPlayNow": true
   },

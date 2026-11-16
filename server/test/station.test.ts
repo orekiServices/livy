@@ -8,7 +8,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 
-import Station, { publicTrack } from '../src/core/station.ts'
+import Station, { publicTrack } from '../src/core/station/index.ts'
 import StationManager from '../src/core/stationManager.ts'
 import { SourceRegistry } from '../src/sources/index.ts'
 import { probeMp3 } from '../src/util/mp3.ts'

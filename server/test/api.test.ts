@@ -412,19 +412,56 @@ test('owner controls drive a live station', async (t) => {
   assert.equal((await api(base, '/api/v1/stations/lofi/stop', { method: 'POST', key: KEY })).state, 'stopped')
   assert.equal((await api(base, '/api/v1/stations/lofi/start', { method: 'POST', key: KEY }))._status, 200)
 
-  // The automix can be re-styled while the station is live.
+  // New stations use the crossfade-only compatibility sentinel and expose
+  // service-backed beat metadata alongside the phrase-aware controls.
+  const initialAutomix = await api(base, '/api/v1/owner/stations/lofi/automix', { key: KEY })
+  assert.equal(initialAutomix.effect, 'auto')
+  assert.equal(initialAutomix.smart, true)
+  assert.equal(initialAutomix.phraseBlend, true)
+  assert.equal(initialAutomix.beatmatchSource, 'GetSongBPM')
+  assert.equal(initialAutomix.beatmatchService.service, 'GetSongBPM')
+  assert.equal(initialAutomix.model, false, 'the retired effect classifier stays disabled')
+  assert.deepEqual(initialAutomix.effects, ['crossfade'])
+
+  const rejectedEffect = await api(base, '/api/v1/owner/stations/lofi/automix', {
+    method: 'POST', key: KEY, body: { effect: 'filter' }
+  })
+  assert.equal(rejectedEffect._status, 400)
+  assert.match(rejectedEffect.message, /crossfade only/)
+
   const automix = await api(base, '/api/v1/owner/stations/lofi/automix', {
     method: 'POST',
     key: KEY,
-    body: { enabled: true, effect: 'filter', crossfadeMs: 4000 }
+    body: {
+      enabled: true,
+      effect: 'crossfade',
+      crossfadeMs: 4000,
+      curve: 'equal-power',
+      smart: false,
+      phraseBlend: false,
+      vocalAware: false
+    }
   })
-  assert.equal(automix.effect, 'filter')
+  assert.equal(automix.effect, 'crossfade')
   assert.equal(automix.crossfadeMs, 4000)
+  assert.equal(automix.curve, 'equal-power')
+  assert.equal(automix.smart, false)
+  assert.equal(automix.phraseBlend, false)
+  assert.equal(automix.vocalAware, false)
 
   const bad = await api(base, '/api/v1/owner/stations/lofi/automix', { method: 'POST', key: KEY, body: { effect: 'nope' } })
   assert.equal(bad._status, 400)
-  assert.match(bad.message, /Unknown transition/)
-  assert.equal((await api(base, '/api/v1/owner/stations/lofi/automix', { key: KEY })).effect, 'filter', 'the bad change was not applied')
+  assert.match(bad.message, /crossfade only/)
+  assert.equal((await api(base, '/api/v1/owner/stations/lofi/automix', { key: KEY })).effect, 'crossfade', 'the bad change was not applied')
+
+  const badCurve = await api(base, '/api/v1/owner/stations/lofi/automix', {
+    method: 'POST',
+    key: KEY,
+    body: { curve: 'linear' }
+  })
+  assert.equal(badCurve._status, 400)
+  assert.match(badCurve.message, /Unknown fade curve/)
+  assert.equal((await api(base, '/api/v1/owner/stations/lofi/automix', { key: KEY })).curve, 'equal-power', 'the invalid curve was not applied')
 })
 
 test('errors are useful to the caller and silent about the inside', async (t) => {

@@ -2,7 +2,7 @@
  * The voice-tracking DJ: render the line, condition it, duck the bed under it.
  */
 import { createHash } from 'node:crypto'
-import { Biquad, DB, clamp, compressorGain, integratedLoudness, samplePeak } from '../dsp.ts'
+import { Biquad, DB, clamp, compressorGain, integratedLoudness, samplePeak } from '../dsp/index.ts'
 import { decodeMp3 } from './audio.ts'
 import { fitRate } from './util.ts'
 

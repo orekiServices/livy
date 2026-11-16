@@ -675,10 +675,17 @@ const clamp = (value, low, high) => (value < low ? low : value > high ? high : v
  */
 export async function analyseBeat(mono, sampleRate) {
   if (native?.analyseBeatAsync) {
+    // Older shipped libmetro binaries can panic if the onset envelope does not
+    // extend beyond the longest candidate lag. Until every node has the fixed
+    // addon, skip beat estimation on very short seam windows rather than risk
+    // aborting the process in Rust.
+    const hopSize = 256
+    const minimumOdfLength = Math.round(sampleRate / hopSize) + 2
+    if (mono.length < 1024 + minimumOdfLength * hopSize) return null
     const beat = await native.analyseBeatAsync(mono, sampleRate)
     return beat ?? null
   }
-  const { estimateBeat } = await import('../core/dsp.ts')
+  const { estimateBeat } = await import('../core/dsp/index.ts')
   return estimateBeat(mono, sampleRate)
 }
 
@@ -695,11 +702,11 @@ export async function stretchAudio(channels, sampleRate, { stretch = 1, rampSamp
     const out = await native.timeStretchAsync(left, right, sampleRate, stretch, rampSamples, length ?? undefined)
     // The time map is pure arithmetic and the caller needs it to find where
     // a beat *landed*; it is the same map the native side used.
-    const { stretchMap } = await import('../core/dsp.ts')
+    const { stretchMap } = await import('../core/dsp/index.ts')
     return { channels: [out.left, out.right], length: out.length, map: stretchMap(stretch, rampSamples), engine: 'native' }
   }
 
-  const { timeStretch } = await import('../core/dsp.ts')
+  const { timeStretch } = await import('../core/dsp/index.ts')
   const out = timeStretch([left, right], sampleRate, { stretch, rampSamples, length })
   return { ...out, engine: 'javascript' }
 }

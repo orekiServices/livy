@@ -17,10 +17,10 @@ which is worth having for three reasons:
     model over a whole set) will not be a 500-parameter MLP, and it will not
     be written twice.
 
-What it deliberately does *not* do is serve. The file this writes is the same
-``.bin`` the JS trainer writes, and inference stays in the server: no Python at
-request time, no second runtime to keep alive, and a node with no Python at all
-still mixes music.
+What it deliberately does *not* do is serialize or serve a model. It returns
+weight arrays to Node, where the model registry writes a standard Safetensors
+checkpoint. Inference stays in the server: no Python at request time, no second
+runtime to keep alive, and a node with no Python at all still plays music.
 
 Protocol — one JSON document in, one JSON document out::
 
@@ -50,7 +50,7 @@ import os
 import sys
 import time
 
-# The activation the .bin format uses. One constant, so a model trained here
+# The activation the Livy network uses. One constant, so a model trained here
 # and a model trained by the JS trainer are the same function.
 LEAK = 0.01
 

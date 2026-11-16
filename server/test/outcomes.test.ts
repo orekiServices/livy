@@ -187,25 +187,17 @@ test('scoreboard: the nudge is capped, symmetric, and recent evidence wins', () 
   assert.ok(old.effects.drop.rate < 0.5, `recent skips dominate the old wins (${old.effects.drop.rate})`)
 })
 
-test('scoreboard: the automix ranking actually moves, without overriding the seam', () => {
+test('legacy scoreboard data cannot move the crossfade-only ranking', () => {
   const baseline = rankEffects(seam, [])
-  assert.ok(baseline.length >= 4)
-  const top = baseline[0].name
+  assert.deepEqual(baseline, [{ name: 'crossfade', score: 1 }])
 
-  // Give every transition a good record except the heuristic's favourite, and
-  // make that one consistently bad.
   const log = []
   for (const name of ['crossfade', 'bass-swap', 'filter', 'echo', 'sweep', 'spindown', 'slam', 'wash', 'roll', 'drop']) {
-    for (let i = 0; i < 40; i += 1) log.push({ at: NOW - i * 60_000, effect: name, outcome: name === top ? 'skipped' : 'completed' })
+    for (let i = 0; i < 40; i += 1) log.push({ at: NOW - i * 60_000, effect: name, outcome: name === 'crossfade' ? 'skipped' : 'completed' })
   }
   const board = effectOutcomes(log, { now: NOW })
-  const nudged = rankEffects({ ...seam, outcomes: board }, [])
-  assert.notEqual(nudged[0].name, top, 'a transition that keeps losing loses the top spot')
-  // …but nothing the seam cannot carry is introduced by the nudge.
-  assert.deepEqual(nudged.map((entry) => entry.name).sort(), baseline.map((entry) => entry.name).sort())
-  // And the movement is small: the score span is still the heuristic's.
-  const span = Math.abs(nudged[0].score - baseline[0].score)
-  assert.ok(span < 0.5, `the scoreboard is a nudge, not a rewrite (${span.toFixed(3)})`)
+  const ranked = rankEffects({ ...seam, outcomes: board }, [])
+  assert.deepEqual(ranked, baseline, 'neither training labels nor outcomes can choose another renderer')
 })
 
 test('scoreboard: the owner report names the transitions worth showing', () => {

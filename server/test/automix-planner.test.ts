@@ -125,6 +125,8 @@ test('Automix engine integrates intelligent planning & continuous blending while
     holdMs: 3500,
     model: false,
     dj: { enabled: false }
+  }, {
+    getSongBpmTempo: async (track) => ({ tempo: Number(track?.tempo) || 120, confidence: 1 })
   })
 
   await mix.push(framesA)

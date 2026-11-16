@@ -58,6 +58,7 @@ const GROUPS: Array<{ label: string; items: NavDestination[] }> = [
     label: 'Audio desk',
     items: [
       { href: '/filters/', label: 'Filters', icon: IconSliders },
+      { href: '/automix/', label: 'Automix Editor', icon: IconWave },
       { href: '/seams/', label: 'Seams', icon: IconWave },
       { href: '/lyrics/', label: 'Lyrics', icon: IconLyrics }
     ]

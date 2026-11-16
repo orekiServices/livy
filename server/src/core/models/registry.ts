@@ -27,6 +27,8 @@ export function modelInventory({ store = null }: any = {}) {
       name: entry.name,
       bytes: entry.bytes,
       modified: entry.modified,
+      format: entry.format,
+      legacy: entry.legacy,
       active: entry.file === activeFile,
       accuracy: record?.accuracy ?? null,
       loss: record?.loss ?? null,
@@ -44,10 +46,23 @@ export function activateModel(name, { store = null }: any = {}) {
   const entry = listModels().find((candidate) => candidate.name === name || candidate.file === name)
   if (!entry) throw Object.assign(new Error(`No model named ${name}`), { status: 404 })
   const manifest = activateLocal(entry.file)
-  store?.activateModelRecord?.(entry.name)
+  const activeName = path.basename(manifest.file)
+  if (manifest.converted && store?.saveModelRecord) {
+    const legacy = store.modelRecord?.(entry.name) ?? {}
+    store.saveModelRecord({
+      ...legacy,
+      name: activeName,
+      file: activeName,
+      digest: manifest.digest,
+      parameters: manifest.parameters,
+      active: true,
+      meta: { ...(legacy.meta ?? {}), convertedFrom: entry.name }
+    })
+  }
+  store?.activateModelRecord?.(activeName)
   models.forget()
-  log.info(`active model: ${entry.name}`)
-  return { active: entry.name, manifest, info: models.info() }
+  log.info(`active model: ${activeName}${manifest.converted ? ` (converted from ${entry.name})` : ''}`)
+  return { active: activeName, convertedFrom: manifest.converted ? entry.name : null, manifest, info: models.info() }
 }
 
 export function forgetModel(name, { store = null }: any = {}) {

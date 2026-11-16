@@ -29,7 +29,16 @@ import {
 import { api, owner } from '../../lib/api'
 import type { StationSummary, Track } from '../../lib/types'
 
-const EFFECTS = ['crossfade', 'bass-swap', 'filter', 'echo', 'sweep', 'spindown', 'slam', 'wash', 'roll', 'drop']
+const EFFECTS = ['auto', 'crossfade']
+const EFFECT_LABELS: Record<string, string> = {
+  auto: 'Auto · crossfade only',
+  crossfade: 'Crossfade'
+}
+const FADE_CURVES = [
+  { value: 'auto', label: 'Auto · match the material' },
+  { value: 'equal-power', label: 'Equal power' },
+  { value: 'equal-gain', label: 'Equal gain' }
+]
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 interface StationDataState {
@@ -275,6 +284,7 @@ function Queue({ station, queue, refresh }: { station: StationSummary; queue: Tr
 function AutomixPanel({ station, automix, refresh }: { station: StationSummary; automix: any; refresh: () => Promise<void> }) {
   const [draft, setDraft] = useState<any>(null)
   const current = draft ?? automix ?? station.automix ?? {}
+  const effects = EFFECTS
   const save = async (patch: Record<string, unknown>) => {
     const next = { ...current, ...patch }
     setDraft(next)
@@ -282,13 +292,29 @@ function AutomixPanel({ station, automix, refresh }: { station: StationSummary; 
     await refresh()
   }
   return (
-    <Panel title="Automix" subtitle="How one song becomes the next, and who chooses.">
+    <Panel title="Automix" subtitle="Crossfade-only transitions with phrase-aware timing and beatmatching.">
+      <p className="mb-3 text-[11px] text-ink-500">
+        Beat metadata by{' '}
+        <a href="https://getsongbpm.com/" target="_blank" rel="noreferrer" className="text-cyan hover:underline">
+          GetSongBPM
+        </a>
+        {' '}· {automix?.beatmatchService?.configured ? 'API key configured.' : 'set GETSONGBPM_API_KEY on the Livy server.'}
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Transition">
-          <select className={inputClass} value={current.effect ?? 'crossfade'} onChange={(event) => void save({ effect: event.target.value })}>
-            {EFFECTS.map((effect) => (
+          <select className={inputClass} value={current.effect ?? 'auto'} onChange={(event) => void save({ effect: event.target.value })}>
+            {effects.map((effect) => (
               <option key={effect} value={effect}>
-                {effect}
+                {EFFECT_LABELS[effect] ?? effect.replaceAll('-', ' ')}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Fade curve" hint="Every curve eases in and out smoothly.">
+          <select className={inputClass} value={current.curve ?? 'auto'} onChange={(event) => void save({ curve: event.target.value })}>
+            {FADE_CURVES.map((curve) => (
+              <option key={curve.value} value={curve.value}>
+                {curve.label}
               </option>
             ))}
           </select>
@@ -311,8 +337,10 @@ function AutomixPanel({ station, automix, refresh }: { station: StationSummary; 
         </Field>
       </div>
       <div className="mt-2 divide-y divide-ink-700/60">
+        <Switch label="Smart timing" hint="adapt the overlap to tempo, energy, and vocal activity" checked={current.smart !== false} onChange={(value) => void save({ smart: value })} />
+        <Switch label="Phrase alignment" hint="land blends on musical four-beat phrases" checked={current.phraseBlend !== false} onChange={(value) => void save({ phraseBlend: value })} />
         <Switch label="Beatmatch" hint="stretch the outgoing track onto the incoming tempo" checked={current.beatmatch !== false} onChange={(value) => void save({ beatmatch: value })} />
-        <Switch label="Learned policy" hint="the model overrules the heuristic at the seam" checked={current.model !== false} onChange={(value) => void save({ model: value })} />
+        <Switch label="Vocal-aware" hint="avoid cutting a vocal phrase and reduce lyric clashes" checked={current.vocalAware !== false} onChange={(value) => void save({ vocalAware: value })} />
         <Switch label="DJ voice" hint="a short ident over the blend" checked={current.dj?.enabled !== false} onChange={(value) => void save({ dj: value })} />
         <Switch label="Automix" hint="off: tracks start and end on their own" checked={current.enabled !== false} onChange={(value) => void save({ enabled: value })} />
       </div>
@@ -325,6 +353,11 @@ function AutomixPanel({ station, automix, refresh }: { station: StationSummary; 
             <span>{clock(automix.last.blendMs ?? 0)} blend</span>
             {automix.last.peakDb != null && <span>· {automix.last.peakDb} dBFS</span>}
           </div>
+          {automix.last.fallback && (
+            <p className="mt-2 text-amber">
+              Safe crossfade fallback · {automix.last.fallback.reason ?? 'the selected transition could not render'}
+            </p>
+          )}
         </div>
       )}
     </Panel>

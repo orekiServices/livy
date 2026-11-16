@@ -16,7 +16,7 @@ import {
   type ExtractedTransitionExample
 } from '../src/core/models/index.ts'
 import { ThreeBandCrossover } from '../src/core/automix/blender.ts'
-import { resample } from '../src/core/dsp.ts'
+import { resample } from '../src/core/dsp/index.ts'
 
 const SR = 22050 // compact sample rate for snappy DSP alignment unit tests
 

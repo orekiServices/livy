@@ -6,14 +6,11 @@
  *      (preferring 8-, 16-, and 32-bar phrase boundaries & compatible sections).
  *   2. Optionally queries the Neural AutoMix model for Stage-1 cue/duration
  *      predictions and Stage-2 continuous automation curves.
- *   3. Generates multiple candidate transition plans across cue pairs,
- *      musical phrase durations, and dynamic DJ strategies.
- *   4. Scores every candidate with the 8-dimension Transition Quality Evaluator.
- *   5. Picks the top-ranked plan — or gracefully falls back to a musically
- *      clean smart crossfade/wash/echo when no reliable beat-matched blend
- *      exists.
+ *   3. Generates candidate crossfades across cue pairs and musical phrase durations.
+ *   4. Scores those candidates with the Transition Quality Evaluator.
+ *   5. Picks the best crossfade; the planner never selects an effect renderer.
  */
-import { clamp, exponentFor, foldTempo } from '../dsp.ts'
+import { clamp, exponentFor, foldTempo } from '../dsp/index.ts'
 import { MemoryLruCache } from '../cache.ts'
 import {
   analyzeTrackStructure,
@@ -138,7 +135,7 @@ function candidateBarCounts(bpm: number, minMs: number, maxMs: number, preferred
 }
 
 /** Pick contextually appropriate strategies to evaluate for this track pair. */
-function candidateStrategies(params: {
+function candidateStrategies(_params: {
   beatMatched: boolean
   harmonicScore: number
   vocalClash: boolean
@@ -152,56 +149,13 @@ function candidateStrategies(params: {
   allowed?: string[]
   maxStrategies?: number
 }): string[] {
-  const pool = new Set<string>()
-  if (params.neuralStrategy) pool.add(params.neuralStrategy)
-  if (params.hasStems && params.beatMatched) pool.add('stem-handoff')
-
-  if (params.talkover) {
-    pool.add('crossfade')
-    pool.add('eq-blend')
-    pool.add('filter')
-  } else if (params.beatMatched) {
-    pool.add('eq-blend')
-    pool.add('bass-swap')
-    pool.add('phrase-cut')
-    if (params.vocalClash || (params.vocalOut && !params.vocalIn)) {
-      pool.add('vocal-bridge')
-    }
-    if (Math.abs(params.stretchPercent) >= 3) {
-      pool.add('tempo-ramp')
-    }
-    if (params.harmonicScore >= 0.85 && params.energyDelta >= 0.1) {
-      pool.add('harmonic-drop')
-    }
-    if (params.vocalClash || params.harmonicScore < 0.65) {
-      pool.add('filter')
-      pool.add('echo')
-    }
-    if (params.energyDelta < -0.2 || params.harmonicScore < 0.5) {
-      pool.add('wash')
-    }
-    if (params.harmonicScore >= 0.8 && !params.vocalClash) {
-      pool.add('crossfade')
-    }
-  } else {
-    pool.add('crossfade')
-    pool.add('wash')
-    pool.add('filter')
-    pool.add('echo')
-  }
-
-  let list = [...pool]
-  if (params.allowed && params.allowed.length > 0) {
-    const allowSet = new Set(params.allowed)
-    const filtered = list.filter((s) => allowSet.has(s))
-    if (filtered.length > 0) list = filtered
-  }
-  return list.slice(0, Math.max(4, params.maxStrategies ?? 7))
+  // There is no transition strategy search any more: every plan is a
+  // crossfade, with timing and alignment as the only variables.
+  return ['crossfade']
 }
 
 /**
- * Plan the optimal transition between Track A and Track B by generating,
- * scoring, and ranking multiple musical candidates (with graceful smart fallback).
+ * Plan the crossfade between Track A and Track B by scoring cue/timing candidates.
  */
 export function planTransition(
   trackA: TrackStructure,
@@ -441,7 +395,7 @@ export function planTransition(
       durationSec,
       durationMs,
       durationBars: neural.durationBars,
-      strategy: neural.strategy,
+      strategy: 'crossfade',
       beatMatched: canBeatMatch,
       foldedBpm: Number(workingBpm.toFixed(2)),
       stretchPercent: canBeatMatch ? stretchPercent : 0,
@@ -472,20 +426,13 @@ export function planTransition(
     else if (Math.abs(stretchPercent) > maxStretch) {
       fallbackReason = `tempo gap (${Math.abs(stretchPercent).toFixed(1)}% > ${maxStretch}%) — using musical non-stretched fallback`
     } else if (harmonic.relation === 'clash') {
-      fallbackReason = `key clash (${trackA.key.camelot} → ${trackB.key.camelot}) — using filtered wash handoff`
+      fallbackReason = `key clash (${trackA.key.camelot} → ${trackB.key.camelot}) — using an unprocessed crossfade`
     } else {
       fallbackReason = `candidate score ${selected?.evaluation.overall.toFixed(2) ?? '0'} below threshold ${minQuality}`
     }
 
-    // Choose the cleanest non-beatmatched transition:
-    // - key clash or high vocal clash → filtered reverb wash or echo out
-    // - otherwise → gentle equal-power smart crossfade with vocal protection
-    const fbStrategy =
-      harmonic.relation === 'clash' || vocalClash
-        ? 'wash'
-        : Math.abs(trackB.meanEnergy - trackA.meanEnergy) > 0.35
-          ? 'filter'
-          : 'crossfade'
+    // A low-confidence plan still falls back to the one supported renderer.
+    const fbStrategy = 'crossfade'
     const fbMs = Math.round(clamp(options.requestedCrossfadeMs ?? 4000, minMs, Math.min(maxMs, 6000)))
     const fbPlan = buildAutomationPlan({
       strategy: fbStrategy,

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 
 import { Lyrics, parseLrc, toTtml, cleanTitle, bareTitle, splitArtistTitle, lineAt } from '../src/core/lyrics.ts'
-import { ANNOUNCEMENT_PRESETS } from '../src/server/owner.ts'
+import { ANNOUNCEMENT_PRESETS } from '../src/server/owner/index.ts'
 import { quietLogs, tmpdir, makeMedia, boot, api, waitFor } from './helpers.ts'
 
 quietLogs()

@@ -9,6 +9,7 @@ import createLogger from '../../util/logger.ts'
 import {
   activateModel,
   benchmarkArchitectures,
+  bpmIStatus,
   forgetModel,
   hfConfig,
   hubStatus,
@@ -25,6 +26,7 @@ import {
   seamCount,
   torchStatus,
   trainBackend,
+  trainBPMi,
   trainModels,
   updateModelSettings
 } from '../../core/models/index.ts'
@@ -121,6 +123,7 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
     const seams = seamCount({ store })
     return send(res, 200, {
       ...(await registryState({ store, cfg })),
+      bpmi: bpmIStatus({ store }),
       presets: modelPresets(),
       settings: modelSettings(),
       scaling: scalingLadderSummary(seams, { mobile: Boolean(modelSettings().device?.mobile) }),
@@ -131,6 +134,38 @@ export async function modelRoutes({ req, res, url, method, id, action, store, re
       torch: await torchStatus({ wait: false }),
       backend: trainBackend()
     })
+  }
+
+  if (id === 'bpmi') {
+    if (method === 'GET' && !action) return send(res, 200, bpmIStatus({ store }))
+    if (method === 'POST' && action === 'train') {
+      const body = await readJson(req).catch(() => ({}))
+      const requestedLearningRate = Number(body.learningRate)
+      const report = await trainBPMi({
+        store,
+        epochs: body.epochs ? Math.max(1, Math.min(10_000, Math.floor(Number(body.epochs)))) : 0,
+        learningRate: Number.isFinite(requestedLearningRate) && requestedLearningRate > 0
+          ? Math.max(0.0001, Math.min(0.05, requestedLearningRate))
+          : 0.004,
+        fast: body.fast === true,
+        full: body.full !== false,
+        force: true
+      })
+      if (report.trained) {
+        store?.saveTrainingRun?.({
+          stationId: null,
+          mode: 'bpmi',
+          count: 1,
+          backend: 'cpu',
+          trained: true,
+          accuracy: report.validation?.within5Percent ?? null,
+          best: 'BPMi',
+          report
+        })
+      }
+      return send(res, report.trained ? 200 : 409, report)
+    }
+    return fail(res, method === 'GET' || method === 'POST' ? 405 : 404, 'Use GET /models/bpmi or POST /models/bpmi/train')
   }
 
   if (id === 'hf') {

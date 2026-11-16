@@ -12,7 +12,7 @@ import path from 'node:path'
 
 import { FjClient, beatTrackFromFj, graphFromFjAnalysis, normaliseFjAnalysis } from '../src/core/seams/fj.ts'
 import { ForeverJukebox } from '../src/core/seams/index.ts'
-import { encodeMp3 } from '../src/core/automix.ts'
+import { encodeMp3 } from '../src/core/automix/index.ts'
 import { beatLoop, tmpdir } from './helpers.ts'
 
 const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dir, 'fixtures', 'fj-analysis.json'), 'utf8'))

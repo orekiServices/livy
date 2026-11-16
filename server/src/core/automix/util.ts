@@ -1,7 +1,7 @@
 /**
  * Small PCM helpers shared by the renderers and the engine.
  */
-import { resample } from '../dsp.ts'
+import { resample } from '../dsp/index.ts'
 
 export const monoOf = (pcm) => {
   const out = new Float32Array(pcm.left.length)

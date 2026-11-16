@@ -189,6 +189,7 @@ export const queueMethods = {
   noteSeam(report: any = {}) {
     if (!report?.effect) return null
     const at = Number(report.at) || Date.now()
+    const bpmProfiles = report.beat?.bpmi?.profiles ?? null
     this._lastSeam = {
       at,
       effect: report.effect,
@@ -198,8 +199,12 @@ export const queueMethods = {
       // Everything the feature builder needs, copied now: the report object is
       // not guaranteed to exist later, and reading a mutated one would log a
       // seam that never happened.
-      bpmOut: report.beat?.bpm ?? 0,
-      bpmIn: report.beat?.incomingBpm ?? 0,
+      bpmOut: report.beat?.bpm ?? bpmProfiles?.outgoing?.referenceBpm ?? 0,
+      bpmIn: report.beat?.incomingBpm ?? bpmProfiles?.incoming?.referenceBpm ?? 0,
+      bpmSource: report.beat?.source ?? bpmProfiles?.outgoing?.referenceSource ?? null,
+      bpmi: bpmProfiles,
+      sourceOut: bpmProfiles?.outgoing?.track?.source ?? null,
+      sourceIn: bpmProfiles?.incoming?.track?.source ?? null,
       matched: Boolean(report.beat?.matched),
       correlation: report.correlation ?? 0,
       loudnessGap: report.loudness?.appliedDb ?? 0,
@@ -258,6 +263,7 @@ export const queueMethods = {
   _logSeam(record) {
     try {
       if (record.exitKind !== undefined && !record.entryKind) record = { ...record, ...this._seamKindsNow({ blendMs: record.fadeMs }) }
+      record = { ...record, stationId: record.stationId ?? this.id }
       // Both destinations are written by the dataset: the MetroDB row the
       // trainer polls and the JSONL tail for a node without a database. The
       // optional `seamLogFile` override is for embedded nodes and tests; the

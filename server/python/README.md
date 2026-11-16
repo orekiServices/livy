@@ -1,10 +1,11 @@
 # PyTorch training for the DJ policy (optional)
 
-`train.py` trains the same network as `src/core/models/network.js` — same
+`train.py` trains the same network as `src/core/models/network.ts` — same
 initialisation, same leaky ReLU, same mean-squared loss, same Adam — in
-PyTorch, and hands the weights back in the `.bin` layout the server loads. It
-is an **optional accelerator**, never a requirement: a node without Python
-trains in JavaScript, and inference is always the server's own.
+PyTorch, and returns weight arrays to Node. The registry writes new checkpoints
+as standard Safetensors; the Python worker never writes a model file. PyTorch is
+an **optional accelerator**, never a requirement: a node without Python trains
+in JavaScript, and inference always runs in the server.
 
 ## Install
 

@@ -2,8 +2,8 @@
  * Seam features — the numbers the DJ policy sees, and the numbers it learns
  * from.
  *
- * The list is ordered and fixed. A `.bin` model records these names; the
- * loader refuses a model whose names do not match, because a model fed the
+ * The list is ordered and fixed. A Safetensors checkpoint records these names;
+ * the loader refuses a model whose names do not match, because a model fed the
  * columns in the wrong order still produces a confident answer and there is no
  * way to notice from the outside.
  *

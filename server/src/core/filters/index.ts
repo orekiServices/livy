@@ -112,7 +112,7 @@ export function describe(payload: any = {}) {
 
 /* Loudness helpers historically re-exported here. They live in core/dsp.js,
  * which imports nothing from this folder, so the cycles stay one-directional. */
-export { integratedLoudness, samplePeak } from '../dsp.ts'
+export { integratedLoudness, samplePeak } from '../dsp/index.ts'
 
 export {
   EQ_BANDS,

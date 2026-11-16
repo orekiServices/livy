@@ -2,7 +2,7 @@
  * Joint tempo analysis: when the scalar estimate is unsure or octave-ambiguous,
  * score candidate pairs instead of trusting one number.
  */
-import { beatGrid, selectTempoPair, tempoCandidates } from '../dsp.ts'
+import { beatGrid, selectTempoPair, tempoCandidates } from '../dsp/index.ts'
 
 export async function analysePair(options, windowA, windowB, sampleRate, beatA, beatB) {
 

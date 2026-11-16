@@ -29,6 +29,7 @@ export {
   buildDataset,
   gpuAvailable,
   readSeams,
+  readAllSeams,
   recordSeam,
   seamCount,
   trainBackend,
@@ -39,7 +40,29 @@ export {
 } from './trainer/index.ts'
 export { ACTIONS, FEATURES, featuresFor } from './features.ts'
 export { Network } from './network.ts'
+export {
+  BPMI_NAME,
+  BPMI_FORMAT,
+  BPMI_VERSION,
+  BPMI_FEATURES,
+  BPMI_MAX_CANDIDATES,
+  BPMI_MIN_OBSERVATIONS,
+  BPMI_MIN_TRACKS,
+  BPMI_FILE,
+  makeBpmProfile,
+  featuresForBpmProfile,
+  buildBpmDataset,
+  splitBpmDataset,
+  bpmIHiddenShape,
+  bpmIParameterCount,
+  bpmIDefaultEpochs,
+  loadBPMi,
+  estimateBPMi,
+  bpmIStatus,
+  trainBPMi
+} from './bpmi.ts'
 export { packModel, unpackModel } from './format.ts'
+export { packNetworkSafetensors, packSafetensors, unpackNetworkSafetensors, unpackSafetensors } from './safetensors.ts'
 
 export {
   AUTOMIX_STRATEGIES,

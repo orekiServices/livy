@@ -16,8 +16,9 @@ import { configureModels, modelSettings } from '../src/core/models/settings.ts'
 import { AutoTrainer } from '../src/core/models/auto.ts'
 import { models } from '../src/core/models/host.ts'
 import { buildDataset, seamCount, trainModels, recordSeam } from '../src/core/models/trainer/index.ts'
+import { buildBpmDataset } from '../src/core/models/bpmi.ts'
 import { ensureRepo, hubStatus, uploadFile } from '../src/core/models/storage/hf.ts'
-import { Station } from '../src/core/station.ts'
+import { Station } from '../src/core/station/index.ts'
 import { tmpdir } from './helpers.ts'
 
 const seams = (count = 240) => {
@@ -138,7 +139,31 @@ test('a rendered seam becomes a training row through the station path', async ()
     at: Date.now(),
     effect: 'bass-swap',
     decision: { source: 'heuristic', baseline: 'crossfade' },
-    beat: { bpm: 124, incomingBpm: 126, matched: true, phrase: { beats: 8 } },
+    beat: {
+      bpm: 124,
+      incomingBpm: 126,
+      matched: true,
+      phrase: { beats: 8 },
+      source: 'GetSongBPM',
+      bpmi: {
+        profiles: {
+          outgoing: {
+            candidates: [{ bpm: 62, strength: 1 }, { bpm: 124, strength: 0.6 }],
+            confidence: 0.8,
+            referenceBpm: 124,
+            labelConfidence: 0.99,
+            track: { id: 'a', title: 'A', artist: 'artist', source: 'soundcloud' }
+          },
+          incoming: {
+            candidates: [{ bpm: 63, strength: 1 }, { bpm: 126, strength: 0.6 }],
+            confidence: 0.8,
+            referenceBpm: 126,
+            labelConfidence: 0.99,
+            track: { id: 'b', title: 'B', artist: 'artist', source: 'audius' }
+          }
+        }
+      }
+    },
     correlation: 0.42,
     loudness: { appliedDb: -1.2 },
     entryEnergy: 0.7,
@@ -150,10 +175,15 @@ test('a rendered seam becomes a training row through the station path', async ()
   const noted = station._lastSeam
   assert.equal(noted.effect, 'bass-swap')
   assert.equal(noted.phraseAligned, true)
+  assert.equal(noted.bpmSource, 'GetSongBPM')
+  assert.equal(noted.bpmi.outgoing.track.source, 'soundcloud')
+  assert.equal(noted.bpmi.incoming.track.source, 'audius')
   assert.equal(station._lastSeam, noted, 'the station remembers the seam for a skip')
 
   assert.equal(station._logSeam({ ...noted, outcome: 'completed', completedAfterMs: 120_000 }), true)
   assert.equal(store.countSeams(), 1)
+  assert.equal(store.recentSeams(1)[0].stationId, 'seam-log')
+  assert.equal(buildBpmDataset(store.recentSeams(1)).samples.length, 2)
   assert.equal(fs.existsSync(file), true)
 
   // A skip inside the attribution window closes the same seam as a negative

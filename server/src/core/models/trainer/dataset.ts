@@ -8,6 +8,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import createLogger from '../../../util/logger.ts'
 import { paths } from '../../../config.ts'
 import { ACTIONS, featuresFor, targetFor } from '../features.ts'
@@ -68,6 +69,57 @@ export function readSeams({ file = LOG_FILE(), limit = MAX_LOG_LINES, store = nu
     }
   }
   return records
+}
+
+/**
+ * Read the complete node-wide seam history for BPMi. Unlike the DJ policy's
+ * bounded/recent view, BPM labels are stable across stations and time, so every
+ * eligible observation in both the database and JSONL log is retained. The
+ * two sinks normally contain identical rows; exact JSON duplicates are
+ * collapsed so mirrored writes are counted once.
+ */
+export function readAllSeams({ file = LOG_FILE(), store = null }: any = {}) {
+  const rows: any[] = []
+  if (store?.allSeams) {
+    try {
+      for (const record of store.allSeams()) rows.push(record)
+    } catch (error) {
+      log.debug(`all seam rows: ${error.message}`)
+    }
+  } else if (store?.recentSeams) {
+    try {
+      for (const record of store.recentSeams(Number.MAX_SAFE_INTEGER)) rows.push(record)
+    } catch (error) {
+      log.debug(`all seam rows: ${error.message}`)
+    }
+  }
+
+  try {
+    const text = fs.readFileSync(file, 'utf8')
+    for (const line of text.split('\n')) {
+      if (!line) continue
+      try {
+        rows.push(JSON.parse(line))
+      } catch {
+        // A torn or malformed line does not discard the rest of the history.
+      }
+    }
+  } catch {
+    // The database-only installation is still a complete source.
+  }
+
+  const unique = new Map<string, any>()
+  for (const record of rows) {
+    if (!record || typeof record !== 'object') continue
+    let key: string
+    try {
+      key = createHash('sha1').update(JSON.stringify(record)).digest('hex')
+    } catch {
+      continue
+    }
+    unique.set(key, record)
+  }
+  return [...unique.values()].sort((a, b) => (Number(a?.at) || 0) - (Number(b?.at) || 0))
 }
 
 /**

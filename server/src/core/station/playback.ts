@@ -3,6 +3,9 @@
  *
  * Mixed into Station.prototype in ../station.js.
  */
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import {
   PassThrough,
   randomUUID,
@@ -35,6 +38,115 @@ import {
  * click.
  */
 const FILTER_MORPH_MS = 220
+const MAX_DIRECT_MP3_PREFETCH_BYTES = 512 * 1024 * 1024
+
+function isDirectMp3(track: any) {
+  if (!track || track.live || track.announcement || track.transcode || track.format === 'hls') return false
+  if (track.directMp3 === true) return true
+  if (track.source !== 'http') return false
+  return /\.mp3(?:$|[?#])/i.test(String(track.url ?? track.link ?? ''))
+}
+
+/**
+ * A direct MP3 is staged to disk before the station sees its first frame.
+ * The persistent audio cache remains bounded; if it is disabled, full, or the
+ * item exceeds its per-entry limit, the same verified MP3 frames are served
+ * from a private temporary spool and removed after playback.
+ */
+async function prefetchDirectMp3(track: any, opened: any, { signal, cache, bitrate }: any) {
+  if (!opened?.stream || opened.transcode || opened.hls || opened.url) {
+    throw new Error('the direct MP3 URL resolved to a non-downloadable stream')
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'livy-direct-mp3-'))
+  const file = path.join(dir, 'audio.mp3')
+  let fd: number | null = null
+  let cacheWriter = null
+  let byteCount = 0
+  let frameCount = 0
+  let pending: Buffer[] = []
+  let pendingBytes = 0
+  let closed = false
+  const framer = new MetroFramer()
+  const maxBytes = Number(process.env.LIVY_DIRECT_MP3_MAX_BYTES) || MAX_DIRECT_MP3_PREFETCH_BYTES
+
+  const flushToDisk = () => {
+    if (pendingBytes === 0 || fd === null) return
+    const chunk = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes)
+    fs.writeSync(fd, chunk)
+    pending = []
+    pendingBytes = 0
+  }
+
+  const keepFrames = (frames: Buffer[]) => {
+    for (const frame of frames) {
+      if (byteCount + frame.length > maxBytes) {
+        throw new Error(`direct MP3 exceeds the ${Math.round(maxBytes / 1024 / 1024)} MiB pre-download limit`)
+      }
+      cacheWriter?.write(frame)
+      pending.push(frame)
+      pendingBytes += frame.length
+      byteCount += frame.length
+      frameCount += 1
+      if (pendingBytes >= 256 * 1024) flushToDisk()
+    }
+  }
+
+  const cleanup = () => {
+    if (closed) return
+    closed = true
+    try { if (fd !== null) fs.closeSync(fd) } catch { /* already closed */ }
+    fd = null
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+
+  try {
+    fd = fs.openSync(file, 'wx')
+    cacheWriter = cache?.audio?.createWriter(track, bitrate) ?? null
+    for await (const raw of opened.stream) {
+      if (signal?.aborted) throw new Error('download cancelled before playback started')
+      const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
+      if (!chunk.length) continue
+      keepFrames(framer.push(chunk).frames)
+    }
+    // Release any complete frame held by a tiny trailing chunk. An incomplete
+    // final frame is deliberately discarded by the framer.
+    keepFrames(framer.push(Buffer.alloc(0), { flush: true }).frames)
+    flushToDisk()
+    if (frameCount === 0) throw new Error('download completed without any valid MP3 audio frames')
+    fs.closeSync(fd)
+    fd = null
+
+    const committed = cacheWriter?.commit() ?? null
+    const cacheHit = committed ? cache?.audio?.openReadStream(track, bitrate) : null
+    if (cacheHit) {
+      cleanup()
+      return {
+        opened: { ...opened, stream: cacheHit.stream, contentType: 'audio/mpeg', mode: 'cache', track },
+        cacheHit,
+        fromCache: true,
+        cleanup: null,
+        bytes: byteCount,
+        frames: frameCount
+      }
+    }
+
+    const stream = fs.createReadStream(file)
+    return {
+      opened: { ...opened, stream, contentType: 'audio/mpeg', mode: 'prefetched', track, cleanup },
+      cacheHit: null,
+      fromCache: false,
+      cleanup,
+      bytes: byteCount,
+      frames: frameCount
+    }
+  } catch (error) {
+    cacheWriter?.abort()
+    cleanup()
+    opened.stream.destroy?.()
+    throw new Error(`direct MP3 pre-download failed: ${error?.message ?? error}`)
+  }
+}
 
 export const playbackMethods = {
   async _readLoop() {
@@ -413,7 +525,7 @@ export const playbackMethods = {
     const targetBitrate = this.options.bitrate ?? 128
 
     // Check the on-disk MP3 audio cache before hitting upstream providers.
-    const cacheHit = !track.live && !track.announcement && this.cache?.audio?.enabled
+    let cacheHit = !track.live && !track.announcement && this.cache?.audio?.enabled
       ? this.cache.audio.openReadStream(track, targetBitrate)
       : null
 
@@ -440,6 +552,11 @@ export const playbackMethods = {
         // keep the requester attribution when we had to clone the track
         track = { ...res.track, requestedBy: track.requestedBy, requestId: track.requestId, fallbackOf: track.title }
         this._readingTrackId = track.id
+      } else if (res.track && res.track !== track) {
+        // Rehydration can restore the private direct URL/format handles after
+        // a public queue entry was persisted without leaking those handles.
+        track = { ...res.track, requestedBy: track.requestedBy, requestId: track.requestId }
+        this._readingTrackId = track.id
       }
       return res
     }
@@ -451,6 +568,44 @@ export const playbackMethods = {
       this._consecutiveFailures = 0
       track = { ...track, cached: true }
       this.log.debug(`audio cache hit for "${track.title}" (${cacheHit.bytes} bytes)`)
+    } else if (isDirectMp3(track)) {
+      try {
+        opened = await openUpstream({ skipDirect: false })
+        if (isDirectMp3(track) && opened?.stream && !opened.transcode && !opened.hls && !opened.url) {
+          const staged = await prefetchDirectMp3(track, opened, {
+            signal: this._readerAbort.signal,
+            cache: this.cache,
+            bitrate: targetBitrate
+          })
+          opened = staged.opened
+          cacheHit = staged.cacheHit
+          fromCache = staged.fromCache
+          if (fromCache) track = { ...track, cached: true }
+          this.log.info(
+            `downloaded direct MP3 for "${track.title}" before playback (${staged.frames} frames, ${staged.bytes} bytes${fromCache ? ', cached' : ', temporary spool'})`
+          )
+        }
+      } catch (error) {
+        if (this._skipRequested || !this._running) return
+        this.stats.errors += 1
+        this._consecutiveFailures += 1
+        this.log.warn(`direct MP3 download failed for "${track.title}" before playback: ${error.message}`)
+        this.emit('error', error)
+        try {
+          // A broken direct file should not strand a station: skip it once and
+          // ask the registry for another playable copy of the same recording.
+          opened = await openUpstream({ skipDirect: true })
+          triedFallback = true
+        } catch (fallbackError) {
+          this.stats.errors += 1
+          this.log.warn(`no fallback copy could be opened for "${track.title}": ${fallbackError.message}`)
+          this.emit('error', fallbackError)
+          this._requeue(false)
+          await this._flushAutomix('direct MP3 download failed')
+          await this._sleep(this.options.skipOnErrorDelay)
+          return
+        }
+      }
     } else {
       try {
         opened = await openUpstream({ skipDirect: false })
@@ -479,11 +634,12 @@ export const playbackMethods = {
         : activeOpened.stream
 
       if (!stream) {
+        activeOpened.cleanup?.()
         this.log.warn(`"${track.title}" returned no readable stream`)
         return { frames: 0, errored: true }
       }
 
-      const cacheWriter = !isCache && !live && !track.announcement && !track.live && this.cache?.audio?.enabled
+      const cacheWriter = !isCache && activeOpened.mode !== 'prefetched' && !live && !track.announcement && !track.live && this.cache?.audio?.enabled
         ? this.cache.audio.createWriter(track, targetBitrate)
         : null
 
@@ -571,6 +727,7 @@ export const playbackMethods = {
         stream.destroy?.()
         stream.cancel?.().catch?.(() => {})
         stream.return?.()
+        activeOpened.cleanup?.()
       }
 
       if (transcoder && !errored && this._running && !this._skipRequested) {
