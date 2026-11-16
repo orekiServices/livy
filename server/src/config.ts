@@ -156,10 +156,11 @@ export const DEFAULT_CONFIG = {
     loop: true,
     maxListeners: 500,
     trackLimit: 40,
-    // Automix: crossfade-only transitions, GetSongBPM beat metadata, and the voice-tracking DJ.
+    // Automix: long crossfades, key-gated GetSongBPM, local tempo fallback, and the voice-tracking DJ.
     automix: {
       enabled: true,
-      crossfadeMs: 6000,
+      crossfadeMs: 12_000,
+      holdMs: 30_000,
       // 'auto' lets measured correlation pick equal-gain vs equal-power.
       curve: 'auto', // 'auto' | 'equal-power' | 'equal-gain'
       // Compatibility sentinel; 'auto' and 'crossfade' both render a crossfade.
@@ -168,8 +169,8 @@ export const DEFAULT_CONFIG = {
       minCrossfadeMs: 2000,
       maxCrossfadeMs: 30_000,
       minTrackMs: 20_000,
-      beatAlign: true, // GetSongBPM supplies tempo; local DSP estimates waveform phase only
-      beatmatch: true, // time-stretch the seam so the two service tempos actually match
+      beatAlign: true, // use GetSongBPM when keyed; otherwise use Livy's local BPM/beat detector
+      beatmatch: true, // time-stretch the seam when both detected tempos are confident
       maxStretchPercent: 12, // refuse to beatmatch further apart than this
       model: false, // legacy effect-classifier switch; Automix no longer uses it
       // Release the matched tempo back to the incoming song's own tempo over

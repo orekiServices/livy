@@ -633,6 +633,7 @@ export function createOwnerRouter({ manager, config, sources, store, tts, plugin
           traits: EFFECT_TRAITS,
           defaults: {
             crossfadeMs: config.stationDefaults?.automix?.crossfadeMs ?? DEFAULT_AUTOMIX.crossfadeMs,
+            holdMs: config.stationDefaults?.automix?.holdMs ?? DEFAULT_AUTOMIX.holdMs,
             minCrossfadeMs: DEFAULT_AUTOMIX.minCrossfadeMs,
             maxCrossfadeMs: DEFAULT_AUTOMIX.maxCrossfadeMs,
             smart: DEFAULT_AUTOMIX.smart

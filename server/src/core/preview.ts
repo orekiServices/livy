@@ -21,7 +21,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { Automix, EFFECTS, AUTO_EFFECT } from './automix/index.ts'
+import { Automix, EFFECTS, AUTO_EFFECT, DEFAULT_AUTOMIX } from './automix/index.ts'
 import { decodeMp3, encodeMp3, probeMp3, MetroFramer } from '../util/metro.ts'
 import { paths } from '../config.ts'
 import createLogger from '../util/logger.ts'
@@ -121,7 +121,7 @@ function framesOf(mp3, track) {
  */
 export async function previewTransition({
   effect = AUTO_EFFECT,
-  crossfadeMs = 6000,
+  crossfadeMs = DEFAULT_AUTOMIX.crossfadeMs,
   smart = false,
   beatmatch = true,
   station = null,

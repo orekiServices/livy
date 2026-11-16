@@ -323,9 +323,9 @@ function AutomixPanel({ station, automix, refresh }: { station: StationSummary; 
           <div className="pt-2">
             <Slider
               label="crossfade"
-              value={current.crossfadeMs ?? 6000}
+              value={current.crossfadeMs ?? 12_000}
               min={500}
-              max={20_000}
+              max={30_000}
               step={100}
               format={(value) => `${(value / 1000).toFixed(1)}s`}
               onChange={(value) => setDraft({ ...current, crossfadeMs: value })}
@@ -339,7 +339,7 @@ function AutomixPanel({ station, automix, refresh }: { station: StationSummary; 
       <div className="mt-2 divide-y divide-ink-700/60">
         <Switch label="Smart timing" hint="adapt the overlap to tempo, energy, and vocal activity" checked={current.smart !== false} onChange={(value) => void save({ smart: value })} />
         <Switch label="Phrase alignment" hint="land blends on musical four-beat phrases" checked={current.phraseBlend !== false} onChange={(value) => void save({ phraseBlend: value })} />
-        <Switch label="Beatmatch" hint="stretch the outgoing track onto the incoming tempo" checked={current.beatmatch !== false} onChange={(value) => void save({ beatmatch: value })} />
+        <Switch label="Beatmatch" hint="stretch the outgoing track onto the incoming tempo; uses Livy's local detector without a GetSongBPM key" checked={current.beatmatch !== false} onChange={(value) => void save({ beatmatch: value })} />
         <Switch label="Vocal-aware" hint="avoid cutting a vocal phrase and reduce lyric clashes" checked={current.vocalAware !== false} onChange={(value) => void save({ vocalAware: value })} />
         <Switch label="DJ voice" hint="a short ident over the blend" checked={current.dj?.enabled !== false} onChange={(value) => void save({ dj: value })} />
         <Switch label="Automix" hint="off: tracks start and end on their own" checked={current.enabled !== false} onChange={(value) => void save({ enabled: value })} />

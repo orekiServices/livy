@@ -413,12 +413,16 @@ test('owner controls drive a live station', async (t) => {
   assert.equal((await api(base, '/api/v1/stations/lofi/start', { method: 'POST', key: KEY }))._status, 200)
 
   // New stations use the crossfade-only compatibility sentinel and expose
-  // service-backed beat metadata alongside the phrase-aware controls.
+  // the active tempo source alongside the phrase-aware controls.
   const initialAutomix = await api(base, '/api/v1/owner/stations/lofi/automix', { key: KEY })
   assert.equal(initialAutomix.effect, 'auto')
   assert.equal(initialAutomix.smart, true)
   assert.equal(initialAutomix.phraseBlend, true)
-  assert.equal(initialAutomix.beatmatchSource, 'GetSongBPM')
+  assert.equal(
+    initialAutomix.beatmatchSource,
+    initialAutomix.beatmatchService.configured ? 'GetSongBPM' : 'Livy local detector'
+  )
+  assert.equal(initialAutomix.crossfadeMs, 12_000)
   assert.equal(initialAutomix.beatmatchService.service, 'GetSongBPM')
   assert.equal(initialAutomix.model, false, 'the retired effect classifier stays disabled')
   assert.deepEqual(initialAutomix.effects, ['crossfade'])

@@ -223,15 +223,16 @@ registrations for other effects are rejected. Smart overlap timing, phrase
 alignment, vocal awareness, loudness matching, and the voice-tracking DJ remain
 independent controls.
 
-When beat alignment or beatmatching is enabled, GetSongBPM supplies both tracks'
-published tempos. For the rendered beat grid, the local analyser estimates
-phase only; it is not a beatmatch-tempo fallback. BPMi's separate candidate
-estimates do not replace those service tempos. Configure `GETSONGBPM_API_KEY` (or
-`LIVY_GETSONGBPM_API_KEY`) in the Livy server environment. Successful lookups
-are matched on title and artist and cached for six hours. Missing credentials,
-rejected keys, rate limits, network failures, and unmatched tracks are reported
-in the seam fallback details; Automix then renders a safe crossfade without
-beatmatching. The owner Automix response exposes whether the credential is
+When beat alignment or beatmatching is enabled, Livy uses GetSongBPM only when
+`GETSONGBPM_API_KEY` (or `LIVY_GETSONGBPM_API_KEY`) is configured in the server
+environment. With a key, GetSongBPM supplies both published tempos and the
+local analyser contributes waveform phase. Without a key, Livy's existing local
+BPM/beat detector supplies tempo and phase, so beatmatching remains available
+without a network lookup. BPMi's separate candidate profiles remain diagnostic
+and training data. Successful service lookups are matched on title and artist
+and cached for six hours; errors from a configured service are reported in the
+seam fallback details and fall back to a safe crossfade. The owner Automix
+response reports the active tempo source and whether the credential is
 configured, but never returns its value. GetSongBPM requires a backlink: the
 Station panel and this README link to [GetSongBPM](https://getsongbpm.com/).
 
@@ -245,14 +246,16 @@ rendered seam, not either complete song:
 ```bash
 bun run automix:mp3 -- outro.mp3 next.mp3 --output transition.mp3
 # Or from server/:
-bun run automix:mp3 -- outro.mp3 next.mp3 -o transition.mp3 --fixed --crossfade-ms 6000
+bun run automix:mp3 -- outro.mp3 next.mp3 -o transition.mp3 --fixed --crossfade-ms 12000
 ```
 
-The default is a smart crossfade requested at six seconds (smart timing may
-adjust it) with three seconds of outgoing pre-roll. Beatmatching is off unless
-requested; `--beatmatch` uses GetSongBPM and requires its API key in the Livy
-environment. Add `--outgoing-title`, `--outgoing-artist`, `--incoming-title`,
-and `--incoming-artist` to improve service matching. `--help` lists all options. The command scans the outgoing
+The default is a smart crossfade requested at twelve seconds (smart timing may
+adjust it) with three seconds of outgoing pre-roll; the held tail allows a
+blend to grow as far as thirty seconds when the tracks suit it. Beatmatching is
+off unless requested; `--beatmatch` uses GetSongBPM when an API key is configured
+and otherwise uses Livy's local tempo detector. Add `--outgoing-title`,
+`--outgoing-artist`, `--incoming-title`, and `--incoming-artist` to improve
+service matching. `--help` lists all options. The command scans the outgoing
 file for its tail but retains only that tail in memory, and reads only the
 necessary head of the incoming file. For a synthetic end-to-start example,
 run `bun run automix:demo -- [output.mp3]`.
@@ -279,8 +282,8 @@ available at `POST /api/v1/owner/models/bpmi/train` (optional `epochs`, up to
 10,000). The checkpoint is standard Safetensors at
 `data/models/bpmi/bpmi.safetensors`. **BPMi training and inference are CPU-only**;
 the separate audio-mixing backend is not used to accelerate BPMi. GetSongBPM
-remains the tempo authority for Automix beatmatching; BPMi predictions and local
-profiles are reported and learned independently.
+supplies Automix tempos when a key is configured; otherwise Livy's local detector
+does. BPMi predictions and local profiles are reported and learned independently.
 
 Every fade eases smoothly into the programme. If a render fails, Automix
 retries with a conservative crossfade; it passes through original frames only
@@ -296,6 +299,8 @@ Defaults are what a radio node actually wants:
 
 | Setting | Default | Why |
 |---|---|---|
+| `stationDefaults.automix.crossfadeMs` | `12_000` ms | longer requested blend; smart timing can extend it up to the 30-second ceiling |
+| `stationDefaults.automix.holdMs` | `30_000` ms | keeps enough outgoing audio for the full smart-blend range |
 | `models.autoTrain` | **on** | a new node starts learning from its first seams |
 | `models.fast` | **on** | short runs, CPU, tens of milliseconds |
 | `models.preset` | `auto` | which architecture to train; `auto` follows the device |
@@ -578,7 +583,7 @@ For a station that stays on air, run the node on a VM or container with
 | `SERVER_PASSWORD` | empty | legacy password for the stream/API surface |
 | `OWNER_KEY` | empty | explicit owner credential; survives alongside a password |
 | `OWNER_PASSWORD` | empty | owner password, hashed at boot; set it in the environment instead of the console |
-| `GETSONGBPM_API_KEY` / `LIVY_GETSONGBPM_API_KEY` | empty | required for service-backed Automix tempo metadata; configure it on the Livy server |
+| `GETSONGBPM_API_KEY` / `LIVY_GETSONGBPM_API_KEY` | empty | enables service-backed tempo metadata; Livy's local detector is used without it |
 | `LIVY_RECENCY_HALF_LIFE` | `14` | days before an old seam counts half in training |
 | `LIVY_TRAIN_BACKEND` | `auto` | `auto`, `js` (never leave the process) or `torch` (PyTorch, fall back on failure) |
 | `LIVY_PYTHON` | auto-detected | interpreter for the PyTorch trainer; `off` disables it |
@@ -591,7 +596,7 @@ For a station that stays on air, run the node on a VM or container with
 | **Stations** | many per process, each with its own queue, rotation, requests, automix and listeners |
 | **Audio path** | MP3 in → MP3 out, byte for byte, no ffmpeg. Anything else is decoded and re-encoded by MetroS at 70–145× realtime |
 | **Sources** | 16 providers — soundcloud · audius · bandcamp · ccmixter · **nhaccuatui** · archive.org · deezer · somafm · podcast/RSS · vimeo · youtube music · mirror · song.link · radio-browser · http/icecast/HLS · local, plus TTS for idents |
-| **Automix** | GetSongBPM-backed tempo, phase-aware and loudness-matched crossfades; blends up to 30 s |
+| **Automix** | GetSongBPM tempo when keyed, Livy local detector otherwise; phase-aware, loudness-matched blends up to 30 s |
 | **DJ** | optional voice-tracking over the seam with a real sidechain duck |
 | **Console** | phone-first, shipped as a plugin — overview, stations, station desk, search, words, seams, filters, training, node, plus the owner index |
 | **Lyrics** | fetched **by the node** from LRCLIB, never by the listener's browser; synced lines honour the file's `[offset:]`, and the console renders its own scroll |

@@ -50,6 +50,7 @@ import {
 import { planTransition, type TransitionPlanResult } from './planner.ts'
 
 const log = createLogger('automix')
+const LOCAL_TEMPO_SOURCE = 'Livy local detector'
 
 export class Automix {
   declare ctx: any
@@ -115,6 +116,10 @@ export class Automix {
 
   info() {
     const { enabled, crossfadeMs, curve, effect, minTrackMs, targetLufs, beatAlign, beatmatch, maxStretchPercent, smart, phraseBlend } = this.options
+    const beatmatchService = getSongBpmStatus()
+    const beatmatchSource = beatAlign
+      ? (beatmatchService.configured ? 'GetSongBPM' : LOCAL_TEMPO_SOURCE)
+      : 'disabled'
     return {
       enabled,
       crossfadeMs,
@@ -127,8 +132,8 @@ export class Automix {
       targetLufs,
       beatAlign,
       beatmatch,
-      beatmatchSource: 'GetSongBPM',
-      beatmatchService: getSongBpmStatus(),
+      beatmatchSource,
+      beatmatchService,
       maxStretchPercent,
       analysePair: false,
       mode: 'crossfade-only',
@@ -227,11 +232,12 @@ export class Automix {
    * How much of the song on air is held back.
    *
    * The blend can be no longer than this, so with Smart Automix it is more
-   * than `crossfadeMs`: a seam that deserves twelve seconds cannot have them
-   * if only six were kept. It is not the whole `maxCrossfadeMs` either — the
-   * incoming song has to be read for as long as the tail is before the seam
-   * can render, and a source that delivers at 1× would run the buffer dry.
-   * The extra tenth of a second is the three frames the splice keeps intact.
+   * than `crossfadeMs`: the default twelve-second request can grow into a
+   * much longer blend only if enough of the outgoing tail is retained. It is
+   * not more than `maxCrossfadeMs` either — the incoming song has to be read
+   * for as long as the tail is before the seam can render, and a source that
+   * delivers at 1× would run the buffer dry. The extra tenth of a second is
+   * the three frames the splice keeps intact.
    */
   get holdMs() {
     const { crossfadeMs, maxCrossfadeMs, holdMs, smart } = this.options
@@ -306,9 +312,10 @@ export class Automix {
     // so collect for the longest one it is allowed to choose.
     //
     // The blend cannot be longer than the tail that was held, so that — not
-    // `maxCrossfadeMs` — is what bounds the wait. Collecting thirty seconds
-    // of the next song for a six second tail kept a 1× source off air for
-    // most of half a minute. The landing is where the seam is eased back
+    // `maxCrossfadeMs` — is what bounds the wait. Keeping the full thirty
+    // seconds makes the configured maximum reachable for exceptionally
+    // compatible pairs; the incoming stream must supply that much headroom
+    // before the seam renders. The landing is where the seam is eased back
     // onto the incoming song's own frame grid (see `#mix`, step 9).
     const longest = Math.min(this.holdMs, this.#tail?.ms ?? this.holdMs)
     const base = Math.max(crossfadeMs, longest) + 2000 + this.landingMs
@@ -476,18 +483,22 @@ export class Automix {
     const matchGain = DB(matchDb)
 
     /* 4. tempo pair, beat grid + beatmatch -------------------------------- */
-    // The service supplies both published tempos. Waveform analysis estimates
-    // phase only, so missing credentials or an unavailable API never silently
-    // falls back to a local BPM estimator.
+    // Use GetSongBPM only when its credential is configured. Without one,
+    // Livy's local BPM/beat detector supplies both tempo and phase; BPMi's
+    // separate candidate profiles remain diagnostic/training data.
+    const serviceStatus = this.ctx.getSongBpmStatus?.() ?? getSongBpmStatus()
+    const serviceConfigured = Boolean(serviceStatus?.configured)
+    const tempoSource = options.beatAlign
+      ? (serviceConfigured ? 'GetSongBPM' : LOCAL_TEMPO_SOURCE)
+      : 'disabled'
     let beatA = null
     let beatB = null
     let pairChoice = null
     let bpmIProfiles = null
     let bpmIEstimates = null
-    if (options.beatAlign) {
-      // BPM is always sourced from GetSongBPM for rendering. Local tempo
-      // candidates are recorded for the separate CPU BPMi trainer, but they
-      // never replace the service result in this beatmatch path.
+    if (options.beatAlign && serviceConfigured) {
+      // The configured service supplies published tempos. Local waveform
+      // analysis then contributes phase, without replacing those tempos.
       const trackA = tail.track ?? tail.frames[0]?.track
       const trackB = head[0]?.track
       const tempoLookup = this.ctx.getSongBpmTempo ?? getSongBpmTempo
@@ -520,8 +531,8 @@ export class Automix {
       beatA = remoteGrid(tempoA, phaseA)
       beatB = remoteGrid(tempoB, phaseB)
       // Capture four-second local candidate profiles at the actual seam. BPMi
-      // trains on these CPU DSP observations across the whole node, but it is
-      // diagnostic here: GetSongBPM remains the tempo used by the renderer.
+      // trains on these CPU DSP observations across the whole node, but when a
+      // key is configured GetSongBPM remains the tempo used by the renderer.
       const profileAWindow = monoA.subarray(aStart, aEnd)
       const profileBWindow = monoB.subarray(bStart)
       const profileSamples = Math.round(sampleRate * 4)
@@ -549,10 +560,10 @@ export class Automix {
         source: 'GetSongBPM'
       }
     } else {
-      // BPMi still observes seams when service-backed beat alignment is off or
-      // the GetSongBPM failure path retries a safe crossfade. These local
-      // pseudo-labels carry deliberately low confidence; service labels remain
-      // stronger when available.
+      // With no configured key, the same local BPM/beat detector used for
+      // phase and BPMi profiles becomes the tempo source for alignment and
+      // beatmatching. If alignment is off, keep the local results diagnostic
+      // only and do not alter the seam's beat grid.
       const trackA = tail.track ?? tail.frames[0]?.track
       const trackB = head[0]?.track
       const profileAWindow = monoA.subarray(aStart, aEnd)
@@ -564,6 +575,35 @@ export class Automix {
         analyseBeat(windowA, sampleRate).catch(() => null),
         analyseBeat(windowB, sampleRate).catch(() => null)
       ])
+      if (options.beatAlign) {
+        const localGrid = (estimate) => {
+          const bpm = Number(estimate?.bpm)
+          if (!Number.isFinite(bpm) || bpm < 40 || bpm > 220) return null
+          const periodSamples = Number(estimate?.periodSamples)
+          return {
+            bpm,
+            periodSamples: Number.isFinite(periodSamples) && periodSamples > 0 ? periodSamples : (60 * sampleRate) / bpm,
+            phaseSamples: Number(estimate?.phaseSamples) || 0,
+            confidence: Number(estimate?.confidence) || 0,
+            serviceConfidence: null,
+            source: LOCAL_TEMPO_SOURCE,
+            serviceTrack: null
+          }
+        }
+        beatA = localGrid(phaseA)
+        beatB = localGrid(phaseB)
+        if (beatA && beatB) {
+          const octaveFoldedA = foldTempo(beatA.bpm, beatB.bpm).bpm
+          const compatibility = Number(clamp(1 - Math.abs(octaveFoldedA - beatB.bpm) / Math.max(1, beatB.bpm), 0, 1).toFixed(4))
+          pairChoice = {
+            bpmA: beatA.bpm,
+            bpmB: beatB.bpm,
+            compatibility,
+            score: compatibility,
+            source: LOCAL_TEMPO_SOURCE
+          }
+        }
+      }
       const profileA = makeBpmProfile(windowA, sampleRate, {
         confidence: phaseA?.confidence,
         scalarBpm: phaseA?.bpm,
@@ -847,7 +887,7 @@ export class Automix {
           useNeural: false,
           minCrossfadeMs: options.minCrossfadeMs ?? 2000,
           maxCrossfadeMs: options.maxCrossfadeMs ?? 30_000,
-          requestedCrossfadeMs: options.crossfadeMs ?? 6000,
+          requestedCrossfadeMs: options.crossfadeMs ?? DEFAULT_AUTOMIX.crossfadeMs,
           availableMs: ms(Math.min(a.length, b.length)),
           maxStretchPercent: options.maxStretchPercent ?? 12,
           correlation: r,
@@ -1034,11 +1074,12 @@ export class Automix {
           shiftMs: ms(alignShift),
           beatsInBlend: beatPeriod ? Math.round(fade / beatPeriod) : 0,
           confidence: beatA ? Number(beatA.confidence.toFixed(2)) : null,
-          serviceConfidence: beatA ? Number(beatA.serviceConfidence.toFixed(2)) : null,
-          incomingServiceConfidence: beatB ? Number(beatB.serviceConfidence.toFixed(2)) : null,
+          serviceConfidence: beatA?.serviceConfidence == null ? null : Number(beatA.serviceConfidence.toFixed(2)),
+          incomingServiceConfidence: beatB?.serviceConfidence == null ? null : Number(beatB.serviceConfidence.toFixed(2)),
           source: beatA?.source ?? null,
           // Independent CPU BPMi predictions and their local candidate inputs
-          // are recorded for training; they never replace the service tempos.
+          // are recorded for training; with a configured key they do not
+          // replace the service tempos.
           bpmi: bpmIProfiles ? {
             model: 'BPMi',
             backend: 'cpu',
@@ -1046,11 +1087,11 @@ export class Automix {
             incoming: bpmIEstimates?.incoming ?? null,
             profiles: bpmIProfiles
           } : null,
-          // The rendered beat grid remains service-backed. BPMi's separate
-          // local estimate/profile is diagnostic and training data only.
+          // The grid uses service tempos when configured, otherwise the local
+          // detector; BPMi's separate candidate profile remains diagnostic.
           pair: pairChoice
             ? { bpmA: pairChoice.bpmA, bpmB: pairChoice.bpmB, compatibility: pairChoice.compatibility, source: pairChoice.source }
-            : { source: options.beatAlign ? 'GetSongBPM' : 'disabled' },
+            : { source: tempoSource },
           // Phrase-aligned blend length (automix-engine's 32-beat map, here).
           phrase: phrase ? { beats: phrase.beats, phrases: phrase.phrases, beatMs: ms(phrase.beatSamples) } : null,
           // Tempo release: how long the incoming song takes to reach native speed.

@@ -13,14 +13,14 @@ export const AUTO_EFFECT = 'auto'
 
 export const DEFAULT_AUTOMIX = {
   enabled: true,
-  crossfadeMs: 6000, // requested blend length (the analysis may shorten it)
+  crossfadeMs: 12_000, // requested blend length (the analysis may shorten it)
   // Smart Automix: let the seam decide how long the blend should be, within
   // these bounds. Two club tracks in key can hold a thirty second blend; a
   // ballad into a rap record cannot. Off → `crossfadeMs` every time.
   smart: true,
   minCrossfadeMs: 2000,
   maxCrossfadeMs: 30_000,
-  holdMs: 12_000, // outgoing tail retained for smart crossfades
+  holdMs: 30_000, // retain enough outgoing audio to make the full smart range reachable
   landingMs: 2500, // incoming-only landing before untouched MP3 frames resume
   curve: 'auto', // 'auto' (correlation decides) | 'equal-power' | 'equal-gain'
   // Retained for configuration compatibility; both values render a crossfade.

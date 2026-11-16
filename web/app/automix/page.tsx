@@ -207,7 +207,7 @@ function TrackInput({
 export default function AutomixEditorPage() {
   const [outgoing, setOutgoing] = useState<TrackDraft>(blankTrack)
   const [incoming, setIncoming] = useState<TrackDraft>(blankTrack)
-  const [crossfadeMs, setCrossfadeMs] = useState(6000)
+  const [crossfadeMs, setCrossfadeMs] = useState(12_000)
   const [preRollMs, setPreRollMs] = useState(3000)
   const [bitrate, setBitrate] = useState(128)
   const [curve, setCurve] = useState('auto')

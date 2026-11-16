@@ -36,7 +36,7 @@ import { LANGUAGES } from '../tts/index.ts'
 import Lyrics from '../core/lyrics.ts'
 import { publicTrack } from '../core/station/index.ts'
 import createLogger from '../util/logger.ts'
-import { EFFECTS } from '../core/automix/index.ts'
+import { DEFAULT_AUTOMIX, EFFECTS } from '../core/automix/index.ts'
 import { describe as describeFilters } from '../core/filters/index.ts'
 import { isServerless } from '../config.ts'
 
@@ -554,7 +554,7 @@ export function createRequestHandler({ manager, config, sources, store = null, t
               .then(({ models }) => models.info())
               .catch(() => null),
             defaults: {
-              crossfadeMs: config.stationDefaults?.automix?.crossfadeMs ?? 6000,
+              crossfadeMs: config.stationDefaults?.automix?.crossfadeMs ?? DEFAULT_AUTOMIX.crossfadeMs,
               effect: config.stationDefaults?.automix?.effect ?? 'crossfade',
               beatmatch: config.stationDefaults?.automix?.beatmatch !== false,
               dj: config.stationDefaults?.automix?.dj?.enabled !== false

@@ -160,6 +160,8 @@ test('the owner can list and hear transitions over HTTP', async (t) => {
   assert.ok(listed.effects.includes('auto'))
   assert.deepEqual(listed.effects, ['auto', 'crossfade'])
   assert.ok(listed.traits.crossfade, 'with its built-in traits')
+  assert.equal(listed.defaults.crossfadeMs, 12_000)
+  assert.equal(listed.defaults.holdMs, 30_000)
   assert.ok(listed.engine, 'and where the DSP runs')
 
   const res = await fetch(`${base}/api/v1/owner/automix/preview`, {

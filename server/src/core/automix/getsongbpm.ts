@@ -1,4 +1,4 @@
-/** Required BPM metadata lookup for Automix, backed by GetSongBPM. */
+/** Optional service-backed tempo lookup; Automix calls this only when a key is configured. */
 import { MemoryLruCache } from '../cache.ts'
 
 const BASE_URL = 'https://api.getsong.co'

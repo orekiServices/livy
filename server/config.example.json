@@ -58,7 +58,8 @@
     "voteSkipRatio": 0.5,
     "automix": {
       "enabled": true,
-      "crossfadeMs": 6000,
+      "crossfadeMs": 12000,
+      "holdMs": 30000,
       "minCrossfadeMs": 2000,
       "maxCrossfadeMs": 30000,
       "curve": "auto",

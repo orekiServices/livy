@@ -9,7 +9,6 @@ import path from 'node:path'
 import { Mp3FrameSplitter, parseFrameHeader } from '../../util/mp3.ts'
 import { Automix } from './engine.ts'
 import { DEFAULT_AUTOMIX } from './defaults.ts'
-import { getSongBpmStatus } from './getsongbpm.ts'
 
 const FRAME_CONTEXT_MS = 750
 const INPUT_SAFETY_MS = 1000
@@ -100,7 +99,7 @@ async function readEdge(file: string, durationMs: number, edge: 'head' | 'tail',
 function holdWindowMs(crossfadeMs: number, smart: boolean) {
   if (!smart) return crossfadeMs + 100
   const max = Math.max(crossfadeMs, Number(DEFAULT_AUTOMIX.maxCrossfadeMs) || 30_000)
-  const requested = Number(DEFAULT_AUTOMIX.holdMs) || 12_000
+  const requested = Number(DEFAULT_AUTOMIX.holdMs) || 30_000
   return Math.max(crossfadeMs, Math.min(max, requested)) + 100
 }
 
@@ -126,10 +125,6 @@ export async function renderAutomixMp3(options: AutomixMp3Options) {
   if (!Number.isFinite(preRollMs) || preRollMs < 0 || preRollMs > 30_000) throw new Error('--pre-roll-ms must be between 0 and 30000.')
   if (!Number.isSafeInteger(bitrate) || bitrate < 96 || bitrate > 320) throw new Error('--bitrate must be an integer from 96 to 320 kbps.')
   if (!['auto', 'equal-power', 'equal-gain'].includes(curve)) throw new Error('--curve must be auto, equal-power, or equal-gain.')
-  if (beatmatch && !getSongBpmStatus().configured) {
-    throw new Error('Beatmatching needs a GetSongBPM key; set GETSONGBPM_API_KEY or LIVY_GETSONGBPM_API_KEY, or omit --beatmatch.')
-  }
-
   const outputFile = chooseOutput(outgoingFile, incomingFile, options.output)
   if (path.extname(outputFile).toLowerCase() !== '.mp3') throw new Error('Output file must use the .mp3 extension.')
   if (outputFile === outgoingFile || outputFile === incomingFile) throw new Error('Output must not overwrite either input MP3.')
@@ -138,15 +133,25 @@ export async function renderAutomixMp3(options: AutomixMp3Options) {
 
   const outgoing = trackFor(outgoingFile, 'outgoing', options.outgoingTitle, options.outgoingArtist, bitrate)
   const incoming = trackFor(incomingFile, 'incoming', options.incomingTitle, options.incomingArtist, bitrate)
-  const holdMs = holdWindowMs(crossfadeMs, smart)
+  const requestedHoldMs = holdWindowMs(crossfadeMs, smart)
   const landingMs = Number(DEFAULT_AUTOMIX.landingMs)
-  const outgoingWindowMs = holdMs + preRollMs + FRAME_CONTEXT_MS + INPUT_SAFETY_MS
-  const incomingWindowMs = Math.max(crossfadeMs, holdMs) + 2000 + landingMs + INPUT_SAFETY_MS
+  const outgoingWindowMs = requestedHoldMs + preRollMs + FRAME_CONTEXT_MS + INPUT_SAFETY_MS
+  const incomingWindowMs = Math.max(crossfadeMs, requestedHoldMs) + 2000 + landingMs + INPUT_SAFETY_MS
 
   const [tail, head] = await Promise.all([
     readEdge(outgoingFile, outgoingWindowMs, 'tail', outgoing),
     readEdge(incomingFile, incomingWindowMs, 'head', incoming)
   ])
+  const minimumHoldMs = crossfadeMs + 100
+  const availableTailMs = tail.durationMs - preRollMs
+  const availableHeadMs = head.durationMs - 2000 - landingMs
+  if (availableTailMs < minimumHoldMs) {
+    throw new Error(`Outgoing MP3 is too short for this seam; need at least about ${(minimumHoldMs + preRollMs) / 1000}s from its end.`)
+  }
+  if (availableHeadMs < minimumHoldMs) {
+    throw new Error(`Incoming MP3 is too short for this seam; need about ${(minimumHoldMs + 2000 + landingMs) / 1000}s from its start.`)
+  }
+  const holdMs = smart ? Math.min(requestedHoldMs, availableTailMs, availableHeadMs) : requestedHoldMs
   if (tail.durationMs < holdMs + preRollMs) {
     throw new Error(`Outgoing MP3 is too short for this seam; need about ${(holdMs + preRollMs) / 1000}s from its end.`)
   }
@@ -270,11 +275,11 @@ Options:
   --fixed                     Use the requested blend length without smart timing
   --curve <name>              auto, equal-power, or equal-gain
   --bitrate <kbps>            Output bitrate from 96 to 320 (default: ${DEFAULT_AUTOMIX.bitrate})
-  --beatmatch                 Use GetSongBPM (requires an API key; metadata options can improve matching)
-  --outgoing-title <title>    Title used for GetSongBPM lookup
-  --outgoing-artist <artist>  Artist used for GetSongBPM lookup
-  --incoming-title <title>    Title used for GetSongBPM lookup
-  --incoming-artist <artist>  Artist used for GetSongBPM lookup
+  --beatmatch                 Beatmatch with GetSongBPM when keyed, else Livy's local detector
+  --outgoing-title <title>    Title used for GetSongBPM lookup when a key is configured
+  --outgoing-artist <artist>  Artist used for GetSongBPM lookup when a key is configured
+  --incoming-title <title>    Title used for GetSongBPM lookup when a key is configured
+  --incoming-artist <artist>  Artist used for GetSongBPM lookup when a key is configured
   -h, --help                  Show this help
 
 Example:

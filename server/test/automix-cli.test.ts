@@ -33,6 +33,7 @@ test('automix MP3 CLI parses outgoing first, incoming second, and documents head
     }
   })
   assert.match(AUTOMIX_MP3_USAGE, /END into the incoming file's START/)
+  assert.match(AUTOMIX_MP3_USAGE, /else Livy's local detector/)
 })
 
 test('automix MP3 renderer mixes only the outgoing tail into the incoming head', async () => {
@@ -59,8 +60,8 @@ test('automix MP3 renderer mixes only the outgoing tail into the incoming head',
   const smartOutput = path.join(dir, 'smart-transition.mp3')
   const smartResult = await renderAutomixMp3({ outgoing, incoming, output: smartOutput })
   assert.equal(smartResult.report.effect, 'crossfade')
-  assert.ok(smartResult.outgoingWindowMs < 18_000)
-  assert.ok(smartResult.incomingWindowMs < 19_000)
+  assert.ok(smartResult.outgoingWindowMs < 25_000)
+  assert.ok(smartResult.incomingWindowMs < 25_000)
   assert.ok(smartResult.preRollMs >= 2950)
   assert.ok(smartResult.durationMs < 20_000, `default output included too much source audio (${smartResult.durationMs}ms)`)
   assert.ok(probeMp3(fs.readFileSync(smartOutput)).durationMs > 0)

@@ -44,13 +44,26 @@ async function testTempoLookup(track) {
 
 const totalMs = (list) => list.reduce((sum, frame) => sum + frame.ms, 0)
 
+test('the default Automix request is longer and the smart hold exposes the full range', () => {
+  const mix = new Automix({ dj: { enabled: false } })
+  assert.equal(DEFAULT_AUTOMIX.crossfadeMs, 12_000)
+  assert.equal(DEFAULT_AUTOMIX.holdMs, 30_000)
+  assert.equal(mix.info().crossfadeMs, 12_000)
+  assert.equal(mix.holdMs, 30_100, 'the held tail reaches the thirty-second maximum plus splice context')
+})
+
 /** A quick automix tuned for tests: short blend, no DJ, no network. */
 function automix(options: any = {}, ctx: any = {}) {
   return new Automix(
     // Most tests are about something other than which transition was
     // chosen, so they pin one; the picker has its own test below.
     { minTrackMs: 3000, crossfadeMs: 2000, maxRenderMs: 8000, effect: 'crossfade', ...options, dj: { enabled: false, ...(options.dj ?? {}) } },
-    { station: { name: 'Test FM', subscribers: new Set() }, getSongBpmTempo: testTempoLookup, ...ctx }
+    {
+      station: { name: 'Test FM', subscribers: new Set() },
+      getSongBpmStatus: () => ({ configured: true }),
+      getSongBpmTempo: testTempoLookup,
+      ...ctx
+    }
   )
 }
 
@@ -176,6 +189,33 @@ test('GetSongBPM supplies the tempo while local analysis contributes phase only'
   assert.equal(beat.bpmi.profiles.incoming.referenceBpm, 124)
   assert.ok(beat.bpmi.profiles.outgoing.candidates.length > 0, 'BPMi captures local tempo candidates for seam training')
   assert.equal(beat.matched, true)
+})
+
+test('without a configured key, Automix uses Livy local tempos and never calls GetSongBPM', async () => {
+  let serviceCalls = 0
+  const mix = automix({ crossfadeMs: 4000, holdMs: 9000, maxRenderMs: 18_000 }, {
+    getSongBpmStatus: () => ({ configured: false }),
+    getSongBpmTempo: async () => {
+      serviceCalls += 1
+      throw new Error('must not call GetSongBPM without a configured key')
+    }
+  })
+
+  await mix.push(await frames(beatLoop({ bpm: 120, seconds: 16 }), TRACK_A))
+  await mix.push(await frames(beatLoop({ bpm: 128, seconds: 16, freq: 220 }), TRACK_B))
+  await mix.flush('local-detector-test')
+
+  const beat = mix.info().last.beat
+  assert.equal(serviceCalls, 0)
+  assert.equal(beat.source, 'Livy local detector')
+  assert.equal(beat.pair.source, 'Livy local detector')
+  assert.ok(beat.bpm >= 40 && beat.bpm <= 220, `outgoing local BPM: ${beat.bpm}`)
+  assert.ok(beat.incomingBpm >= 40 && beat.incomingBpm <= 220, `incoming local BPM: ${beat.incomingBpm}`)
+  assert.ok(beat.confidence > 0.25, 'local grids are confident enough to drive the seam')
+  assert.equal(beat.matched, true, 'local tempos drive actual beatmatching')
+  assert.equal(beat.serviceConfidence, null)
+  assert.ok(beat.bpmi.profiles.outgoing.candidates.length > 0)
+  assert.equal(mix.info().last.fallback, undefined, 'local analysis is a normal render, not the safe no-beat fallback')
 })
 
 test('a quieter incoming song is pulled up, but never further than maxGainDb', async () => {

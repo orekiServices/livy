@@ -122,7 +122,7 @@ test('the pair search fixes the octave error the scalar estimator makes', async 
 test('the automix prefers the pair over a half-time scalar answer', async () => {
   const mix = new Automix(
     { minTrackMs: 3000, crossfadeMs: 2000, maxRenderMs: 8000, effect: 'crossfade', dj: { enabled: false } },
-    { getSongBpmTempo: testTempoLookup }
+    { getSongBpmStatus: () => ({ configured: true }), getSongBpmTempo: testTempoLookup }
   )
   await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 128, seconds: 8 })), { id: 'a', title: 'A', artist: 'x', tempo: 128 }))
   await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 126, seconds: 9, freq: 220 })), { id: 'b', title: 'B', artist: 'x', tempo: 126 }))
@@ -220,7 +220,7 @@ test('a rendered seam reports a phrase-aligned blend', async () => {
   // than the blend (plus the 2 s of headroom the cue detector uses).
   const mix = new Automix(
     { minTrackMs: 3000, crossfadeMs: 4000, maxRenderMs: 12_000, effect: 'crossfade', dj: { enabled: false } },
-    { getSongBpmTempo: testTempoLookup }
+    { getSongBpmStatus: () => ({ configured: true }), getSongBpmTempo: testTempoLookup }
   )
   await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 120, seconds: 12 })), { id: 'a', title: 'A', artist: 'x' }))
   await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 120, seconds: 20, freq: 220 })), { id: 'b', title: 'B', artist: 'x' }))
@@ -328,7 +328,7 @@ test('the seam curves change shape for a vocal, and never mute the bed', () => {
 test('the automix says whether it heard a vocal at the seam', async () => {
   const mix = new Automix(
     { minTrackMs: 3000, crossfadeMs: 3000, maxRenderMs: 9000, effect: 'crossfade', dj: { enabled: false } },
-    { getSongBpmTempo: testTempoLookup }
+    { getSongBpmStatus: () => ({ configured: true }), getSongBpmTempo: testTempoLookup }
   )
   await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 120, seconds: 8 })), { id: 'a', title: 'A', artist: 'x' }))
   await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 120, seconds: 9, freq: 220 })), { id: 'b', title: 'B', artist: 'x' }))
@@ -348,7 +348,7 @@ test('a seam is still seamless: the render joins the programme without a click',
   // still be sample-continuous where it meets the air.
   const mix = new Automix(
     { minTrackMs: 3000, crossfadeMs: 2000, maxRenderMs: 8000, effect: 'crossfade', dj: { enabled: false } },
-    { getSongBpmTempo: testTempoLookup }
+    { getSongBpmStatus: () => ({ configured: true }), getSongBpmTempo: testTempoLookup }
   )
   const out = []
   out.push(...(await mix.push(framesFrom(await toMp3(beatLoop({ bpm: 124, seconds: 8 })), { id: 'a', title: 'A', artist: 'x' }))))
